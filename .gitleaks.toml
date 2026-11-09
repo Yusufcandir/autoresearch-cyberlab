@@ -1,0 +1,6 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Documented local-only placeholders"
+regexes = ['''CHANGE_ME_LOCAL_ONLY''']
