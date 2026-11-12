@@ -13,3 +13,34 @@ mlruns/
 artifacts/
 data/
 *.log
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+.coverage
+htmlcov/
+.tox/
+
+# Editors, OS and AI-assistant files
+.vscode/
+.idea/
+.claude/
+CLAUDE.local.md
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Research material that must not be published
+*.pdf
+mlruns/
+mlartifacts/
+outputs/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.parquet
+*.csv
+!tests/fixtures/**/*.csv
