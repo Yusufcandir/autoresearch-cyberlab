@@ -1,0 +1,64 @@
+# AutoResearch-CyberLab security policy, version 1 (DRAFT until signed by the security reviewer).
+# Changing this file changes the policy version; experiments and agents cannot edit it.
+version = "1"
+status = "draft"
+
+# Data and execution classes (spec Step 03).
+[tiers.T0]
+name = "Metadata and public text"
+description = "Literature metadata, public papers, dataset cards. No code execution."
+plane = "control"
+
+[tiers.T1]
+name = "Trusted templated computation"
+description = "Platform-owned, reviewed experiment templates on approved datasets (e.g. XGBoost or PyTorch training)."
+plane = "trusted_compute"
+
+[tiers.T2]
+name = "Generated or third-party code"
+description = "Agent-written code or new third-party packages. Runs on trusted compute only after human review."
+plane = "trusted_compute"
+requires_approval = true
+
+[tiers.T3]
+name = "Untrusted or hostile material"
+description = "Malware samples, exploit or attack benchmarks, unknown binaries, hostile fixtures, untrusted repositories."
+plane = "isolated"
+
+# Tools agents may request. Anything not listed is denied.
+[tools.literature_search]
+tiers = ["T0"]
+
+[tools.citation_verify]
+tiers = ["T0"]
+
+[tools.dataset_register]
+tiers = ["T0", "T1"]
+
+[tools.run_experiment_template]
+tiers = ["T1"]
+
+[tools.run_reviewed_code]
+tiers = ["T2"]
+
+[tools.run_restricted_benchmark]
+tiers = ["T3"]
+
+[tools.compute_statistics]
+tiers = ["T0", "T1"]
+
+[tools.draft_manuscript]
+tiers = ["T0"]
+
+# Explicitly forbidden for any agent, at any tier.
+[forbidden]
+tools = [
+    "shell",
+    "sudo",
+    "install_system_package",
+    "modify_policy",
+    "grant_permission",
+    "send_external_message",
+    "network_scan",
+    "submit_manuscript",
+]

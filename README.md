@@ -5,8 +5,8 @@ A secure, reproducible multi-agent research platform. The first pilot targets
 datasets). Humans stay accountable: agents propose, a PI approves, and every
 reported number must trace back to a stored, hashed artifact.
 
-> Status: **Phase A / Step 05**. Repository skeleton and a no-op API only.
-> Nothing here runs experiments yet.
+> Status: **Phase A built** (Steps 01 to 05). Draft governance, security and topology docs await
+> sign-off; runnable host checks and the security policy work. Nothing here runs experiments yet.
 
 ## Four planes
 
@@ -46,6 +46,12 @@ Optional dev databases (on a dev machine or approved VM, **not** the shared work
 cp infra/env.example .env   # then fill in local-only values
 docker compose -f infra/compose.dev.yaml up -d
 ```
+
+## On the lab server
+
+See [docs/development_guide.md](docs/development_guide.md):
+`bash scripts/setup_server.sh`, then `uv run cyberlab doctor` and
+`uv run cyberlab policy-check run_restricted_benchmark T3 --approved`.
 
 ## Rules
 

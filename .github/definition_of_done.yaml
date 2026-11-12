@@ -1,0 +1,15 @@
+# Machine-readable definition of done (Step 05). Every step must satisfy all of these.
+version: 1
+every_change:
+  - ci_green: "ruff, ruff format, mypy and pytest pass (scripts/check.sh)"
+  - no_secrets: "gitleaks passes; no keys, datasets, logs or private prompts committed"
+  - pinned_dependencies: "uv.lock updated in the same change as pyproject.toml"
+  - docs_updated: "docs/implementation_plan.md status and notes updated"
+every_step:
+  - acceptance_evidence: "test, saved command output under docs/, or signed document"
+  - spec_reference: "PR names the spec step and acceptance tests (AT-xx) it covers"
+  - unknowns_tracked: "anything not confirmed is listed as unknown, not assumed"
+human_signoff_required:
+  - step_01: PI and system administrator
+  - step_03: security administrator
+  - step_04: system administrator

@@ -16,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class SchedulerBackend(StrEnum):
     NONE = "none"
     SLURM = "slurm"
+    LOCAL_LOCK = "local_lock"  # single-GPU lock while no Slurm exists
     LOCAL_TEST = "local_test"
 
 
