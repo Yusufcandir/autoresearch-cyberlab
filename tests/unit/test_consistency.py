@@ -143,3 +143,64 @@ def test_hypothesis_and_citation_wording_is_tidied() -> None:
         tidy_prose("tree models ([@Apruzzese2022cross]).") == "tree models [@Apruzzese2022cross]."
     )
     assert tidy_prose("H1 (supported) is not supported.") == "H1 (supported) is not supported."
+
+
+def _agg(f1: float, acc: float, bal: float) -> dict:
+    return {
+        "aggregate": {
+            "macro_f1": {"mean": f1, "sd": 0.001},
+            "accuracy": {"mean": acc},
+            "balanced_accuracy": {"mean": bal},
+        }
+    }
+
+
+GAP_ANALYSIS = {
+    **ANALYSIS,
+    "models": {
+        "logistic_regression": _agg(0.68, 0.97, 0.69),
+        "random_forest": _agg(0.96, 0.999, 0.952),
+        "xgboost": _agg(0.99, 0.999, 0.989),
+        "mlp": _agg(0.92, 0.998, 0.907),
+    },
+    "hypotheses": [
+        {
+            "id": "H1",
+            "a": "xgboost",
+            "b": "logistic_regression",
+            "metric": "macro_f1",
+            "result": "supported",
+            "mcnemar": {"p_value": 1e-9},
+        },
+    ],
+}
+
+
+def test_accuracy_gap_caveat_must_name_a_model_that_has_the_gap() -> None:
+    md = (
+        "# T\n\n## Discussion\n\n"
+        "Complex models like XGBoost raise concerns about overly simplistic decision boundaries. "
+        "Logistic regression shows high accuracy alongside lower balanced accuracy. "
+        "High overall accuracy alongside lower balanced metrics indicate potential issues.\n"
+    )
+    flagged = [i["sentence"][:12] for i in consistency_issues(md, GAP_ANALYSIS)]
+    assert flagged == ["Complex mode", "High overall"]
+
+
+def test_ci_described_as_seed_variation_is_flagged() -> None:
+    md = "# T\n\n## Results\n\nXGBoost has 95% CI [0.9647, 0.9916], seed 42, reflecting robustness across different seeds.\n"
+    assert [i["code"] for i in consistency_issues(md, GAP_ANALYSIS)] == ["CI_MISREAD"]
+
+
+def test_findings_are_added_when_abstract_and_conclusion_lack_them() -> None:
+    from cyberlab_orchestrator.agents.reviewer import ensure_findings, strip_paragraph_connectives
+
+    md = "## Abstract\n\nWe compare models.\n\n## Conclusion\n\nHowever, more work is needed.\n\n## Evidence\n"
+    out, added = ensure_findings(strip_paragraph_connectives(md), GAP_ANALYSIS)
+    assert added == ["Abstract", "Conclusion"]
+    assert "XGBoost had the highest mean macro-F1 (0.9900" in out
+    assert (
+        "H1 (XGBoost above logistic regression on macro-F1) was supported, exact McNemar p < 0.001."
+        in out
+    )
+    assert "However" not in out and "More work is needed." in out

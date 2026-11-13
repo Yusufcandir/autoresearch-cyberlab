@@ -129,6 +129,82 @@ ORPHAN = re.compile(
 )
 
 
+CONNECTIVE = re.compile(
+    r"(?:However|Similarly|Moreover|Additionally|Furthermore|In addition|Likewise|"
+    r"Nevertheless|Consequently|Therefore|Thus|Also),\s+"
+)
+
+
+def _drop_connective(sentence: str) -> str:
+    rest = CONNECTIVE.sub("", sentence, count=1)
+    return rest[:1].upper() + rest[1:] if rest else rest
+
+
+def strip_paragraph_connectives(markdown: str) -> str:
+    """A paragraph or section cannot open with 'However,' / 'Similarly,' (left over after an
+    earlier sentence was removed)."""
+    body, sep, rest = markdown.partition("\n## Evidence")
+    lines = [
+        _drop_connective(ln) if CONNECTIVE.match(ln) and not ln.startswith(("|", "#", ">")) else ln
+        for ln in body.split("\n")
+    ]
+    return "\n".join(lines) + sep + rest
+
+
+def _pretty(name: str) -> str:
+    return {
+        "logistic_regression": "logistic regression",
+        "random_forest": "random forest",
+        "xgboost": "XGBoost",
+        "mlp": "the MLP",
+    }.get(name, name.replace("_", " "))
+
+
+def findings_text(analysis: dict[str, Any]) -> str:
+    """The main findings, written from stored evidence only (no LLM)."""
+    models = analysis.get("models", {})
+    out = []
+    if models:
+        best = max(models, key=lambda n: models[n]["aggregate"]["macro_f1"]["mean"])
+        f1 = models[best]["aggregate"]["macro_f1"]
+        out.append(
+            f"On the de-duplicated test split, {_pretty(best)} had the highest mean macro-F1 "
+            f"({f1['mean']:.4f} ± {f1.get('sd', 0):.4f} over the model seeds)."
+        )
+    for h in analysis.get("hypotheses", []):
+        if not (h.get("a") and h.get("b")):
+            continue
+        p = (h.get("mcnemar") or {}).get("p_value")
+        ptxt = "" if p is None else f", exact McNemar p {'< 0.001' if p < 1e-3 else f'= {p:.3f}'}"
+        out.append(
+            f"{h['id']} ({_pretty(h['a'])} above {_pretty(h['b'])} on "
+            f"{str(h.get('metric', 'macro_f1')).replace('_', '-').replace('macro-f1', 'macro-F1')}) "
+            f"was {h['result']}{ptxt}."
+        )
+    return " ".join(out)
+
+
+def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str, list[str]]:
+    """Abstract and Conclusion must state the main findings. If removals (or the writer) left
+    either without any hypothesis or measured value, add the evidence-generated findings."""
+    if not analysis:
+        return markdown, []
+    text = findings_text(analysis)
+    if not text:
+        return markdown, []
+    bodies = _section_bodies(markdown)
+    added = []
+    for name, prepend in (("Abstract", False), ("Conclusion", True)):
+        body = bodies.get(name)
+        if body is None or re.search(r"\bH\d+\b|\b\d\.\d{4}\b", body):
+            continue
+        core = body.strip()
+        new = f"{text} {core}" if prepend else f"{core} {text}"
+        markdown = markdown.replace(body, f"\n\n{new.strip()}\n\n", 1)
+        added.append(name)
+    return markdown, added
+
+
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
     """Remove single flagged sentences. Never removes whole paragraphs or empties a required
     section: a sentence whose removal would do that is kept (and stays flagged)."""
@@ -145,9 +221,12 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
         at = markdown.index(sent)
         tail = markdown[at + len(sent) :]
         nxt = split_sentences(tail.split("\n", 1)[0])
-        if nxt and ORPHAN.match(nxt[0]) and "[@" not in nxt[0]:
+        if nxt and "[@" in sent and ORPHAN.match(nxt[0]) and "[@" not in nxt[0]:
             # 'These methods ...' right after the removed sentence would point at nothing
             tail = tail.replace(nxt[0], "", 1)
+        elif nxt and CONNECTIVE.match(nxt[0]):
+            # 'Similarly, X ...' no longer follows anything it is similar to
+            tail = tail.replace(nxt[0], _drop_connective(nxt[0]), 1)
         candidate = cleanup(markdown[:at] + tail)
         after = _section_bodies(candidate)
         before = _section_bodies(markdown)
@@ -326,6 +405,18 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
             }
+        markdown = strip_paragraph_connectives(markdown)
+        markdown, with_findings = ensure_findings(markdown, analysis)
+        if with_findings:
+            flags.append(
+                {
+                    "severity": "warning",
+                    "code": "FINDINGS_ADDED",
+                    "message": "The main findings were written from the stored evidence into: "
+                    + ", ".join(with_findings)
+                    + " (the drafted text there did not state them).",
+                }
+            )
         markdown, n_added = backfill_related_work(markdown, verified)
         if n_added:
             flags.append(

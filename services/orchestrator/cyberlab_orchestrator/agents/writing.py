@@ -12,6 +12,7 @@ from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, Protoc
 from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
+from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec
 
@@ -40,6 +41,13 @@ SYSTEM = (
     "in methodology name models in words (logistic regression, random forest, ...).\n"
     "9. Use {{fact:NAME}} only with a NAME exactly as listed in 'facts'. The split was checked "
     "and has zero train/test overlap rows, so do not suggest data leakage.\n"
+    "10. 'statistician_notes' are Proposed readings, not findings. Say 'high accuracy hides weak "
+    "minority-class performance' (or 'simplistic decision boundaries') only about models listed "
+    "in 'models_where_accuracy_exceeds_balanced_accuracy', and name them.\n"
+    "11. The 95% CI is a bootstrap over test rows for one seed; variation across seeds is the "
+    "± sd. Do not describe the CI as variation across seeds.\n"
+    "12. The abstract and conclusion must state the main findings with {{hyp:...}} and "
+    "{{metric:...}} placeholders.\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
     "discussion, limitations, conclusion (markdown strings)."
 )
@@ -199,6 +207,7 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             for h in analysis["hypotheses"]
             if h.get("a") and h.get("b")
         ],
+        "models_where_accuracy_exceeds_balanced_accuracy": accuracy_gap_models(analysis),
         "facts": facts,
         "method_facts": prose,
         "dataset": {k: analysis["dataset"].get(k) for k in ("name", "license")}

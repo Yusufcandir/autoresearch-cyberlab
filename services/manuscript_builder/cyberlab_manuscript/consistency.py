@@ -138,6 +138,7 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
     }
     all_pairs_tested = all(frozenset(p) in tested for p in itertools.combinations(known, 2))
     overlap = (analysis.get("dataset") or {}).get("split_overlap_rows")
+    gap_models = accuracy_gap_models(analysis)
     issues: list[dict[str, str]] = []
 
     def add(section: str, sentence: str, code: str, reason: str) -> None:
@@ -212,4 +213,52 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "UNTESTED_COMPARISON",
                     "claims one model is best overall, but not every pair of models was tested",
                 )
+                continue
+            if CI_ACROSS_SEEDS.search(sent):
+                add(
+                    name,
+                    sent,
+                    "CI_MISREAD",
+                    "the 95% CI is a bootstrap over test rows for one seed, not variation "
+                    "across seeds (that is the ± sd)",
+                )
+                continue
+            if GAP_CLAIM.search(sent):
+                wrong = [m for m in mentioned if m not in gap_models]
+                if wrong or not mentioned:
+                    who = ", ".join(gap_models) or "none of the models"
+                    add(
+                        name,
+                        sent,
+                        "GAP_MISATTRIBUTED",
+                        "claims high accuracy hides weak balanced performance"
+                        + (f" for {', '.join(wrong)}" if wrong else " without naming the model")
+                        + f"; the stored results show this gap only for: {who}",
+                    )
     return issues
+
+
+GAP_CLAIM = re.compile(
+    r"simplistic decision boundar\w*|"
+    r"high (?:overall )?accuracy[^.]{0,80}\b(?:lower|low|poor|weak)\w* balanced|"
+    r"accuracy[^.]{0,60}\bmislead\w*|"
+    r"high (?:overall )?accuracy[^.]{0,80}\b(?:raise|rais\w+|indicat\w*) (?:concern|issue|problem)\w*",
+    re.I,
+)
+CI_ACROSS_SEEDS = re.compile(
+    r"\b(?:CI|confidence interval)s?\b.{0,160}?\b(across|over|between) (?:\w+ ){0,2}seeds\b", re.I
+)
+GAP_THRESHOLD = 0.05
+
+
+def accuracy_gap_models(analysis: dict[str, Any]) -> list[str]:
+    """Models whose accuracy exceeds balanced accuracy by more than GAP_THRESHOLD, i.e. where a
+    'high accuracy hides weak minority-class performance' caveat actually applies."""
+    out = []
+    for name, m in analysis.get("models", {}).items():
+        agg = m.get("aggregate", {})
+        acc = (agg.get("accuracy") or {}).get("mean")
+        bal = (agg.get("balanced_accuracy") or {}).get("mean")
+        if acc is not None and bal is not None and acc - bal > GAP_THRESHOLD:
+            out.append(name)
+    return out
