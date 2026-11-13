@@ -127,9 +127,15 @@ class Lab:
             return p.id
 
     def start(self, project_id: str) -> dict[str, Any]:
+        """Start a new study, or resume one that stopped on an error from its last checkpoint."""
         state = self.graph.get_state(self._config(project_id))
         if state.next:
-            return self.status(project_id)  # already started; never restart from scratch
+            if self.pending(project_id) is not None:
+                return self.status(project_id)  # waiting for a human or for jobs: nothing to do
+            self.ctx.set_stage(project_id, "retrying", "Running")
+            return self._invoke(project_id, None)  # re-run the failed step from the checkpoint
+        if state.values:
+            return self.status(project_id)  # finished or stopped at an end state
         return self._invoke(project_id, {"project_id": project_id})
 
     def pending(self, project_id: str) -> dict[str, Any] | None:
