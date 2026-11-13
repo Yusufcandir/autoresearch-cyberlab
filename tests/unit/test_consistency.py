@@ -91,3 +91,55 @@ def test_misspelled_fact_names_are_mapped() -> None:
 
 def test_nested_hypothesis_parentheses_are_tidied() -> None:
     assert tidy_prose("than LR (H1 (supported)).") == "than LR (H1, supported)."
+
+
+def test_et_al_does_not_split_a_sentence() -> None:
+    from cyberlab_manuscript.consistency import split_sentences
+
+    para = "For instance, Alikhanov et al. [@A] studied sampling. However, it is costly."
+    assert split_sentences(para) == [
+        "For instance, Alikhanov et al. [@A] studied sampling.",
+        "However, it is costly.",
+    ]
+
+
+def test_score_without_model_is_flagged() -> None:
+    md = "# T\n\n## Limitations\n\nExtremely high accuracy and 0.9964 ± 0.0001 values raise concerns.\n"
+    assert [i["code"] for i in consistency_issues(md, ANALYSIS)] == ["SCORE_WITHOUT_MODEL"]
+
+
+def test_removal_takes_the_orphaned_follow_up_sentence() -> None:
+    from cyberlab_orchestrator.agents.reviewer import remove_sentences
+
+    md = (
+        "## Related Work\n\nIntro sentence about the field [@B]. Alikhanov et al. [@A] proposed "
+        "sampling methods for detection. These methods aim to improve robustness. Last one [@C].\n"
+    )
+    out, n = remove_sentences(
+        md, ["Alikhanov et al. [@A] proposed sampling methods for detection."]
+    )
+    assert n == 1 and "These methods" not in out and "Alikhanov" not in out and "Last one" in out
+
+
+def test_related_work_backfill_lists_uncited_papers() -> None:
+    from cyberlab_orchestrator.agents.reviewer import backfill_related_work
+
+    papers = {
+        k: {"title": f"Title {k}.", "authors": ["Ann Smith", "Bo Lee", "Cy Wu"]} for k in "ABCD"
+    }
+    md = "## Related Work\n\nOne sentence [@A].\n\n## Methodology\n\nM.\n"
+    out, n = backfill_related_work(md, papers)
+    assert n == 3 and "Smith et al., “Title B” [@B]" in out
+    assert out.index("[@D]") < out.index("## Methodology")
+
+
+def test_hypothesis_and_citation_wording_is_tidied() -> None:
+    assert (
+        tidy_prose("H1 (supported) is supported by the results.")
+        == "H1 is supported by the results."
+    )
+    assert tidy_prose("H2 (supported) also holds true.") == "H2 also holds true."
+    assert (
+        tidy_prose("tree models ([@Apruzzese2022cross]).") == "tree models [@Apruzzese2022cross]."
+    )
+    assert tidy_prose("H1 (supported) is not supported.") == "H1 (supported) is not supported."

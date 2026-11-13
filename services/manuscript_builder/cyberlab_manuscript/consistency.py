@@ -60,12 +60,23 @@ def sections(markdown: str) -> list[tuple[str, str]]:
     return [(parts[i].strip(), parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
 
 
+_ABBREV = re.compile(r"\b(et al|e\.g|i\.e|vs|cf|Fig|Eq|approx|resp)\.", re.I)
+_DOT = "․"  # one-dot leader: a stand-in for an abbreviation's full stop while splitting
+
+
+def split_sentences(para: str) -> list[str]:
+    """Split a paragraph into sentences without breaking 'Alikhanov et al. [@k]' or 'e.g.'."""
+    protected = _ABBREV.sub(lambda m: m.group(0).replace(".", _DOT), para)
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z(\[*])", protected)
+    return [p.replace(_DOT, ".").strip() for p in parts if p.strip()]
+
+
 def prose_sentences(body: str) -> list[str]:
     out = []
     for para in body.split("\n"):
         if not para.strip() or para.startswith(("|", "#", ">")):
             continue
-        out += [s.strip() for s in re.split(r"(?<=[.!?])\s+(?=[A-Z(\[])", para) if s.strip()]
+        out += split_sentences(para.lstrip("-* "))
     return out
 
 
@@ -150,6 +161,15 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     sent,
                     "RESULT_IN_METHOD",
                     f"a measured score appears in {name}; scores belong in Results",
+                )
+                continue
+            if SCORE.search(sent) and not mentions(sent, known):
+                add(
+                    name,
+                    sent,
+                    "SCORE_WITHOUT_MODEL",
+                    "a measured score appears without the model it belongs to (a metric "
+                    "placeholder was probably used in place of a metric name)",
                 )
                 continue
             if _hyp_contradiction(sent):

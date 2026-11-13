@@ -272,6 +272,21 @@ def tidy_prose(text: str) -> str:
     text = _HYP_VERB.sub(hyp, text)
     # "(H1 (supported))" -> "(H1, supported)"
     text = re.sub(r"\((H\d+) \((supported|not supported)\)\)", r"(\1, \2)", text)
+    # "H1 (supported) is supported" -> "H1 is supported" (only when the wording agrees)
+    text = re.sub(
+        r"\b(H\d+) \(supported\)(?=\s+(?:(?:is|was|also|has been|clearly)\s+)*"
+        r"(?:supported|holds|held|confirmed))",
+        r"\1",
+        text,
+    )
+    text = re.sub(
+        r"\b(H\d+) \(not supported\)(?=\s+(?:(?:is|was|also|has been)\s+)*"
+        r"(?:not supported|rejected))",
+        r"\1",
+        text,
+    )
+    # "([@Key])" -> "[@Key]"
+    text = re.sub(r"\((\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\])\)", r"\1", text)
     # "we test H1 (supported)" should not reveal the result: drop it after test verbs.
     return re.sub(
         r"\b(test(?:s|ed|ing)?|evaluat(?:e|es|ed|ing)|examin(?:e|es|ed|ing))(\s+(?:whether\s+)?)"

@@ -25,7 +25,7 @@ from cyberlab_common.db import (
 )
 from cyberlab_llm.gateway import as_list, wrap_untrusted
 from cyberlab_manuscript import manuscript_sha
-from cyberlab_manuscript.consistency import consistency_issues
+from cyberlab_manuscript.consistency import consistency_issues, split_sentences
 from cyberlab_orchestrator.agents.writing import MAX_REVISIONS, _load_analysis
 from cyberlab_orchestrator.context import LabContext
 
@@ -64,7 +64,7 @@ def citing_sentences(markdown: str) -> list[dict[str, Any]]:
     for para in body.split("\n"):
         if para.startswith(("|", "#", ">")):
             continue
-        for sent in re.split(r"(?<=[.!?])\s+", para):
+        for sent in split_sentences(para):
             keys = re.findall(r"@([A-Za-z0-9_]+)", " ".join(CITE.findall(sent)))
             if keys:
                 out.append({"sentence": sent.strip()[:600], "keys": sorted(set(keys))})
@@ -110,7 +110,7 @@ def untested_effect_sentences(markdown: str) -> list[str]:
     for para in body.split("\n"):
         if para.startswith(("|", "#", ">")):
             continue
-        for sent in re.split(r"(?<=[.!?])\s+", para):
+        for sent in split_sentences(para):
             if UNTESTED_EFFECT.search(sent) and "[@" not in sent:
                 out.append(sent.strip())
     return out
@@ -124,6 +124,11 @@ def _section_bodies(markdown: str) -> dict[str, str]:
     return {parts[i].strip(): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
 
 
+ORPHAN = re.compile(
+    r"(?:However,?\s+|Similarly,?\s+|Moreover,?\s+)?(?:These|This|Their|They|Such|It|Its)\b"
+)
+
+
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
     """Remove single flagged sentences. Never removes whole paragraphs or empties a required
     section: a sentence whose removal would do that is kept (and stays flagged)."""
@@ -134,10 +139,16 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
 
     removed = 0
     for sent in sorted(set(sentences), key=len, reverse=True):
-        single = len(re.findall(r"[.!?](?:\s|$)", sent.strip())) <= 1 and "\n" not in sent
+        single = len(split_sentences(sent)) <= 1 and "\n" not in sent
         if not (single and len(sent) > 20 and sent in markdown):
             continue
-        candidate = cleanup(markdown.replace(sent, "", 1))
+        at = markdown.index(sent)
+        tail = markdown[at + len(sent) :]
+        nxt = split_sentences(tail.split("\n", 1)[0])
+        if nxt and ORPHAN.match(nxt[0]) and "[@" not in nxt[0]:
+            # 'These methods ...' right after the removed sentence would point at nothing
+            tail = tail.replace(nxt[0], "", 1)
+        candidate = cleanup(markdown[:at] + tail)
         after = _section_bodies(candidate)
         before = _section_bodies(markdown)
         if any(
@@ -147,6 +158,35 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
         markdown = candidate
         removed += 1
     return markdown, removed
+
+
+def backfill_related_work(markdown: str, papers: dict[str, dict[str, Any]]) -> tuple[str, int]:
+    """If removals left Related Work citing fewer than half of the verified papers, list the
+    others neutrally from their metadata (authors and title only, nothing a paper must
+    support)."""
+    bodies = _section_bodies(markdown)
+    if "Related Work" not in bodies or not papers:
+        return markdown, 0
+    body = bodies["Related Work"]
+    cited = set(re.findall(r"@([A-Za-z0-9_]+)", " ".join(CITE.findall(body))))
+    missing = [k for k in papers if k not in cited]
+    if len(cited) * 2 >= len(papers) or not missing:
+        return markdown, 0
+
+    def name(k: str) -> str:
+        authors = [a for a in papers[k].get("authors") or [] if a]
+        if not authors:
+            return "Unknown"
+        s1 = authors[0].split()[-1]
+        if len(authors) == 1:
+            return s1
+        return f"{s1} and {authors[1].split()[-1]}" if len(authors) == 2 else f"{s1} et al."
+
+    items = [
+        f"{name(k)}, “{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]" for k in missing
+    ]
+    para = "Other work relevant to this study includes " + "; ".join(items) + "."
+    return markdown.replace(body, body.rstrip() + "\n\n" + para + "\n\n", 1), len(missing)
 
 
 def claim_check(
@@ -274,6 +314,27 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     "code": "UNSUPPORTED_SENTENCES_REMOVED",
                     "message": f"{n_removed} sentence(s) with unsupported citations or untested "
                     "claims were removed from the final draft (listed above).",
+                }
+            )
+    if final:
+        with ctx.db.session() as s:
+            verified = {
+                c.key: {"title": c.title, "authors": c.authors or []}
+                for c in s.scalars(
+                    select(CitationRecord).where(
+                        CitationRecord.project_id == pid, CitationRecord.status == "Verified"
+                    )
+                )
+            }
+        markdown, n_added = backfill_related_work(markdown, verified)
+        if n_added:
+            flags.append(
+                {
+                    "severity": "warning",
+                    "code": "RELATED_WORK_BACKFILLED",
+                    "message": f"Related Work cited too few papers after unsupported sentences "
+                    f"were removed; {n_added} verified paper(s) were listed by author and title. "
+                    "Authors should expand this section.",
                 }
             )
     evidence["flags"] = flags
