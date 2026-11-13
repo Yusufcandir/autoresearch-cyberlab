@@ -127,6 +127,10 @@ def _section_bodies(markdown: str) -> dict[str, str]:
 ORPHAN = re.compile(
     r"(?:However,?\s+|Similarly,?\s+|Moreover,?\s+)?(?:These|This|Their|They|Such|It|Its)\b"
 )
+# A bare pronoun always points back at the sentence before it.
+PRONOUN = re.compile(
+    r"(?:However,?\s+|Similarly,?\s+|Moreover,?\s+|Yet,?\s+)?(?:It|Its|They|Their|Them)\b", re.I
+)
 
 
 CONNECTIVE = re.compile(
@@ -194,7 +198,7 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         return markdown, []
     bodies = _section_bodies(markdown)
     added = []
-    for name, prepend in (("Abstract", False), ("Conclusion", True)):
+    for name, prepend in (("Abstract", False), ("Conclusion", False)):
         body = bodies.get(name)
         if body is None or re.search(r"\bH\d+\b|\b\d\.\d{4}\b", body):
             continue
@@ -202,7 +206,36 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         new = f"{text} {core}" if prepend else f"{core} {text}"
         markdown = markdown.replace(body, f"\n\n{new.strip()}\n\n", 1)
         added.append(name)
+    body = _section_bodies(markdown).get("Discussion")
+    gap = gap_text(analysis)
+    if body is not None and gap and not re.search(r"\b\d\.\d{4}\b", body):
+        paras = [p for p in body.strip().split("\n\n") if p.strip()]
+        paras.insert(1 if paras else 0, gap)  # after the opening paragraph, before future work
+        markdown = markdown.replace(body, "\n\n" + "\n\n".join(paras) + "\n\n", 1)
+        added.append("Discussion")
     return markdown, added
+
+
+def gap_text(analysis: dict[str, Any]) -> str:
+    """Evidence-based caveat: models whose accuracy hides weaker minority-class performance."""
+    from cyberlab_manuscript.consistency import accuracy_gap_models
+
+    names = accuracy_gap_models(analysis)
+    if not names:
+        return ""
+    parts = []
+    for n in names:
+        agg = analysis["models"][n]["aggregate"]
+        parts.append(
+            f"{_pretty(n)} (accuracy {agg['accuracy']['mean']:.4f} vs balanced accuracy "
+            f"{agg['balanced_accuracy']['mean']:.4f})"
+        )
+    return (
+        "Accuracy is much higher than balanced accuracy for "
+        + " and ".join(parts)
+        + ", so for these models the high accuracy mostly reflects the large BENIGN class and "
+        "hides weaker performance on the minority attack classes."
+    )
 
 
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
@@ -221,7 +254,12 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
         at = markdown.index(sent)
         tail = markdown[at + len(sent) :]
         nxt = split_sentences(tail.split("\n", 1)[0])
-        if nxt and "[@" in sent and ORPHAN.match(nxt[0]) and "[@" not in nxt[0]:
+        orphan = (
+            nxt
+            and "[@" not in nxt[0]
+            and (("[@" in sent and ORPHAN.match(nxt[0])) or PRONOUN.match(nxt[0]))
+        )
+        if orphan:
             # 'These methods ...' right after the removed sentence would point at nothing
             tail = tail.replace(nxt[0], "", 1)
         elif nxt and CONNECTIVE.match(nxt[0]):
