@@ -276,6 +276,29 @@ def no_difference_contradiction(
     return None
 
 
+SIG_DIFF = re.compile(r"\bsignificant(?:ly)? (?:\w+ )?differen\w*\b", re.I)
+
+
+def untested_significance(
+    sentence: str, known: list[str], tested: set[frozenset[str]]
+) -> str | None:
+    """'significant differences between logistic regression and random forest, XGBoost and the
+    MLP' claims a significance test for every pair named, but only some pairs were tested."""
+    if not SIG_DIFF.search(sentence) or NO_DIFF.search(sentence):
+        return None
+    named = list(dict.fromkeys(n for _, n in mentions(sentence, known)))
+    untested = [
+        f"{a} vs {b}"
+        for i, a in enumerate(named)
+        for b in named[i + 1 :]
+        if frozenset((a, b)) not in tested
+    ]
+    # only pairs that involve the first-named model are being contrasted in such sentences
+    first = named[0] if named else None
+    untested = [p for p in untested if first and p.startswith(first)]
+    return ", ".join(untested) or None
+
+
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
     known = list(analysis.get("models", {}))
     tested = {
@@ -411,6 +434,15 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
             ) or no_difference_contradiction(sent, known, hyps)
             if contradiction:
                 add(name, sent, "HYP_CONTRADICTION", contradiction)
+                continue
+            sig = untested_significance(sent, known, tested)
+            if sig:
+                add(
+                    name,
+                    sent,
+                    "UNTESTED_COMPARISON",
+                    "claims a significant difference for pairs that were never tested: " + sig,
+                )
                 continue
             if COMPARE.search(sent):
                 untested = [

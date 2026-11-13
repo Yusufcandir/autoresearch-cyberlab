@@ -200,8 +200,8 @@ def test_findings_are_added_when_abstract_and_conclusion_lack_them() -> None:
     assert added == ["Abstract", "Conclusion"]
     assert "XGBoost had the highest mean macro-F1 (0.9900" in out
     assert (
-        "H1 (XGBoost above logistic regression on macro-F1) was supported, exact McNemar p < 0.001."
-        in out
+        "H1 (XGBoost scores higher than logistic regression on macro-F1; 0.9900 vs 0.6800) "
+        "was supported (exact McNemar test, p < 0.001)." in out
     )
     assert "However" not in out and "More work is needed." in out
 
@@ -270,7 +270,7 @@ def test_empty_results_prose_gets_an_evidence_summary() -> None:
     md, n = remove_sentences(md, ["bad claim about it here."])
     assert n == 1 and "**Logistic Regression:**" not in md and "\n- " not in md
     out, added = ensure_findings(md, GAP_ANALYSIS)
-    assert "Results" in added and "logistic regression reached a macro-F1 of 0.6800" in out
+    assert "Results" in added and "Logistic regression reached a macro-F1 of 0.6800" in out
     assert out.index("reached a macro-F1") < out.index("### Main results")
 
 

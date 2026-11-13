@@ -13,6 +13,7 @@ from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_manuscript.consistency import accuracy_gap_models
+from cyberlab_manuscript.evidence_text import lock_evidence
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec
 
@@ -102,13 +103,14 @@ def method_facts(
         "ci_level": "95%",
     }
     prose = [
-        "Rows with infinite or missing feature values were removed.",
+        "Rows with infinite or missing feature values were removed (facts.rows_dropped_inf_nan).",
         "Exact duplicate rows (same features and label) were removed, and feature vectors that "
-        "appeared with conflicting labels were removed entirely.",
+        "appeared with conflicting labels were removed entirely "
+        "(facts.rows_removed_duplicates_or_conflicts in total).",
         "Constant features and the duplicated Fwd Header Length column were dropped.",
         "Fine-grained labels were grouped into classes: BENIGN, DoS, DDoS, PortScan, BruteForce "
         "(FTP/SSH-Patator), WebAttack, Bot, and Rare (Infiltration and Heartbleed).",
-        "BENIGN rows were randomly down-sampled to the cap given in facts.benign_cap.",
+        "BENIGN rows were randomly down-sampled to at most facts.benign_cap.",
         "One stratified train/validation/test split was made with a single fixed seed "
         "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "
         "No test row also appears in training.",
@@ -116,8 +118,9 @@ def method_facts(
         "Every model was trained on the training split and evaluated once on the test split; no "
         "hyper-parameter tuning was performed (fixed, documented defaults).",
         "Metrics are reported as mean and standard deviation over the model seeds.",
-        "Confidence intervals are percentile bootstrap intervals over test rows, stratified by "
-        "class, computed on the first seed's predictions (facts.ci_seed).",
+        "Confidence intervals are percentile bootstrap intervals (facts.bootstrap_resamples "
+        "resamples) over test rows, stratified by class, computed on the first seed's "
+        "predictions (seed facts.ci_seed).",
         "Hypotheses were tested with an exact McNemar test on per-row correctness of two models "
         "over the same test rows (first seed).",
         "All metrics were recomputed from stored per-row predictions; numbers in the paper are "
@@ -230,6 +233,16 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     # Final revision: the deterministic guardrail removes anything still unsupported.
     final = state.get("revisions", 0) >= MAX_REVISIONS
     md, report = build_manuscript(spec.title, sections, analysis, cites, "", guardrail=final)
+    # Evidence statements are generated, never written by the model (see evidence_text).
+    md, dropped = lock_evidence(md, analysis, facts, prose)
+    if dropped:
+        report.flag(
+            "warning",
+            "FRAMING_SENTENCES_DROPPED",
+            f"{len(dropped)} model-written sentence(s) stated results and were replaced by "
+            "evidence-generated text: "
+            + " | ".join(f'{d["section"]}: "{d["sentence"][:100]}"' for d in dropped[:12]),
+        )
     bib = "\n\n".join(
         bibtex_entry(
             Paper(

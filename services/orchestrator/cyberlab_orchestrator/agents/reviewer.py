@@ -26,7 +26,14 @@ from cyberlab_common.db import (
 from cyberlab_llm.gateway import as_list, wrap_untrusted
 from cyberlab_manuscript import manuscript_sha
 from cyberlab_manuscript.consistency import consistency_issues, split_sentences
-from cyberlab_orchestrator.agents.writing import MAX_REVISIONS, _load_analysis
+from cyberlab_manuscript.evidence_text import (
+    findings_text,
+    gap_text,
+    lock_evidence,
+    results_text,
+)
+from cyberlab_manuscript.evidence_text import pretty as _pretty  # noqa: F401
+from cyberlab_orchestrator.agents.writing import MAX_REVISIONS, _load_analysis, method_facts
 from cyberlab_orchestrator.context import LabContext
 
 DIMENSIONS = [
@@ -155,39 +162,6 @@ def strip_paragraph_connectives(markdown: str) -> str:
     return "\n".join(lines) + sep + rest
 
 
-def _pretty(name: str) -> str:
-    return {
-        "logistic_regression": "logistic regression",
-        "random_forest": "random forest",
-        "xgboost": "XGBoost",
-        "mlp": "the MLP",
-    }.get(name, name.replace("_", " "))
-
-
-def findings_text(analysis: dict[str, Any]) -> str:
-    """The main findings, written from stored evidence only (no LLM)."""
-    models = analysis.get("models", {})
-    out = []
-    if models:
-        best = max(models, key=lambda n: models[n]["aggregate"]["macro_f1"]["mean"])
-        f1 = models[best]["aggregate"]["macro_f1"]
-        out.append(
-            f"On the de-duplicated test split, {_pretty(best)} had the highest mean macro-F1 "
-            f"({f1['mean']:.4f} ± {f1.get('sd', 0):.4f} over the model seeds)."
-        )
-    for h in analysis.get("hypotheses", []):
-        if not (h.get("a") and h.get("b")):
-            continue
-        p = (h.get("mcnemar") or {}).get("p_value")
-        ptxt = "" if p is None else f", exact McNemar p {'< 0.001' if p < 1e-3 else f'= {p:.3f}'}"
-        out.append(
-            f"{h['id']} ({_pretty(h['a'])} above {_pretty(h['b'])} on "
-            f"{str(h.get('metric', 'macro_f1')).replace('_', '-').replace('macro-f1', 'macro-F1')}) "
-            f"was {h['result']}{ptxt}."
-        )
-    return " ".join(out)
-
-
 def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str, list[str]]:
     """Abstract and Conclusion must state the main findings. If removals (or the writer) left
     either without any hypothesis or measured value, add the evidence-generated findings."""
@@ -211,12 +185,9 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         if complete:  # every hypothesis is already reported here
             continue
         sents = split_sentences(" ".join(body.split()))
-        # findings go before a closing 'Future work ...' sentence, otherwise at the end
-        at = (
-            len(sents) - 1
-            if sents and re.match(r"(?i)future|further work", sents[-1])
-            else len(sents)
-        )
+        # findings go before the first 'Future work / further research ...' sentence
+        future = re.compile(r"(?i)(?:additionally,\s*|moreover,\s*)?(?:future|further)\b")
+        at = next((i for i, s in enumerate(sents) if future.match(s)), len(sents))
         new = " ".join(sents[:at] + [text] + sents[at:])
         markdown = markdown.replace(body, f"\n\n{new.strip()}\n\n", 1)
         added.append(name)
@@ -243,47 +214,6 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         markdown = markdown.replace(body, "\n\n" + "\n\n".join(paras) + "\n\n", 1)
         added.append("Discussion")
     return markdown, added
-
-
-def results_text(analysis: dict[str, Any]) -> str:
-    """Per-model summary written from the stored aggregates (no LLM)."""
-    parts = []
-    for name, m in analysis.get("models", {}).items():
-        agg = m.get("aggregate", {})
-        f1 = agg.get("macro_f1") or {}
-        bal = agg.get("balanced_accuracy") or {}
-        if "mean" not in f1:
-            continue
-        txt = f"{_pretty(name)} reached a macro-F1 of {f1['mean']:.4f} ± {f1.get('sd', 0):.4f}"
-        if "mean" in bal:
-            txt += f" and a balanced accuracy of {bal['mean']:.4f}"
-        parts.append(txt)
-    if not parts:
-        return ""
-    text = "Over the model seeds, " + "; ".join(parts) + "."
-    return text[0].upper() + text[1:]
-
-
-def gap_text(analysis: dict[str, Any]) -> str:
-    """Evidence-based caveat: models whose accuracy hides weaker minority-class performance."""
-    from cyberlab_manuscript.consistency import accuracy_gap_models
-
-    names = accuracy_gap_models(analysis)
-    if not names:
-        return ""
-    parts = []
-    for n in names:
-        agg = analysis["models"][n]["aggregate"]
-        parts.append(
-            f"{_pretty(n)} (accuracy {agg['accuracy']['mean']:.4f} vs balanced accuracy "
-            f"{agg['balanced_accuracy']['mean']:.4f})"
-        )
-    return (
-        "Accuracy is much higher than balanced accuracy for "
-        + " and ".join(parts)
-        + ", so for these models the high accuracy mostly reflects the large BENIGN class and "
-        "hides weaker performance on the minority attack classes."
-    )
 
 
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
@@ -496,6 +426,22 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
             }
+        # Evidence statements are generated from stored results; model-written sentences may
+        # only frame them (see cyberlab_manuscript.evidence_text).
+        if analysis:
+            try:
+                facts, prose = method_facts(ctx, pid, analysis)
+            except Exception:  # noqa: BLE001 - the method text is optional, results are not
+                facts, prose = None, None
+            markdown, dropped = lock_evidence(markdown, analysis, facts, prose)
+            for d in dropped:
+                flags.append(
+                    {
+                        "severity": "warning",
+                        "code": "FRAMING_SENTENCE_DROPPED",
+                        "message": f'{d["section"]}: {d["reason"]} | "{d["sentence"][:160]}"',
+                    }
+                )
         # Add evidence findings first, so removing a bad sentence never has to empty a
         # required section (e.g. a Conclusion made of one wrong sentence).
         markdown, _ = ensure_findings(markdown, analysis)
