@@ -100,13 +100,20 @@ class GeminiProvider:
     URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     def __init__(
-        self, api_key: str, model: str, timeout: float = 120, client: httpx.Client | None = None
+        self,
+        api_key: str,
+        model: str,
+        timeout: float = 120,
+        client: httpx.Client | None = None,
+        fallback_models: list[str] | None = None,
     ):
         self.api_key = api_key
         self.model = model
+        self.models = [model, *[m for m in (fallback_models or []) if m and m != model]]
         self.client = client or httpx.Client(timeout=timeout)
 
     def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
+        """Try the main model, then each fallback model when Gemini is overloaded or slow."""
         body: dict[str, Any] = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "systemInstruction": {"parts": [{"text": system}]},
@@ -115,43 +122,47 @@ class GeminiProvider:
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
         t0 = time.monotonic()
-        r: httpx.Response | None = None
-        last_exc: Exception | None = None
-        for attempt in range(3):
+        problems: list[str] = []
+        for model in self.models:
+            r: httpx.Response | None = None
+            for attempt in range(2):
+                try:
+                    r = self.client.post(
+                        self.URL.format(model=model),
+                        headers={"x-goog-api-key": self.api_key},
+                        json=body,
+                    )
+                except httpx.HTTPError as exc:  # timeout or dropped connection
+                    problems.append(f"{model}: {type(exc).__name__}")
+                    r = None
+                    time.sleep(3)
+                    continue
+                if r.status_code in (429, 500, 503):  # overloaded or rate limited
+                    problems.append(f"{model}: HTTP {r.status_code}")
+                    time.sleep(5 * (attempt + 1))
+                    continue
+                break
+            if r is None or r.status_code in (429, 500, 503):
+                continue  # next model
+            if r.status_code != 200:
+                problems.append(f"{model}: HTTP {r.status_code} {redact(r.text[:200])}")
+                continue
+            data = r.json()
             try:
-                r = self.client.post(
-                    self.URL.format(model=self.model),
-                    headers={"x-goog-api-key": self.api_key},
-                    json=body,
-                )
-            except httpx.HTTPError as exc:  # timeouts and dropped connections: retry
-                last_exc, r = exc, None
-                time.sleep(5 * (attempt + 1))
+                parts = data["candidates"][0]["content"]["parts"]
+            except (KeyError, IndexError):
+                problems.append(f"{model}: no content {str(data)[:200]}")
                 continue
-            if r.status_code in (429, 500, 503) and attempt < 2:  # rate limit / overload
-                time.sleep(10 * (attempt + 1))
-                continue
-            break
-        if r is None:
-            raise LLMError(
-                f"gemini unreachable after 3 attempts: {type(last_exc).__name__}: {last_exc}"
+            usage = data.get("usageMetadata", {})
+            return LLMResult(
+                text="".join(p.get("text", "") for p in parts if not p.get("thought")),
+                provider=self.name,
+                model=model,
+                prompt_tokens=int(usage.get("promptTokenCount", 0)),
+                output_tokens=int(usage.get("candidatesTokenCount", 0)),
+                seconds=time.monotonic() - t0,
             )
-        if r.status_code != 200:
-            raise LLMError(f"gemini HTTP {r.status_code}: {redact(r.text[:300])}")
-        data = r.json()
-        try:
-            parts = data["candidates"][0]["content"]["parts"]
-        except (KeyError, IndexError) as exc:
-            raise LLMError(f"gemini returned no content: {str(data)[:300]}") from exc
-        usage = data.get("usageMetadata", {})
-        return LLMResult(
-            text="".join(p.get("text", "") for p in parts),
-            provider=self.name,
-            model=self.model,
-            prompt_tokens=int(usage.get("promptTokenCount", 0)),
-            output_tokens=int(usage.get("candidatesTokenCount", 0)),
-            seconds=time.monotonic() - t0,
-        )
+        raise LLMError("gemini failed: " + "; ".join(problems[-6:]))
 
 
 class OllamaProvider:
@@ -313,6 +324,7 @@ def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
             settings.gemini_api_key.get_secret_value(),
             settings.gemini_model,
             settings.llm_timeout_seconds,
+            fallback_models=[m.strip() for m in settings.gemini_fallback_models.split(",")],
         )
         return LLMGateway(primary, ollama, **hooks)
     if provider == "ollama":

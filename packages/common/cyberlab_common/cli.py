@@ -98,6 +98,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("llm-check", help="send one tiny prompt through the configured LLM gateway")
     p.set_defaults(func=_llm_check)
 
+    p = sub.add_parser("gemini-models", help="list Gemini models your API key can use")
+    p.set_defaults(func=_gemini_models)
+
     args = parser.parse_args(argv)
     result: int = args.func(args)
     return result
@@ -203,6 +206,28 @@ def _llm_check(args: argparse.Namespace) -> int:
     print(
         f"{res.provider}/{res.model}: {res.text.strip()!r} ({res.total_tokens} tokens, {res.seconds:.1f}s)"
     )
+    return 0
+
+
+def _gemini_models(args: argparse.Namespace) -> int:
+    import httpx
+
+    s = Settings()
+    if s.gemini_api_key is None:
+        print("GEMINI_API_KEY is not set")
+        return 1
+    r = httpx.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": s.gemini_api_key.get_secret_value()},
+        params={"pageSize": 200},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        print(f"HTTP {r.status_code}: {r.text[:300]}")
+        return 1
+    for m in r.json().get("models", []):
+        if "generateContent" in m.get("supportedGenerationMethods", []):
+            print(m["name"].removeprefix("models/"))
     return 0
 
 

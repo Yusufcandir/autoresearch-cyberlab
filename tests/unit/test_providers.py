@@ -53,3 +53,23 @@ def test_ollama_request_and_parse() -> None:
     )
     res = p.generate("sys", "hi", json_mode=True, temperature=0)
     assert res.provider == "ollama" and res.total_tokens == 7
+
+
+def test_gemini_falls_back_to_next_model_when_overloaded(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "busy-model" in str(req.url):
+            return httpx.Response(503, json={"error": {"message": "high demand"}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    p = GeminiProvider(
+        "k",
+        "busy-model",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        fallback_models=["spare-model"],
+    )
+    res = p.generate("s", "p", json_mode=False, temperature=0)
+    assert res.text == "ok" and res.model == "spare-model"
