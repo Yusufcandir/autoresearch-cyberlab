@@ -44,3 +44,6 @@ outputs/
 *.parquet
 *.csv
 !tests/fixtures/**/*.csv
+
+# Runtime data: database, artifacts, datasets, checkpoints, logs, backups
+var/

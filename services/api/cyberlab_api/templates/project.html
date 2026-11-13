@@ -20,7 +20,8 @@
     </form>
     {% else %}<p class="muted">Only the PI can approve.</p>{% endif %}
   {% elif pend.gate == 'jobs' %}
-    <p>Experiments are running in the job broker: {% for k, v in pend.jobs.items() %}{{ k }} {{ v }} {% endfor %}. Make sure the worker is running (<span class="mono">cyberlab worker</span>).</p>
+    {% set ns = namespace(c={}) %}{% for j in jobs %}{% set _ = ns.c.update({j.state: ns.c.get(j.state, 0) + 1}) %}{% endfor %}
+    <p>Experiments are running in the job broker: {% for k, v in ns.c.items() %}{{ k }} {{ v }} {% endfor %}. Make sure the worker is running (<span class="mono">cyberlab worker</span>).</p>
   {% elif pend.gate == 'D' %}
     {% if pend.evidence_blockers %}<p class="error">Release is blocked by {{ pend.evidence_blockers|length }} evidence problem(s); see the manuscript section.</p>
     {% elif role == 'pi' %}
@@ -86,7 +87,7 @@
 {% if analysis %}
 <p><span class="label {{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}">{{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}</span>
  metrics recomputed from stored predictions · analysis <span class="mono">{{ analysis.artifact_sha256 or '' }}</span></p>
-<table><tr><th>Model</th><th class="num">Macro-F1 (mean ± sd)</th><th class="num">95% CI</th><th class="num">Accuracy</th><th class="num">MCC</th><th class="num">FPR</th></tr>
+<table><tr><th>Model</th><th class="num">Macro-F1 (mean ± sd)</th><th class="num">95% CI (first seed)</th><th class="num">Accuracy</th><th class="num">MCC</th><th class="num">FPR</th></tr>
 {% for name, m in analysis.models.items() %}{% set a = m.aggregate %}<tr><td>{{ name }}</td>
 <td class="num">{{ '%.4f'|format(a.macro_f1.mean) }} ± {{ '%.4f'|format(a.macro_f1.sd) }}</td>
 <td class="num">[{{ '%.4f'|format(m.macro_f1_ci.low) }}, {{ '%.4f'|format(m.macro_f1_ci.high) }}]</td>

@@ -7,6 +7,7 @@ DOI stays `Unverified` and the manuscript builder refuses to treat it as a refer
 
 from __future__ import annotations
 
+import html
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -48,6 +49,13 @@ class Paper:
     source: str = "openalex"
     status: str = "Unverified"
     verification_note: str = ""
+
+
+def _clean(text: str | None) -> str | None:
+    """Registries sometimes return HTML entities or tags in titles (e.g. 'Computers &amp; Security')."""
+    if text is None:
+        return None
+    return re.sub(r"<[^>]+>", "", html.unescape(text)).strip()
 
 
 def _abstract_from_index(idx: dict[str, list[int]] | None) -> str | None:
@@ -104,13 +112,13 @@ class ScholarlyClient:
     def _from_openalex(w: dict[str, Any]) -> Paper:
         loc = (w.get("primary_location") or {}).get("source") or {}
         return Paper(
-            title=w.get("display_name") or w.get("title") or "",
+            title=_clean(w.get("display_name") or w.get("title")) or "",
             doi=normalize_doi(w.get("doi")),
             year=w.get("publication_year"),
             authors=[
                 a.get("author", {}).get("display_name", "") for a in w.get("authorships", [])[:12]
             ],
-            venue=loc.get("display_name"),
+            venue=_clean(loc.get("display_name")),
             abstract=_abstract_from_index(w.get("abstract_inverted_index")),
             cited_by=int(w.get("cited_by_count") or 0),
         )
@@ -124,14 +132,14 @@ class ScholarlyClient:
             m = r.json().get("message", {})
             year = (m.get("issued", {}).get("date-parts") or [[None]])[0][0]
             return Paper(
-                title=(m.get("title") or [""])[0],
+                title=_clean((m.get("title") or [""])[0]) or "",
                 doi=d,
                 year=year,
                 authors=[
                     f"{a.get('given', '')} {a.get('family', '')}".strip()
                     for a in m.get("author", [])[:12]
                 ],
-                venue=(m.get("container-title") or [None])[0],
+                venue=_clean((m.get("container-title") or [None])[0]),
                 source="crossref",
             )
         r2 = self.client.get(f"{OPENALEX}/doi:{d}", params=self.params)

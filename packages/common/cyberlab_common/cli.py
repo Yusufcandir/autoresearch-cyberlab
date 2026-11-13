@@ -122,11 +122,12 @@ def _init_db(args: argparse.Namespace) -> int:
 
 def _create_user(args: argparse.Namespace) -> int:
     import getpass
+    import os
 
     from cyberlab_authz.rbac import create_user
 
-    pw = getpass.getpass("Password (10+ characters): ")
-    if pw != getpass.getpass("Repeat password: "):
+    pw = os.environ.get("CYBERLAB_NEW_PASSWORD") or getpass.getpass("Password (10+ characters): ")
+    if "CYBERLAB_NEW_PASSWORD" not in os.environ and pw != getpass.getpass("Repeat password: "):
         print("passwords differ")
         return 1
     with _db().session() as s:
@@ -160,12 +161,12 @@ def _worker(args: argparse.Namespace) -> int:
     from cyberlab_orchestrator.lab import Lab
 
     lab = Lab(Settings())
-    print("worker started; Ctrl+C to stop")
+    print("worker started; Ctrl+C to stop", flush=True)
     try:
         while True:
             info = lab.worker_tick()
             if info["ran_job"] or info["advanced"] or info["reconciled"]:
-                print(json.dumps(info))
+                print(json.dumps(info), flush=True)
             if args.once:
                 return 0
             if not info["ran_job"]:

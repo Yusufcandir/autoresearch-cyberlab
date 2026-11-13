@@ -252,6 +252,8 @@ def project_page(
             if analysis_rec and Path(analysis_rec.path).exists()
             else None
         )
+        if analysis is not None and analysis_rec is not None:
+            analysis["artifact_sha256"] = analysis_rec.sha256
         events = list(
             s.scalars(
                 select(AuditEvent)
