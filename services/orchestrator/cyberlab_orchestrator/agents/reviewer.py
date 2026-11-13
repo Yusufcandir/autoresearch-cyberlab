@@ -198,14 +198,28 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         return markdown, []
     bodies = _section_bodies(markdown)
     added = []
-    for name, prepend in (("Abstract", False), ("Conclusion", False)):
+    for name in ("Abstract", "Conclusion"):
         body = bodies.get(name)
         if body is None or re.search(r"\bH\d+\b|\b\d\.\d{4}\b", body):
             continue
-        core = body.strip()
-        new = f"{text} {core}" if prepend else f"{core} {text}"
+        sents = split_sentences(" ".join(body.split()))
+        # findings go before a closing 'Future work ...' sentence, otherwise at the end
+        at = (
+            len(sents) - 1
+            if sents and re.match(r"(?i)future|further work", sents[-1])
+            else len(sents)
+        )
+        new = " ".join(sents[:at] + [text] + sents[at:])
         markdown = markdown.replace(body, f"\n\n{new.strip()}\n\n", 1)
         added.append(name)
+    body = _section_bodies(markdown).get("Results")
+    if body is not None:
+        prose, sep, rest = body.partition("\n### ")
+        summary = results_text(analysis)
+        if summary and not re.search(r"\b\d\.\d{4}\b", prose):
+            new_prose = (prose.strip() + "\n\n" + summary).strip()
+            markdown = markdown.replace(body, f"\n\n{new_prose}\n{sep}{rest}", 1)
+            added.append("Results")
     body = _section_bodies(markdown).get("Discussion")
     gap = gap_text(analysis)
     if body is not None and gap and not re.search(r"\b\d\.\d{4}\b", body):
@@ -214,6 +228,25 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         markdown = markdown.replace(body, "\n\n" + "\n\n".join(paras) + "\n\n", 1)
         added.append("Discussion")
     return markdown, added
+
+
+def results_text(analysis: dict[str, Any]) -> str:
+    """Per-model summary written from the stored aggregates (no LLM)."""
+    parts = []
+    for name, m in analysis.get("models", {}).items():
+        agg = m.get("aggregate", {})
+        f1 = agg.get("macro_f1") or {}
+        bal = agg.get("balanced_accuracy") or {}
+        if "mean" not in f1:
+            continue
+        txt = f"{_pretty(name)} reached a macro-F1 of {f1['mean']:.4f} ± {f1.get('sd', 0):.4f}"
+        if "mean" in bal:
+            txt += f" and a balanced accuracy of {bal['mean']:.4f}"
+        parts.append(txt)
+    if not parts:
+        return ""
+    text = "Over the model seeds, " + "; ".join(parts) + "."
+    return text[0].upper() + text[1:]
 
 
 def gap_text(analysis: dict[str, Any]) -> str:
@@ -244,7 +277,11 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
 
     def cleanup(md: str) -> str:
         md = re.sub(r"[ \t]{2,}", " ", md)
-        return re.sub(r"(?m)^ (?=\S)", "", md)  # no stray space where a sentence was cut
+        md = re.sub(r"(?m)^ (?=\S)", "", md)  # no stray space where a sentence was cut
+        md = re.sub(r"(?m)^[ \t]*(?:[-*+]|\d+\.)[ \t]*$\n?", "", md)  # list item left empty
+        # a '**Model:**' label whose list items were all removed
+        md = re.sub(r"(?m)^\*\*[^*\n]{1,80}:?\*\*:?[ \t]*\n(?=\s*(?:\n|\*\*|##|$))", "", md)
+        return re.sub(r"\n{3,}", "\n\n", md)
 
     removed = 0
     for sent in sorted(set(sentences), key=len, reverse=True):
@@ -443,8 +480,33 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
             }
+        # Removing sentences can leave new problems (an orphaned 'It ...'); repeat until clean.
+        for _ in range(3):
+            left = consistency_issues(markdown, analysis) if analysis else []
+            if not left:
+                break
+            markdown, n_more = remove_sentences(markdown, [i["sentence"] for i in left])
+            if not n_more:
+                break
         markdown = strip_paragraph_connectives(markdown)
         markdown, with_findings = ensure_findings(markdown, analysis)
+        for issue in consistency_issues(markdown, analysis) if analysis else []:
+            flags.append(
+                {
+                    "severity": "blocker",
+                    "code": "CONSISTENCY_UNRESOLVED",
+                    "message": f'{issue["code"]}: {issue["reason"]} | "{issue["sentence"][:160]}"',
+                }
+            )
+        if analysis is None:
+            flags.append(
+                {
+                    "severity": "warning",
+                    "code": "CONSISTENCY_SKIPPED",
+                    "message": "The analysis artifact could not be loaded, so the deterministic "
+                    "consistency checks did not run on this draft.",
+                }
+            )
         if with_findings:
             flags.append(
                 {

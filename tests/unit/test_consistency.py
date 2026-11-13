@@ -246,3 +246,29 @@ def test_reader_facing_checks() -> None:
         "FACT_MISUSED"
     ]
     assert _codes("## Limitations\n\nOnly a few studies since 2017 used this dataset.\n") == []
+
+
+def test_list_items_are_read_with_their_model_label() -> None:
+    md = "## Results\n\n**Logistic Regression:**\n- Macro-F1: 0.6815 ± 0.0000\n- MCC: 0.9554\n"
+    assert _codes(md) == []
+
+
+def test_negated_comparison_that_contradicts_a_test_is_flagged() -> None:
+    md = "## Discussion\n\nRandom forest does not provide a significant advantage over logistic regression.\n"
+    assert _codes(md) == ["HYP_CONTRADICTION"]
+    ok = "## Discussion\n\nRandom forest is not comparable to logistic regression.\n"
+    assert _codes(ok) == []
+
+
+def test_empty_results_prose_gets_an_evidence_summary() -> None:
+    from cyberlab_orchestrator.agents.reviewer import ensure_findings, remove_sentences
+
+    md = (
+        "## Results\n\nSummary:\n\n**Logistic Regression:**\n- bad claim about it here.\n\n"
+        "### Main results\n\n| t |\n\n## Discussion\n\nText.\n"
+    )
+    md, n = remove_sentences(md, ["bad claim about it here."])
+    assert n == 1 and "**Logistic Regression:**" not in md and "\n- " not in md
+    out, added = ensure_findings(md, GAP_ANALYSIS)
+    assert "Results" in added and "logistic regression reached a macro-F1 of 0.6800" in out
+    assert out.index("reached a macro-F1") < out.index("### Main results")

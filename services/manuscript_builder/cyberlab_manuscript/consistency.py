@@ -71,13 +71,24 @@ def split_sentences(para: str) -> list[str]:
     return [p.replace(_DOT, ".").strip() for p in parts if p.strip()]
 
 
-def prose_sentences(body: str) -> list[str]:
-    out = []
+def prose_items(body: str) -> list[tuple[str, str]]:
+    """(sentence, context). A list item's context is the line that introduces the list, e.g.
+    '**Logistic Regression:**' above '- Macro-F1: 0.6815', so the item is read with its model."""
+    out: list[tuple[str, str]] = []
+    intro = ""
     for para in body.split("\n"):
         if not para.strip() or para.startswith(("|", "#", ">")):
             continue
-        out += split_sentences(para.lstrip("-* "))
+        is_item = bool(re.match(r"\s*(?:[-*+]|\d+\.)\s", para))
+        ctx = intro if is_item else ""
+        if not is_item:
+            intro = para
+        out += [(s, ctx) for s in split_sentences(para.lstrip("-*+ "))]
     return out
+
+
+def prose_sentences(body: str) -> list[str]:
+    return [s for s, _ in prose_items(body)]
 
 
 def mentions(sentence: str, known: list[str]) -> list[tuple[int, str]]:
@@ -101,14 +112,17 @@ def comparisons(sentence: str, known: list[str]) -> list[tuple[str, str, str]]:
     for i, c in enumerate(comps):
         lo = comps[i - 1].end() if i else 0
         hi = comps[i + 1].start() if i + 1 < len(comps) else len(sentence)
-        left = [n for pos, n in ms if lo <= pos < c.start()]
+        left = [(pos, n) for pos, n in ms if lo <= pos < c.start()]
         right = [n for pos, n in ms if c.end() <= pos < hi]
         if i + 1 < len(comps) and right:
             right = right[:-1]  # subject of the next comparison
         if not left:
             continue
-        subject = left[-1]
-        out += [(subject, o, c.group(0)) for o in dict.fromkeys(right) if o != subject]
+        subj_pos, subject = left[-1]
+        # 'random forest does not provide an advantage over ...' negates the comparison
+        negated = bool(CMP_NEG.search(sentence[subj_pos : c.start()]))
+        word = ("not " if negated else "") + c.group(0)
+        out += [(subject, o, word) for o in dict.fromkeys(right) if o != subject]
     return out
 
 
@@ -116,6 +130,7 @@ def compared_pairs(sentence: str, known: list[str]) -> list[tuple[str, str]]:
     return [(a, b) for a, b, _ in comparisons(sentence, known)]
 
 
+CMP_NEG = re.compile(r"\b(?:not|never|neither)\b|n't\b|\bfail\w* to\b", re.I)
 EQUAL_WORDS = re.compile(r"comparabl|on par|similar", re.I)
 WORSE_WORDS = re.compile(r"worse|inferior|lower", re.I)
 
@@ -133,6 +148,17 @@ def comparison_contradiction(
             ):
                 continue
             supported = h.get("result") == "supported"
+            negated = word.startswith("not ")
+            if negated:
+                if EQUAL_WORDS.search(word):
+                    continue  # 'not comparable' = different: agrees with a supported test
+                claimed = obj if WORSE_WORDS.search(word) else subj  # said NOT to be better
+                if supported and claimed == h["a"]:
+                    return (
+                        f"says {claimed} is not better than the other model, but {h['id']} "
+                        f"found {h['a']} > {h['b']} (supported)"
+                    )
+                continue
             if EQUAL_WORDS.search(word):
                 if supported:
                     return (
@@ -211,7 +237,7 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
     for name, body in sections(markdown.split("\n## Evidence", 1)[0]):
         if name in SKIP_SECTIONS:
             continue
-        for sent in prose_sentences(body):
+        for sent, ctx in prose_items(body):
             if any(tag in sent for tag in UNRESOLVED):
                 add(
                     name,
@@ -228,7 +254,7 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     f"a measured score appears in {name}; scores belong in Results",
                 )
                 continue
-            if SCORE.search(sent) and not mentions(sent, known):
+            if SCORE.search(sent) and not mentions(f"{ctx} {sent}", known):
                 add(
                     name,
                     sent,
@@ -294,7 +320,7 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                 continue
             if name == "Related Work" or "[@" in sent:
                 continue  # statements about other papers are checked against their abstracts
-            mentioned = [n for _, n in mentions(sent, known)]
+            mentioned = [n for _, n in mentions(f"{ctx} {sent}", known)]
             contradiction = comparison_contradiction(sent, known, hyps)
             if contradiction:
                 add(name, sent, "HYP_CONTRADICTION", contradiction)
