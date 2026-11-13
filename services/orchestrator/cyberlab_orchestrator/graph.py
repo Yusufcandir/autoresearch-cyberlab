@@ -195,22 +195,31 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     g.add_node("reviewer", node(reviewer_agent, "reviewer"))
     g.add_node("gate_d", gate_d)
 
+    # The dataset check does not depend on the literature, so the two branches run in
+    # parallel after planning and meet again before the PI's protocol approval.
+    def ready(state: LabState) -> dict[str, Any]:
+        return {}
+
+    g.add_node("ready", ready)
+    g.add_node("revise_protocol", node(methodology_agent, "methodology"))
     g.add_edge(START, "orchestrator")
     g.add_edge("orchestrator", "literature")
+    g.add_edge("orchestrator", "dataset")
     g.add_edge("literature", "research_gap")
     g.add_edge("research_gap", "methodology")
-    g.add_edge("methodology", "dataset")
+    g.add_edge(["methodology", "dataset"], "ready")
     g.add_conditional_edges(
-        "dataset", lambda s: "gate_a" if s.get("dataset_status") == "verified" else END
+        "ready", lambda s: "gate_a" if s.get("dataset_status") == "verified" else END
     )
     g.add_conditional_edges(
         "gate_a",
         lambda s: (
             "coding"
             if s.get("gate_a") == "approved"
-            else ("methodology" if s.get("gate_a") == "rejected" else "gate_a")
+            else ("revise_protocol" if s.get("gate_a") == "rejected" else "gate_a")
         ),
     )
+    g.add_edge("revise_protocol", "gate_a")
     g.add_conditional_edges("coding", lambda s: END if s.get("compile_error") else "experiment")
     g.add_edge("experiment", "wait_jobs")
     g.add_conditional_edges(

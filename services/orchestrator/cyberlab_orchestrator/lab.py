@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import Any
 
@@ -68,6 +69,11 @@ class Lab:
         self.saver = SqliteSaver(self._conn)
         self.graph = build_graph(self.ctx, self.saver)
         self._locks: dict[str, threading.Lock] = {}
+        self._pool = ThreadPoolExecutor(
+            max_workers=settings.cpu_job_slots + 1, thread_name_prefix="job"
+        )
+        self._futures: dict[str, Future[None]] = {}
+        self._gpu_job: dict[str, bool] = {}
         self._locks_guard = threading.Lock()
 
     # ----------------------------------------------------------------- budgets
@@ -250,10 +256,46 @@ class Lab:
             )
 
     # ----------------------------------------------------------------- worker
-    def worker_tick(self, prepared_dir: Any = None) -> dict[str, Any]:
-        """Run at most one queued job, then advance any study whose jobs are all finished."""
-        fixed = self.ctx.broker.reconcile()
-        ran = self.ctx.broker.run_once(prepared_dir=prepared_dir)
+    def worker_tick(self, prepared_dir: Any = None, wait: bool = False) -> dict[str, Any]:
+        """Start queued jobs up to capacity (several CPU jobs + one GPU job in parallel),
+        then advance any study whose jobs are all finished.
+
+        `wait=True` blocks until the started jobs finish (used by tests and `--once`).
+        """
+        broker = self.ctx.broker
+        fixed = broker.reconcile()
+        self._futures = {k: f for k, f in self._futures.items() if not f.done()}
+        cpu_running = sum(1 for k in self._futures if not self._gpu_job.get(k))
+        gpu_running = any(self._gpu_job.get(k) for k in self._futures)
+        started: list[str] = []
+        while True:
+            cpu_free = cpu_running < self.settings.cpu_job_slots
+            gpu_free = not gpu_running and not broker.gpu_busy()
+            if not cpu_free and not gpu_free:
+                break
+            claimed = broker.claim(gpu_free=gpu_free)
+            if claimed is None:
+                break
+            job_id, manifest = claimed
+            if not manifest.use_gpu and not cpu_free:  # claimed a CPU job without a CPU slot
+                with self.db.session() as s:
+                    job = s.get(JobRecord, job_id)
+                    if job is not None:
+                        job.state, job.attempts = "queued", max(0, job.attempts - 1)
+                break
+            self._gpu_job[job_id] = manifest.use_gpu
+            self._futures[job_id] = self._pool.submit(
+                broker.execute, job_id, manifest, prepared_dir
+            )
+            started.append(job_id)
+            if manifest.use_gpu:
+                gpu_running = True
+            else:
+                cpu_running += 1
+        if wait:
+            for f in list(self._futures.values()):
+                f.result()
+        ran = started[0] if started else None
         advanced = []
         with self.db.session() as s:
             waiting = [p.id for p in s.scalars(select(Project).where(Project.stage == "running"))]
@@ -269,7 +311,14 @@ class Lab:
                 if active is None:
                     self._invoke(pid, Command(resume={"jobs": "done"}))
                     advanced.append(pid)
-        return {"reconciled": fixed, "ran_job": ran, "advanced": advanced}
+        return {
+            "reconciled": fixed,
+            "ran_job": ran,
+            "started": started,
+            "running": len([f for f in self._futures.values() if not f.done()]),
+            "advanced": advanced,
+        }
 
     def close(self) -> None:
+        self._pool.shutdown(wait=True)
         self._conn.close()

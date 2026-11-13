@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import uuid
 from pathlib import Path
 
 from sqlalchemy import select
@@ -53,9 +54,15 @@ class ArtifactStore:
         dest = self.root / sha[:2] / sha / name
         if not dest.exists():
             dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp = dest.with_suffix(dest.suffix + ".tmp")
+            # Unique temp name: parallel jobs can publish identical content at the same time.
+            tmp = dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.tmp")
             shutil.copyfile(src, tmp)
-            tmp.replace(dest)  # atomic publish
+            try:
+                tmp.replace(dest)  # atomic publish
+            except PermissionError:  # Windows: another writer just published the same bytes
+                tmp.unlink(missing_ok=True)
+                if not dest.exists():
+                    raise
         rec = ArtifactRecord(
             sha256=sha,
             project_id=project_id,

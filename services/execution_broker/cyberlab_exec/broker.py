@@ -19,6 +19,7 @@ import shutil
 import socket
 import subprocess  # noqa: S404 - fixed interpreter and module only
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -57,6 +58,15 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _ref_alive(ref: str | None) -> bool:
+    """external_ref is 'local:<host>:<pid>:<job>'; the job is alive if that broker process is."""
+    try:
+        _kind, host, pid, _job = (ref or "").split(":")
+    except ValueError:
+        return False
+    return host == socket.gethostname() and pid.isdigit() and _pid_alive(int(pid))
 
 
 class GpuLock:
@@ -128,6 +138,9 @@ class Broker:
         self.store = ArtifactStore(settings.artifact_root)
         self.lock = GpuLock(settings.data_dir / "locks" / "gpu.lock")
         self.work_root = settings.data_dir / "work"
+        self._claim_lock = threading.Lock()
+        slots = max(1, settings.cpu_job_slots)
+        self.threads_per_job = max(1, (os.cpu_count() or 2) // (slots + 1))
 
     # ------------------------------------------------------------------ submission
     def submit(self, s: Session, manifest: ExperimentManifest, actor: str) -> JobRecord:
@@ -179,7 +192,7 @@ class Broker:
         live_job = owner.get("job_id") if owner and _pid_alive(int(owner.get("pid", -1))) else None
         with self.db.session() as s:
             for job in s.scalars(select(JobRecord).where(JobRecord.state == "running")):
-                if job.id == live_job:
+                if job.id == live_job or _ref_alive(job.external_ref):
                     continue
                 done = s.scalar(select(RunRecord).where(RunRecord.job_id == job.id))
                 if done is not None:
@@ -202,8 +215,14 @@ class Broker:
         return fixed
 
     # ------------------------------------------------------------------ execution
-    def next_job_id(self, project_id: str | None = None) -> str | None:
-        with self.db.session() as s:
+    def claim(
+        self, gpu_free: bool, project_id: str | None = None
+    ) -> tuple[str, ExperimentManifest] | None:
+        """Atomically pick the next runnable job and mark it running.
+
+        CPU jobs may run several at a time; GPU jobs only when the single GPU slot is free.
+        """
+        with self._claim_lock, self.db.session() as s:
             q = select(JobRecord).where(JobRecord.state == "queued").order_by(JobRecord.created_at)
             if project_id:
                 q = q.where(JobRecord.project_id == project_id)
@@ -221,46 +240,72 @@ class Broker:
                         s, "broker", "budget.threshold_reached", job.project_id, {"job_id": job.id}
                     )
                     continue
-                return job.id
+                manifest = ExperimentManifest.model_validate(job.manifest)
+                if manifest.use_gpu:
+                    if not gpu_free:
+                        continue
+                    others = foreign_gpu_processes()
+                    if others:
+                        job.failure_reason = f"waiting: GPU in use by other processes {others}"
+                        audit(
+                            s,
+                            "broker",
+                            "job.contention",
+                            job.project_id,
+                            {"job_id": job.id, "others": others},
+                        )
+                        continue
+                job.state = "running"
+                job.attempts += 1
+                job.external_ref = f"local:{socket.gethostname()}:{os.getpid()}:{job.id[:8]}"
+                job.failure_reason = None
+                job.updated_at = now()
+                audit(
+                    s,
+                    "broker",
+                    "job.started",
+                    job.project_id,
+                    {"job_id": job.id, "experiment_id": job.experiment_id, "ref": job.external_ref},
+                )
+                return job.id, manifest
         return None
+
+    def gpu_busy(self) -> bool:
+        owner = self.lock.owner()
+        return owner is not None and _pid_alive(int(owner.get("pid", -1)))
 
     def run_once(
         self, project_id: str | None = None, prepared_dir: Path | None = None
     ) -> str | None:
-        job_id = self.next_job_id(project_id)
-        if job_id is None:
+        claimed = self.claim(gpu_free=not self.gpu_busy(), project_id=project_id)
+        if claimed is None:
             return None
-        with self.db.session() as s:
-            job = s.get(JobRecord, job_id)
-            assert job is not None
-            manifest = ExperimentManifest.model_validate(job.manifest)
-            if manifest.use_gpu:
-                others = foreign_gpu_processes()
-                if others:
-                    job.failure_reason = f"waiting: GPU in use by other processes {others}"
-                    audit(
-                        s,
-                        "broker",
-                        "job.contention",
-                        job.project_id,
-                        {"job_id": job.id, "others": others},
-                    )
-                    return None
-        try:
-            self.lock.acquire(job_id)
-        except LockBusy:
-            return None
-        try:
-            self._execute(job_id, manifest, prepared_dir)
-        finally:
-            self.lock.release(job_id)
-        return job_id
+        self.execute(claimed[0], claimed[1], prepared_dir)
+        return claimed[0]
 
     def run_all(self, project_id: str | None = None, prepared_dir: Path | None = None) -> list[str]:
         done = []
         while (jid := self.run_once(project_id, prepared_dir)) is not None:
             done.append(jid)
         return done
+
+    def execute(self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None) -> None:
+        """Run a claimed job. GPU jobs hold the host-wide GPU lock for their whole run."""
+        if not manifest.use_gpu:
+            self._execute(job_id, manifest, prepared_dir)
+            return
+        try:
+            self.lock.acquire(job_id)
+        except LockBusy:  # another broker grabbed the GPU first: give the job back
+            with self.db.session() as s:
+                job = s.get(JobRecord, job_id)
+                if job is not None:
+                    job.state, job.attempts = "queued", max(0, job.attempts - 1)
+            return
+        try:
+            self._execute(job_id, manifest, prepared_dir)
+        finally:
+            self.lock.release(job_id)
 
     def _execute(
         self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None
@@ -270,20 +315,6 @@ class Broker:
         work.mkdir(parents=True, exist_ok=True)
         (work / "manifest.json").write_text(manifest.model_dump_json())
         started = datetime.now(UTC)
-        with self.db.session() as s:
-            job = s.get(JobRecord, job_id)
-            assert job is not None
-            job.state = "running"
-            job.attempts += 1
-            job.external_ref = f"local:{socket.gethostname()}:{os.getpid()}:{job_id[:8]}"
-            job.updated_at = now()
-            audit(
-                s,
-                "broker",
-                "job.started",
-                job.project_id,
-                {"job_id": job_id, "ref": job.external_ref},
-            )
 
         cmd = [
             sys.executable,
@@ -293,7 +324,11 @@ class Broker:
             str(prepared),
             str(work / "out"),
         ]
-        env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0" if manifest.use_gpu else ""}
+        env = {
+            **os.environ,
+            "CUDA_VISIBLE_DEVICES": "0" if manifest.use_gpu else "",
+            "CYBERLAB_N_JOBS": str(self.threads_per_job),
+        }
         proc = subprocess.Popen(
             cmd, stdout=(work / "stdout.log").open("w"), stderr=subprocess.STDOUT, env=env
         )  # noqa: S603

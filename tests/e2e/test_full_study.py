@@ -71,7 +71,7 @@ def test_full_study(lab: Lab) -> None:
     assert n_jobs == 12  # 4 models x 3 seeds
 
     for _ in range(n_jobs + 2):
-        lab.worker_tick()
+        lab.worker_tick(wait=True)
     status = lab.status(pid)
     assert status["pending"] and status["pending"]["gate"] == "D", status
 

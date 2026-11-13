@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     gpu_job_max_minutes: int = Field(default=60, gt=0)
     max_project_storage_gb: int = Field(default=50, gt=0)
     use_gpu: bool = False
+    # CPU-only experiments that may run at the same time (GPU jobs always run one at a time).
+    cpu_job_slots: int = Field(default=3, ge=1, le=16)
     data_dir: Path = Path("./var")
 
     sandbox_backend: SandboxBackend = SandboxBackend.NONE

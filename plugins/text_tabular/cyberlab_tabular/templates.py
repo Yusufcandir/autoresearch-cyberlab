@@ -10,6 +10,7 @@ not write the code that executes.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import time
 from collections.abc import Callable
@@ -27,6 +28,8 @@ from sklearn.preprocessing import LabelEncoder, QuantileTransformer, StandardSca
 
 from cyberlab_data import load_split
 from cyberlab_schemas import ExperimentManifest
+
+_N_JOBS = int(os.environ.get("CYBERLAB_N_JOBS", "-1"))
 
 ALLOWED_PARAMS: dict[str, set[str]] = {
     "logistic_regression": {"C", "max_iter"},
@@ -46,7 +49,7 @@ def _logreg(p: dict[str, Any], seed: int, gpu: bool) -> Any:
     return make_pipeline(
         StandardScaler(),
         LogisticRegression(
-            C=p.get("C", 1.0), max_iter=p.get("max_iter", 400), random_state=seed, n_jobs=-1
+            C=p.get("C", 1.0), max_iter=p.get("max_iter", 400), random_state=seed, n_jobs=_N_JOBS
         ),
     )
 
@@ -57,7 +60,7 @@ def _rf(p: dict[str, Any], seed: int, gpu: bool) -> Any:
         max_depth=p.get("max_depth"),
         min_samples_leaf=p.get("min_samples_leaf", 1),
         class_weight="balanced_subsample",
-        n_jobs=-1,
+        n_jobs=_N_JOBS,
         random_state=seed,
     )
 
@@ -73,7 +76,7 @@ def _xgb(p: dict[str, Any], seed: int, gpu: bool) -> Any:
         tree_method="hist",
         device="cuda" if gpu else "cpu",
         random_state=seed,
-        n_jobs=-1,
+        n_jobs=_N_JOBS,
         eval_metric="mlogloss",
     )
 

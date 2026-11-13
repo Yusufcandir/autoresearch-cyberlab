@@ -91,22 +91,20 @@ def build_progress(
 ) -> tuple[list[Step], str]:
     """Return the step list and a one-line 'what is happening now' message."""
     finished: set[str] = set()
-    open_step: tuple[str, datetime] | None = None
+    open_steps: dict[str, datetime] = {}
     failed: dict[str, str] = {}
     for e in sorted(events, key=lambda e: e.id):
         step = _ALIAS.get(str(e.detail.get("step", "")), str(e.detail.get("step", "")))
         if e.action == "agent.started":
-            open_step = (step, e.ts)
+            open_steps[step] = e.ts
             failed.pop(step, None)
         elif e.action == "agent.finished":
             if step != "experiments":  # experiments are done when all jobs are, not when submitted
                 finished.add(step)
-            if open_step and open_step[0] == step:
-                open_step = None
+            open_steps.pop(step, None)
         elif e.action == "agent.failed":
             failed[step] = str(e.detail.get("error", ""))
-            if open_step and open_step[0] == step:
-                open_step = None
+            open_steps.pop(step, None)
     actions = {e.action for e in events}
     n_jobs = len(jobs)
     states = Counter(j.state for j in jobs)
@@ -137,9 +135,10 @@ def build_progress(
             or (key == "gate_d" and pending.get("gate") == "D")
         ):
             state, now = "waiting", desc
-        if open_step and open_step[0] == key and stage != "error" and key != "experiments":
+        if key in open_steps and stage != "error" and key != "experiments":
             state = "running"
-            now = f"{label} ({_ago(open_step[1])} so far): {desc}"
+            msg = f"{label} ({_ago(open_steps[key])} so far): {desc}"
+            now = f"{now}  |  {msg}" if now else msg
         if key in failed and stage == "error":
             state, detail = "error", failed[key][:120]
         steps.append(Step(key, label, state, detail))

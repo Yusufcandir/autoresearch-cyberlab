@@ -176,13 +176,12 @@ def _worker(args: argparse.Namespace) -> int:
     print("worker started; Ctrl+C to stop", flush=True)
     try:
         while True:
-            info = lab.worker_tick()
-            if info["ran_job"] or info["advanced"] or info["reconciled"]:
+            info = lab.worker_tick(wait=args.once)
+            if info["started"] or info["advanced"] or info["reconciled"]:
                 print(json.dumps(info), flush=True)
             if args.once:
                 return 0
-            if not info["ran_job"]:
-                time.sleep(args.interval)
+            time.sleep(args.interval)
     except KeyboardInterrupt:
         return 0
 
