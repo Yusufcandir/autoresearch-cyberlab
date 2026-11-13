@@ -48,6 +48,12 @@ def wrap_untrusted(label: str, content: str, limit: int = 12_000) -> str:
 _status = threading.local()
 
 
+def _handover_due() -> bool:
+    """True when a healthy local model is waiting and Gemini has already had its time."""
+    deadline = getattr(_status, "deadline", None)
+    return deadline is not None and time.monotonic() >= deadline
+
+
 def report_status(message: str) -> None:
     """Providers call this when they wait or switch model; the gateway forwards it."""
     fn = getattr(_status, "fn", None)
@@ -160,20 +166,26 @@ class GeminiProvider:
                     )
                 except httpx.HTTPError as exc:  # timeout or dropped connection
                     problems.append(f"{model}: {type(exc).__name__}")
+                    if _handover_due():
+                        raise LLMError("Gemini did not answer in time") from exc
                     report_status(f"{model} did not answer in time; retrying")
                     r = None
                     time.sleep(3)
                     continue
                 if r.status_code in (429, 500, 503):  # overloaded or rate limited
                     problems.append(f"{model}: HTTP {r.status_code}")
-                    busy = "rate limit reached" if r.status_code == 429 else "busy"
+                    busy = "has reached its rate limit" if r.status_code == 429 else "is busy"
+                    if _handover_due():
+                        raise LLMError(f"Gemini {model} {busy} (HTTP {r.status_code})")
                     report_status(
-                        f"Gemini {model} is {busy} (HTTP {r.status_code}); waiting and retrying"
+                        f"Gemini {model} {busy} (HTTP {r.status_code}); waiting and retrying"
                     )
                     time.sleep(5 * (attempt + 1))
                     continue
                 break
             if r is None or r.status_code in (429, 500, 503):
+                if _handover_due():
+                    raise LLMError(f"Gemini busy ({'; '.join(problems[-3:])})")
                 if model != self.models[-1]:
                     nxt = self.models[self.models.index(model) + 1]
                     report_status(f"Gemini {model} unavailable; switching to {nxt}")
@@ -202,6 +214,27 @@ class GeminiProvider:
 class OllamaProvider:
     name = "ollama"
     local = True
+    _ready_cache: tuple[float, bool] | None = None
+
+    def ready(self) -> bool:
+        """Is Ollama running here with the configured model pulled? Cached for a minute."""
+        if self._ready_cache is not None and time.monotonic() - self._ready_cache[0] < 60:
+            return self._ready_cache[1]
+        try:
+            r = self.client.get(f"{self.host}/api/tags", timeout=2)
+            names = (
+                [m.get("name", "") for m in r.json().get("models", [])]
+                if r.status_code == 200
+                else []
+            )
+            ok = any(
+                n == self.model or n.startswith(self.model + ":") or n.split(":")[0] == self.model
+                for n in names
+            )
+        except (httpx.HTTPError, ValueError):
+            ok = False
+        self._ready_cache = (time.monotonic(), ok)
+        return ok
 
     def __init__(
         self, host: str, model: str, timeout: float = 300, client: httpx.Client | None = None
@@ -278,6 +311,8 @@ class LLMGateway:
     private_lookup: Callable[[str], bool] | None = None
     # (project_id, task, message): live status such as 'Gemini busy, retrying'
     on_status: Callable[[str, str, str], None] | None = None
+    # Seconds Gemini may keep retrying before a ready local model takes over (0 = never).
+    handover_seconds: float = 20.0
     log: list[dict[str, Any]] = field(default_factory=list)
 
     def complete(
@@ -303,10 +338,21 @@ class LLMGateway:
             if self.on_status and project_id:
                 hook = self.on_status
                 _status.fn = lambda msg: hook(project_id, task, msg)
+            _status.deadline = None
+            if (
+                provider is self.primary
+                and not provider.local
+                and self.handover_seconds > 0
+                and isinstance(self.local, OllamaProvider)
+                and self.local.ready()
+            ):
+                _status.deadline = time.monotonic() + self.handover_seconds
             result = provider.generate(full_system, redact(prompt), json_mode, temperature)
         except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
-                report_status(f"{provider.name} failed; falling back to the local model")
+                report_status(
+                    f"Gemini unavailable; writing with the local model {self.local.model} on this server"
+                )
                 try:
                     result = self.local.generate(
                         full_system, redact(prompt), json_mode, temperature
@@ -319,6 +365,7 @@ class LLMGateway:
             else:
                 raise
         _status.fn = None
+        _status.deadline = None
         if project_id and self.charge:
             self.charge(project_id, result.total_tokens)
         self.log.append(
@@ -367,7 +414,9 @@ def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
             settings.llm_timeout_seconds,
             fallback_models=[m.strip() for m in settings.gemini_fallback_models.split(",")],
         )
-        return LLMGateway(primary, ollama, **hooks)
+        gw = LLMGateway(primary, ollama, **hooks)
+        gw.handover_seconds = settings.gemini_handover_seconds
+        return gw
     if provider == "ollama":
         return LLMGateway(ollama, ollama, **hooks)
     if provider == "fake":
