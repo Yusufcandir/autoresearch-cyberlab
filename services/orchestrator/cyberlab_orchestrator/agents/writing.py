@@ -47,7 +47,10 @@ SYSTEM = (
     "11. The 95% CI is a bootstrap over test rows for one seed; variation across seeds is the "
     "± sd. Do not describe the CI as variation across seeds.\n"
     "12. The abstract and conclusion must state the main findings with {{hyp:...}} and "
-    "{{metric:...}} placeholders.\n"
+    "{{metric:...}} placeholders; never write a bare H1/H2 with your own verdict.\n"
+    "13. Write for readers of the paper: never mention 'statistician notes', 'reviewer "
+    "feedback', placeholders or other internal tools. Every number must say which metric it "
+    "is (e.g. 'a macro-F1 of {{metric:xgboost:macro_f1}}').\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
     "discussion, limitations, conclusion (markdown strings)."
 )
@@ -72,6 +75,12 @@ def method_facts(
     seeds = body.get("seeds", [])
     first: dict[str, Any] = next(iter(analysis.get("models", {}).values()), {})
     ci = first.get("macro_f1_ci", {})
+    support = {c: v.get("support", 0) for c, v in (first.get("per_class") or {}).items()}
+    smallest = (
+        f"{min(support, key=support.__getitem__)} ({min(support.values()):,} test rows)"
+        if support
+        else ""
+    )
     facts: dict[str, Any] = {
         "n_seeds": len(seeds),
         "seeds": ", ".join(str(x) for x in seeds),
@@ -80,9 +89,10 @@ def method_facts(
         "val_percent": f"{round(100 * float(split.get('val_fraction', 0)))}%",
         "rows_raw": f"{ds.get('n_rows_raw', 0):,}",
         "rows_clean": f"{ds.get('n_rows_clean', 0):,}",
-        "rows_removed_duplicates_or_conflicts": f"{ds.get('n_duplicates_removed', 0):,}",
-        "rows_dropped_inf_nan": f"{notes.get('rows_with_inf_or_nan_dropped', 0):,}",
-        "benign_cap": f"{notes.get('benign_cap') or 0:,}",
+        "rows_removed_duplicates_or_conflicts": f"{ds.get('n_duplicates_removed', 0):,} rows",
+        "rows_dropped_inf_nan": f"{notes.get('rows_with_inf_or_nan_dropped', 0):,} rows",
+        "benign_cap": f"{notes.get('benign_cap') or 0:,} rows",
+        "smallest_class_test_rows": smallest,
         "n_features": len(ds.get("features", [])),
         "n_classes": len(ds.get("class_counts", {})),
         "test_rows": f"{ds.get('split_counts', {}).get('test', 0):,}",

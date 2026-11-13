@@ -188,7 +188,7 @@ def test_accuracy_gap_caveat_must_name_a_model_that_has_the_gap() -> None:
 
 
 def test_ci_described_as_seed_variation_is_flagged() -> None:
-    md = "# T\n\n## Results\n\nXGBoost has 95% CI [0.9647, 0.9916], seed 42, reflecting robustness across different seeds.\n"
+    md = "# T\n\n## Results\n\nXGBoost macro-F1 has 95% CI [0.9647, 0.9916], seed 42, reflecting robustness across different seeds.\n"
     assert [i["code"] for i in consistency_issues(md, GAP_ANALYSIS)] == ["CI_MISREAD"]
 
 
@@ -204,3 +204,45 @@ def test_findings_are_added_when_abstract_and_conclusion_lack_them() -> None:
         in out
     )
     assert "However" not in out and "More work is needed." in out
+
+
+def _codes(md: str) -> list[str]:
+    return [i["code"] for i in consistency_issues(md, ANALYSIS_RESULTS)]
+
+
+ANALYSIS_RESULTS = {
+    **ANALYSIS,
+    "hypotheses": [
+        {"id": "H1", "a": "xgboost", "b": "logistic_regression", "result": "supported"},
+        {"id": "H2", "a": "random_forest", "b": "logistic_regression", "result": "supported"},
+    ],
+}
+
+
+def test_bare_hypothesis_verdicts_are_checked() -> None:
+    assert _codes("## Abstract\n\nThe results support H1 but not H2.\n") == ["HYP_CONTRADICTION"]
+    assert _codes("## Abstract\n\nThe results support H1 and H2.\n") == []
+    assert _codes("## Abstract\n\nH2 was not supported by the data.\n") == ["HYP_CONTRADICTION"]
+    assert _codes("## Methodology\n\nHypotheses H1 and H2 were tested with McNemar.\n") == []
+
+
+def test_comparison_that_contradicts_a_test_is_flagged() -> None:
+    bad = "## Results\n\nRandom forest shows comparable performance to logistic regression.\n"
+    assert _codes(bad) == ["HYP_CONTRADICTION"]
+    worse = "## Results\n\nLogistic regression outperforms random forest on macro-F1.\n"
+    assert _codes(worse) == ["HYP_CONTRADICTION"]
+    ok = "## Results\n\nRandom forest outperforms logistic regression on macro-F1.\n"
+    assert _codes(ok) == []
+
+
+def test_reader_facing_checks() -> None:
+    assert _codes("## Discussion\n\nThe statistician notes highlight caveats.\n") == [
+        "INTERNAL_REFERENCE"
+    ]
+    assert _codes("## Discussion\n\nLogistic regression achieves 0.9698 ± 0.0000.\n") == [
+        "SCORE_WITHOUT_METRIC"
+    ]
+    assert _codes("## Discussion\n\nThe Rare class has very few test instances (331,332).\n") == [
+        "FACT_MISUSED"
+    ]
+    assert _codes("## Limitations\n\nOnly a few studies since 2017 used this dataset.\n") == []

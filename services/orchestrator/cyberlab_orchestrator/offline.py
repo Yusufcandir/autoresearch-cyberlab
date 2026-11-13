@@ -26,7 +26,7 @@ _SECTIONS = {
         "stratified split with no train/test overlap. Each model was trained with several seeds."
     ),
     "results": (
-        "Hypothesis H1 was {{hyp:H1}}. Model BEST obtained {{metric:BEST:macro_f1}} "
+        "Hypothesis H1 was {{hyp:H1}}. Model BEST obtained a macro-F1 of {{metric:BEST:macro_f1}} "
         "({{ci:BEST:macro_f1}})."
     ),
     "discussion": "Per-class results show where minority attack classes remain difficult.",

@@ -90,14 +90,14 @@ def mentions(sentence: str, known: list[str]) -> list[tuple[int, str]]:
     return sorted(set(found))
 
 
-def compared_pairs(sentence: str, known: list[str]) -> list[tuple[str, str]]:
-    """Model pairs that a comparison word puts against each other.
+def comparisons(sentence: str, known: list[str]) -> list[tuple[str, str, str]]:
+    """(subject, object, comparison word) for every model comparison in the sentence.
 
     'A outperforms B and C' -> (A,B), (A,C). In 'A beats B, and C beats B' the C before the
     second comparison is its subject, not an object of the first."""
     ms = mentions(sentence, known)
     comps = list(COMPARE.finditer(sentence))
-    pairs: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []
     for i, c in enumerate(comps):
         lo = comps[i - 1].end() if i else 0
         hi = comps[i + 1].start() if i + 1 < len(comps) else len(sentence)
@@ -108,8 +108,70 @@ def compared_pairs(sentence: str, known: list[str]) -> list[tuple[str, str]]:
         if not left:
             continue
         subject = left[-1]
-        pairs += [(subject, o) for o in dict.fromkeys(right) if o != subject]
-    return pairs
+        out += [(subject, o, c.group(0)) for o in dict.fromkeys(right) if o != subject]
+    return out
+
+
+def compared_pairs(sentence: str, known: list[str]) -> list[tuple[str, str]]:
+    return [(a, b) for a, b, _ in comparisons(sentence, known)]
+
+
+EQUAL_WORDS = re.compile(r"comparabl|on par|similar", re.I)
+WORSE_WORDS = re.compile(r"worse|inferior|lower", re.I)
+
+
+def comparison_contradiction(
+    sentence: str, known: list[str], hyps: list[dict[str, Any]]
+) -> str | None:
+    """A comparison of a TESTED pair that disagrees with the test: 'random forest is comparable
+    to logistic regression' when H2 (random forest > logistic regression) was supported."""
+    for subj, obj, word in comparisons(sentence, known):
+        for h in hyps:
+            if {subj, obj} != {h.get("a"), h.get("b")} or h.get("result") not in (
+                "supported",
+                "not supported",
+            ):
+                continue
+            supported = h.get("result") == "supported"
+            if EQUAL_WORDS.search(word):
+                if supported:
+                    return (
+                        f"calls {subj} and {obj} comparable, but {h['id']} found "
+                        f"{h['a']} > {h['b']} (supported)"
+                    )
+                continue
+            # who does the sentence say is better?
+            better = obj if WORSE_WORDS.search(word) else subj
+            if supported and better != h["a"]:
+                return f"says {better} is better, but {h['id']} found {h['a']} > {h['b']}"
+            if not supported and better == h["a"]:
+                return f"says {h['a']} is better than {h['b']}, but {h['id']} was not supported"
+    return None
+
+
+_VERDICT_NEG = re.compile(r"\b(not|no|fail\w*|reject\w*|refut\w*|unsupported|neither|nor)\b", re.I)
+_VERDICT_POS = re.compile(r"\b(support\w*|confirm\w*|validat\w*|corroborat\w*|hold\w*)\b", re.I)
+
+
+def claimed_verdicts(sentence: str) -> list[tuple[str, bool]]:
+    """(hypothesis id, claimed supported?) for bare mentions such as 'support H1 but not H2' or
+    'H2 was not supported'. Rendered 'H1 (supported)' mentions are handled separately."""
+    out = []
+    for m in re.finditer(r"\b(H\d+)\b(?! \((?:supported|not supported)\))", sentence):
+        before = sentence[max(0, m.start() - 50) : m.start()]
+        clause = re.split(r"[,;]|\b(?:but|and|while|whereas)\b", before)[-1]
+        after = re.split(r"[,;.]|\b(?:but|while|whereas)\b", sentence[m.end() : m.end() + 50])[0]
+        if _VERDICT_NEG.search(clause):
+            out.append((m.group(1), False))
+        elif _VERDICT_POS.search(clause):
+            out.append((m.group(1), True))
+        elif re.match(r"\s+(?:was|is|were|has been)\s+(?:not|rejected|unsupported)", after, re.I):
+            out.append((m.group(1), False))
+        elif re.match(
+            r"\s+(?:was|is|were|has been)\s+(?:also\s+)?(?:supported|confirmed)", after, re.I
+        ) or re.match(r"\s+(?:also\s+)?holds", after, re.I):
+            out.append((m.group(1), True))
+    return out
 
 
 def _hyp_contradiction(sentence: str) -> bool:
@@ -139,6 +201,8 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
     all_pairs_tested = all(frozenset(p) in tested for p in itertools.combinations(known, 2))
     overlap = (analysis.get("dataset") or {}).get("split_overlap_rows")
     gap_models = accuracy_gap_models(analysis)
+    hyps = [h for h in analysis.get("hypotheses", []) if h.get("a") and h.get("b")]
+    results = {h["id"]: h.get("result") for h in analysis.get("hypotheses", []) if h.get("id")}
     issues: list[dict[str, str]] = []
 
     def add(section: str, sentence: str, code: str, reason: str) -> None:
@@ -181,6 +245,45 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "the wording contradicts the stored hypothesis result",
                 )
                 continue
+            wrong_verdict = [
+                hid
+                for hid, claimed in claimed_verdicts(sent)
+                if hid in results and claimed != (results[hid] == "supported")
+            ]
+            if wrong_verdict:
+                add(
+                    name,
+                    sent,
+                    "HYP_CONTRADICTION",
+                    "states the wrong result for "
+                    + ", ".join(f"{h} (stored result: {results[h]})" for h in wrong_verdict),
+                )
+                continue
+            if INTERNAL.search(sent):
+                add(
+                    name,
+                    sent,
+                    "INTERNAL_REFERENCE",
+                    "refers to the lab's internal notes or tooling, which readers cannot see",
+                )
+                continue
+            if SCORE.search(sent) and not METRIC_WORD.search(sent):
+                add(
+                    name,
+                    sent,
+                    "SCORE_WITHOUT_METRIC",
+                    "gives a measured value without saying which metric it is",
+                )
+                continue
+            if FEW.search(sent) and any(_is_count(n) for n in BIG_COUNT.findall(sent)):
+                add(
+                    name,
+                    sent,
+                    "FACT_MISUSED",
+                    "calls something 'few' but gives a count in the thousands (a recorded fact "
+                    "was used for the wrong quantity)",
+                )
+                continue
             if overlap == 0 and LEAK.search(sent) and not NO_LEAK.search(sent):
                 add(
                     name,
@@ -192,6 +295,10 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
             if name == "Related Work" or "[@" in sent:
                 continue  # statements about other papers are checked against their abstracts
             mentioned = [n for _, n in mentions(sent, known)]
+            contradiction = comparison_contradiction(sent, known, hyps)
+            if contradiction:
+                add(name, sent, "HYP_CONTRADICTION", contradiction)
+                continue
             if COMPARE.search(sent):
                 untested = [
                     f"{a} vs {b}"
@@ -249,6 +356,23 @@ CI_ACROSS_SEEDS = re.compile(
     r"\b(?:CI|confidence interval)s?\b.{0,160}?\b(across|over|between) (?:\w+ ){0,2}seeds\b", re.I
 )
 GAP_THRESHOLD = 0.05
+INTERNAL = re.compile(
+    r"\bstatistician(?:'s)? notes?\b|\breviewer feedback\b|\bmethod_facts\b|\bplaceholder\w*\b|"
+    r"\bthe (?:writing|statistic\w*|reviewer) agent\b",
+    re.I,
+)
+METRIC_WORD = re.compile(
+    r"macro[- ]?F1|\bF1\b|accuracy|\bMCC\b|Matthews|detection rate|false[- ]positive|\bFPR\b|"
+    r"precision|recall|\bAUC\b",
+    re.I,
+)
+FEW = re.compile(r"\b(?:very |only )?(?:few|handful|scarce|rare instances)\b", re.I)
+BIG_COUNT = re.compile(r"\b\d{1,3}(?:,\d{3})+\b|\b\d{4,}\b")
+
+
+def _is_count(n: str) -> bool:
+    v = int(n.replace(",", ""))
+    return v >= 1000 and not (1900 <= v <= 2100 and "," not in n)  # not a year
 
 
 def accuracy_gap_models(analysis: dict[str, Any]) -> list[str]:
