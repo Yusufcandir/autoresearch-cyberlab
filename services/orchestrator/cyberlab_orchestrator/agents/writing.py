@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from sqlalchemy import func, select
 
 from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, ProtocolVersion, audit
 from cyberlab_literature import Paper, bibtex_entry
+from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec
@@ -99,6 +101,46 @@ def method_facts(
     return facts, prose
 
 
+SECTION_GROUPS = [
+    ["introduction", "related_work"],
+    ["methodology", "results"],
+    ["abstract", "discussion", "limitations", "conclusion"],
+]
+
+
+def write_sections(ctx: LabContext, pid: str, context: dict[str, Any]) -> dict[str, str]:
+    """Write the paper in three parallel calls (about 3x faster than one long call).
+
+    Every call sees the same facts, papers and results, so the parts stay consistent.
+    """
+    payload = json.dumps(context, default=str)
+
+    def one(keys: list[str]) -> dict[str, str]:
+        system = (
+            SYSTEM + "\nFor THIS call write ONLY these sections and output JSON with exactly "
+            "these keys: " + ", ".join(keys) + ". Other sections are written separately."
+        )
+        out: dict[str, str] = {}
+        for _attempt in range(2):
+            try:
+                got = ctx.llm.complete_json("writing.draft", system, payload, project_id=pid)
+            except LLMError:
+                continue
+            out = {k: str(got[k]) for k in keys if isinstance(got.get(k), str | int | float)}
+            if out:
+                break
+        return out
+
+    with ThreadPoolExecutor(max_workers=len(SECTION_GROUPS)) as pool:
+        parts = list(pool.map(one, SECTION_GROUPS))
+    sections: dict[str, str] = {}
+    for part in parts:
+        sections.update(part)
+    if not sections:
+        raise LLMError("the writing model returned no sections")
+    return sections
+
+
 def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
     ctx.authorize("writing", "draft_manuscript", "T0", pid)
@@ -146,10 +188,7 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "statistician_notes": state.get("interpretation", {}),
         "reviewer_feedback": state.get("review_feedback", []),
     }
-    sections = ctx.llm.complete_json(
-        "writing.draft", SYSTEM, json.dumps(context, default=str), project_id=pid
-    )
-    sections = {k: str(v) for k, v in sections.items() if isinstance(v, str | int | float)}
+    sections = write_sections(ctx, pid, context)
     # Final revision: the deterministic guardrail removes anything still unsupported.
     final = state.get("revisions", 0) >= MAX_REVISIONS
     md, report = build_manuscript(spec.title, sections, analysis, cites, "", guardrail=final)

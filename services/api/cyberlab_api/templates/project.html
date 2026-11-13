@@ -83,7 +83,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
       <span class="label {{ status.status_label }}">{{ status.status_label }}</span>
       <span class="chip">Role <b>{{ role }}</b></span>
       <span class="chip">LLM tokens <b>{{ "{:,}".format(status.llm_tokens_used) }}</b></span>
-      <span class="chip">Compute <b>{{ status.gpu_minutes_used }} min</b></span>
+      <span class="chip" title="Total machine time used by the experiments (training and testing). It only grows while experiments run; the AI writing time is counted in LLM tokens instead.">Experiment compute <b>{{ status.gpu_minutes_used }} min</b></span>
       {% if status.paused %}<span class="chip"><b>Paused</b></span>{% endif %}
     </div>
   </div>
