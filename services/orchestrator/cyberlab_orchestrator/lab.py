@@ -55,6 +55,7 @@ class Lab:
         gateway = llm or build_gateway(settings)
         gateway.budget_lookup, gateway.charge = self._budget, self._charge
         gateway.private_lookup = self._private
+        gateway.on_status = self._llm_status
         self.ctx = LabContext(
             settings=settings,
             db=self.db,
@@ -83,6 +84,17 @@ class Lab:
             if p is None:
                 return 0, 0
             return p.llm_tokens_used, int(p.spec.get("llm_token_budget", 0))
+
+    def _llm_status(self, project_id: str, task: str, message: str) -> None:
+        with self.db.session() as s:
+            audit(
+                s,
+                "llm_gateway",
+                "llm.status",
+                project_id,
+                {"task": task, "message": message},
+                emit=False,
+            )
 
     def _private(self, project_id: str) -> bool:
         with self.db.session() as s:

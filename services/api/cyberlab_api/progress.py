@@ -186,6 +186,20 @@ def build_progress(
     for st in steps[: max(gate_idx, 0)]:
         if st.state == "todo":
             st.state = "done"
+    last = max(events, key=lambda e: e.id) if events else None
+    status_events = [e for e in events if e.action == "llm.status"]
+    if status_events and open_steps:
+        latest = max(status_events, key=lambda e: e.id)
+        newest_open = max(open_steps.values())
+        if latest.ts >= newest_open:
+            now = f"{now} · <b>{latest.detail.get('message', '')}</b> ({_ago(latest.ts)} ago)"
+    if not now and not pending and stage not in {"error", "released"} and last is not None:
+        friendly = friendly_activity([last], limit=1)
+        what = friendly[0]["text"] if friendly else last.action
+        now = (
+            f"Between steps. Last activity: {what} ({_ago(last.ts)} ago). If this does not change "
+            "for several minutes, use 'Looks stuck?' below."
+        )
     if stage == "error" and not now:
         now = "Stopped on an error. Read the reason below and use Retry; the study continues from its last checkpoint."
     if stage == "released":
@@ -217,6 +231,7 @@ _FRIENDLY = {
     "project.paused": "Study paused",
     "project.resumed": "Study resumed",
     "manuscript.redraft_requested": "Rewrite of the draft requested",
+    "llm.status": "AI service",
 }
 
 
@@ -231,6 +246,8 @@ def friendly_activity(events: list[AuditEvent], limit: int = 60) -> list[dict[st
             text, kind = f"{step} agent finished in {d.get('seconds', '?')} s", "ok"
         elif e.action == "agent.failed":
             text, kind = f"{step} agent stopped: {str(d.get('error', ''))[:160]}", "bad"
+        elif e.action == "llm.status":
+            text, kind = f"AI service: {d.get('message', '')}", "info"
         elif e.action in _FRIENDLY:
             text = _FRIENDLY[e.action]
             extra = d.get("experiment_id") or d.get("version") or d.get("error") or ""
