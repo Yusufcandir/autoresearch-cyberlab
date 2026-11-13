@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     gemini_fallback_models: str = ""
     # If the local Ollama model is ready, it takes over after Gemini has been busy this long.
     gemini_handover_seconds: float = Field(default=20, ge=0)
+    # Once Gemini fails, stay on the local model this long before trying Gemini again.
+    gemini_cooldown_seconds: float = Field(default=600, ge=0)
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b-instruct"
     llm_timeout_seconds: float = Field(default=300, gt=0)

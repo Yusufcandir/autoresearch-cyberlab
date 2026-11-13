@@ -17,6 +17,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 
 import httpx
@@ -313,7 +314,26 @@ class LLMGateway:
     on_status: Callable[[str, str, str], None] | None = None
     # Seconds Gemini may keep retrying before a ready local model takes over (0 = never).
     handover_seconds: float = 20.0
+    # After Gemini fails once, stay on the local model this long instead of retrying Gemini
+    # on every call (circuit breaker; 0 = always try Gemini first).
+    cooldown_seconds: float = 600.0
     log: list[dict[str, Any]] = field(default_factory=list)
+    _cooldown_until: float = field(default=0.0, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def _local_ready(self) -> bool:
+        return isinstance(self.local, OllamaProvider) and self.local.ready()
+
+    def gemini_cooling_down(self) -> float:
+        """Seconds left before Gemini is tried again (0 when it may be used)."""
+        with self._lock:
+            return max(0.0, self._cooldown_until - time.monotonic())
+
+    def _trip_breaker(self) -> None:
+        if self.cooldown_seconds <= 0:
+            return
+        with self._lock:
+            self._cooldown_until = time.monotonic() + self.cooldown_seconds
 
     def complete(
         self,
@@ -339,17 +359,22 @@ class LLMGateway:
                 hook = self.on_status
                 _status.fn = lambda msg: hook(project_id, task, msg)
             _status.deadline = None
-            if (
-                provider is self.primary
-                and not provider.local
-                and self.handover_seconds > 0
-                and isinstance(self.local, OllamaProvider)
-                and self.local.ready()
-            ):
-                _status.deadline = time.monotonic() + self.handover_seconds
+            if provider is self.primary and not provider.local and self.local is not None:
+                left = self.gemini_cooling_down()
+                if left > 0 and self._local_ready():
+                    # Breaker is open: do not touch Gemini, stay on the local model.
+                    provider = self.local
+                    until = datetime.now() + timedelta(seconds=left)
+                    report_status(
+                        f"Gemini unavailable; using the local model {self.local.model} "
+                        f"until {until:%H:%M}, then Gemini is tried again"
+                    )
+                elif self.handover_seconds > 0 and self._local_ready():
+                    _status.deadline = time.monotonic() + self.handover_seconds
             result = provider.generate(full_system, redact(prompt), json_mode, temperature)
         except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
+                self._trip_breaker()
                 report_status(
                     f"Gemini unavailable; writing with the local model {self.local.model} on this server"
                 )
@@ -416,6 +441,7 @@ def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
         )
         gw = LLMGateway(primary, ollama, **hooks)
         gw.handover_seconds = settings.gemini_handover_seconds
+        gw.cooldown_seconds = settings.gemini_cooldown_seconds
         return gw
     if provider == "ollama":
         return LLMGateway(ollama, ollama, **hooks)

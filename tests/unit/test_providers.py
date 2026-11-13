@@ -131,3 +131,47 @@ def test_busy_gemini_hands_over_to_ready_local_model(monkeypatch) -> None:  # ty
     res = gate.complete("t", "s", "p")
     assert res.provider == "ollama" and res.text == "local ok"
     assert gemini_calls["n"] <= 2  # handed over quickly instead of trying every model
+
+
+def test_gemini_breaker_keeps_later_calls_on_local_model(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+    from cyberlab_llm import LLMGateway
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+    now = {"t": 0.0}
+
+    def tick() -> float:
+        now["t"] += 1.0
+        return now["t"]
+
+    monkeypatch.setattr(gw.time, "monotonic", tick)
+    gemini_calls = {"n": 0}
+
+    def gemini(req: httpx.Request) -> httpx.Response:
+        gemini_calls["n"] += 1
+        return httpx.Response(429, json={})
+
+    def ollama(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen2.5:14b-instruct"}]})
+        return httpx.Response(200, json={"message": {"content": "local ok"}})
+
+    g = GeminiProvider("k", "m1", client=httpx.Client(transport=httpx.MockTransport(gemini)))
+    o = OllamaProvider(
+        "http://x", "qwen2.5:14b-instruct", client=httpx.Client(transport=httpx.MockTransport(ollama))
+    )
+    seen: list[str] = []
+    gate = LLMGateway(
+        g, o, handover_seconds=1.5, cooldown_seconds=600,
+        on_status=lambda pid, task, msg: seen.append(msg),
+    )
+    assert gate.complete("t", "s", "p", project_id="x").provider == "ollama"
+    first = gemini_calls["n"]
+    for _ in range(5):  # later calls must not go back to Gemini while the breaker is open
+        assert gate.complete("t", "s", "p", project_id="x").provider == "ollama"
+    assert gemini_calls["n"] == first
+    assert any("until" in m for m in seen)
+
+    now["t"] += 10_000  # cooldown over: Gemini is tried again
+    gate.complete("t", "s", "p", project_id="x")
+    assert gemini_calls["n"] > first
