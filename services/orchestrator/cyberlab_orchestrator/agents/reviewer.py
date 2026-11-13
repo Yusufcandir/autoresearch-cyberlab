@@ -25,7 +25,8 @@ from cyberlab_common.db import (
 )
 from cyberlab_llm.gateway import as_list, wrap_untrusted
 from cyberlab_manuscript import manuscript_sha
-from cyberlab_orchestrator.agents.writing import MAX_REVISIONS
+from cyberlab_manuscript.consistency import consistency_issues
+from cyberlab_orchestrator.agents.writing import MAX_REVISIONS, _load_analysis
 from cyberlab_orchestrator.context import LabContext
 
 DIMENSIONS = [
@@ -124,24 +125,33 @@ def _section_bodies(markdown: str) -> dict[str, str]:
 
 
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
-    """Remove single flagged sentences. Never removes whole paragraphs or empties a section."""
-    original = markdown
+    """Remove single flagged sentences. Never removes whole paragraphs or empties a required
+    section: a sentence whose removal would do that is kept (and stays flagged)."""
+
+    def cleanup(md: str) -> str:
+        md = re.sub(r"[ \t]{2,}", " ", md)
+        return re.sub(r"(?m)^ (?=\S)", "", md)  # no stray space where a sentence was cut
+
     removed = 0
     for sent in sorted(set(sentences), key=len, reverse=True):
         single = len(re.findall(r"[.!?](?:\s|$)", sent.strip())) <= 1 and "\n" not in sent
-        if single and len(sent) > 20 and sent in markdown:
-            markdown = markdown.replace(sent, "", 1)
-            removed += 1
-    markdown = re.sub(r"[ \t]{2,}", " ", markdown)
-    markdown = re.sub(r"(?m)^ (?=\S)", "", markdown)  # no stray space where a sentence was cut
-    before, after = _section_bodies(original), _section_bodies(markdown)
-    for name in REQUIRED_SECTIONS:
-        if before.get(name, "").strip() and not after.get(name, "").strip():
-            return original, 0  # removing would leave a required section empty: keep it, flag only
+        if not (single and len(sent) > 20 and sent in markdown):
+            continue
+        candidate = cleanup(markdown.replace(sent, "", 1))
+        after = _section_bodies(candidate)
+        before = _section_bodies(markdown)
+        if any(
+            before.get(n, "").strip() and not after.get(n, "").strip() for n in REQUIRED_SECTIONS
+        ):
+            continue
+        markdown = candidate
+        removed += 1
     return markdown, removed
 
 
-def claim_check(ctx: LabContext, pid: str, markdown: str) -> dict[str, Any]:
+def claim_check(
+    ctx: LabContext, pid: str, markdown: str, analysis: dict[str, Any] | None = None
+) -> dict[str, Any]:
     with ctx.db.session() as s:
         papers = {
             c.key: {
@@ -188,6 +198,17 @@ def claim_check(ctx: LabContext, pid: str, markdown: str) -> dict[str, Any]:
         if isinstance(c, dict) and c.get("sentence")
     ]
     seen = {c["sentence"] for c in bad_claims}
+    if analysis is not None:
+        for issue in consistency_issues(markdown, analysis):
+            if issue["sentence"] not in seen:
+                seen.add(issue["sentence"])
+                bad_claims.append(
+                    {
+                        "sentence": issue["sentence"],
+                        "reason": issue["reason"],
+                        "code": issue["code"],
+                    }
+                )
     for sent in untested_effect_sentences(markdown):
         if sent not in seen:
             bad_claims.append(
@@ -215,7 +236,13 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         assert ms is not None
         markdown, evidence = ms.markdown, dict(ms.evidence_report)
     review = ctx.llm.complete_json("reviewer.review", SYSTEM, markdown[:30000], project_id=pid)
-    checks = claim_check(ctx, pid, markdown)
+    analysis = None
+    if state.get("analysis_sha256"):
+        try:
+            analysis = _load_analysis(ctx, pid, state["analysis_sha256"])
+        except (OSError, ValueError):
+            analysis = None
+    checks = claim_check(ctx, pid, markdown, analysis)
     review["claim_check"] = checks
     flags = list(evidence.get("flags", []))
     for c in checks["unsupported_citations"]:
@@ -230,7 +257,7 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         flags.append(
             {
                 "severity": "warning",
-                "code": "CLAIM_NOT_SUPPORTED",
+                "code": c.get("code", "CLAIM_NOT_SUPPORTED"),
                 "message": f'{c["reason"]} | "{c["sentence"][:160]}"',
             }
         )
@@ -285,7 +312,11 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             for c in checks["unsupported_citations"]
         ]
         + [
-            f"Claim about an experiment that was not run, remove it: {c['sentence']}"
+            (
+                f"Fix or remove ({c['code']}: {c['reason']}): {c['sentence']}"
+                if c.get("code")
+                else f"Claim about an experiment that was not run, remove it: {c['sentence']}"
+            )
             for c in checks["unsupported_claims"]
         ]
         + [str(x) for x in as_list(review.get("major_issues"))][:5]

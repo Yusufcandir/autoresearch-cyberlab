@@ -31,6 +31,15 @@ SYSTEM = (
     "4. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'. Say about a "
     "paper only what its title and abstract support; name authors exactly as in 'authors'. In related_work, cite every paper at least once.\n"
     "5. Be precise and modest; mention CIC-IDS2017 limitations.\n"
+    "6. Compare two models (outperforms, better than, comparable to, superior) ONLY for the "
+    "pairs listed in 'tested_comparisons'. Never call one model the best overall unless every "
+    "pair was tested. Describe other models by their own scores, without comparing.\n"
+    "7. To state a hypothesis result write only {{hyp:H1}}; never add your own 'not', "
+    "'rejected' or 'supported' next to it, because the placeholder already says the result.\n"
+    "8. Never put {{metric:...}} or {{ci:...}} in introduction, related_work or methodology; "
+    "in methodology name models in words (logistic regression, random forest, ...).\n"
+    "9. Use {{fact:NAME}} only with a NAME exactly as listed in 'facts'. The split was checked "
+    "and has zero train/test overlap rows, so do not suggest data leakage.\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
     "discussion, limitations, conclusion (markdown strings)."
 )
@@ -185,6 +194,11 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             }
             for k in verified_keys
         },
+        "tested_comparisons": [
+            f"{h['a']} vs {h['b']} ({h['id']})"
+            for h in analysis["hypotheses"]
+            if h.get("a") and h.get("b")
+        ],
         "facts": facts,
         "method_facts": prose,
         "dataset": {k: analysis["dataset"].get(k) for k in ("name", "license")}

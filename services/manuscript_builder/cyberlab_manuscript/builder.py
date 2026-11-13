@@ -53,6 +53,19 @@ class EvidenceReport:
         return {"resolved": self.resolved, "flags": self.flags, "release_ready": not self.blockers}
 
 
+def _closest_fact(name: str, facts: dict[str, Any]) -> str | None:
+    """Writers (small local models especially) misspell fact names: 'benign_row_cap',
+    'BENIGN_cap'. Map an unknown name to a clearly matching recorded fact, else None."""
+    import difflib
+
+    lower = {k.lower(): k for k in facts}
+    key = name.strip().lower().replace("-", "_").replace(" ", "_")
+    if key in lower:
+        return lower[key]
+    hit = difflib.get_close_matches(key, list(lower), n=1, cutoff=0.75)
+    return lower[hit[0]] if hit else None
+
+
 def _fmt(v: float) -> str:
     return f"{v:.4f}"
 
@@ -99,6 +112,8 @@ def render_text(
             return "" if guardrail else "[citation needed]"
         if kind == "fact":
             facts = analysis.get("facts", {})
+            if arg not in facts:
+                arg = _closest_fact(arg, facts) or arg
             if arg not in facts:
                 report.flag(sev, "UNKNOWN_FACT", f"{section}: no recorded fact named {arg!r}")
                 return missing
@@ -255,6 +270,8 @@ def tidy_prose(text: str) -> str:
         return ", but ".join(parts) + tail
 
     text = _HYP_VERB.sub(hyp, text)
+    # "(H1 (supported))" -> "(H1, supported)"
+    text = re.sub(r"\((H\d+) \((supported|not supported)\)\)", r"(\1, \2)", text)
     # "we test H1 (supported)" should not reveal the result: drop it after test verbs.
     return re.sub(
         r"\b(test(?:s|ed|ing)?|evaluat(?:e|es|ed|ing)|examin(?:e|es|ed|ing))(\s+(?:whether\s+)?)"

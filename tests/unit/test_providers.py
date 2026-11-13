@@ -158,11 +158,16 @@ def test_gemini_breaker_keeps_later_calls_on_local_model(monkeypatch) -> None:  
 
     g = GeminiProvider("k", "m1", client=httpx.Client(transport=httpx.MockTransport(gemini)))
     o = OllamaProvider(
-        "http://x", "qwen2.5:14b-instruct", client=httpx.Client(transport=httpx.MockTransport(ollama))
+        "http://x",
+        "qwen2.5:14b-instruct",
+        client=httpx.Client(transport=httpx.MockTransport(ollama)),
     )
     seen: list[str] = []
     gate = LLMGateway(
-        g, o, handover_seconds=1.5, cooldown_seconds=600,
+        g,
+        o,
+        handover_seconds=1.5,
+        cooldown_seconds=600,
         on_status=lambda pid, task, msg: seen.append(msg),
     )
     assert gate.complete("t", "s", "p", project_id="x").provider == "ollama"
