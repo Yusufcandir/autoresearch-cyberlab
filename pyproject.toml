@@ -6,9 +6,22 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "langgraph>=1.2.21",
+    "langgraph-checkpoint-sqlite>=3.1.3",
+    "numpy>=2.5.4",
+    "pandas>=3.1.1",
+    "pyarrow>=26.0.1",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "python-multipart>=0.0.33",
+    "pyyaml>=6.0.3",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "sqlalchemy>=2.1.8",
     "uvicorn>=0.32",
+    "xgboost>=3.4.1",
 ]
 
 [project.scripts]
@@ -18,8 +31,10 @@ cyberlab = "cyberlab_common.cli:main"
 dev = [
     "httpx>=0.27",
     "mypy>=1.13",
+    "pandas-stubs>=3.1.0.261029",
     "pytest>=8.3",
     "ruff>=0.8",
+    "types-pyyaml>=6.0.12.20261111",
 ]
 
 [build-system]
@@ -30,7 +45,18 @@ build-backend = "hatchling.build"
 packages = [
     "packages/common/cyberlab_common",
     "packages/authz/cyberlab_authz",
+    "packages/schemas/cyberlab_schemas",
     "services/api/cyberlab_api",
+    "services/llm_gateway/cyberlab_llm",
+    "services/literature/cyberlab_literature",
+    "services/data_registry/cyberlab_data",
+    "services/protocol_compiler/cyberlab_protocol",
+    "services/execution_broker/cyberlab_exec",
+    "services/scientific_qa/cyberlab_qa",
+    "services/evidence_service/cyberlab_evidence",
+    "services/manuscript_builder/cyberlab_manuscript",
+    "services/orchestrator/cyberlab_orchestrator",
+    "plugins/text_tabular/cyberlab_tabular",
 ]
 
 [tool.ruff]
@@ -41,7 +67,7 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP", "S", "N"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["cyberlab_common", "cyberlab_api", "cyberlab_authz"]
+known-first-party = ["cyberlab_*"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S108"]
@@ -54,3 +80,4 @@ files = ["packages", "services"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
