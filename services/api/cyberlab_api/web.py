@@ -295,6 +295,13 @@ def project_page(
     )
     steps, now = build_progress(events, status["stage"], status["pending"], jobs)
     trust = trust_summary(cites, notes.get("evidence_matrix"), analysis, latest_ms, artifact_check)
+    best = (
+        max(
+            analysis["models"], key=lambda n: analysis["models"][n]["aggregate"]["macro_f1"]["mean"]
+        )
+        if analysis and analysis.get("models")
+        else None
+    )
     job_counts: dict[str, int] = {}
     for j in jobs:
         job_counts[j.state] = job_counts.get(j.state, 0) + 1
@@ -318,6 +325,7 @@ def project_page(
         rendered=rendered,
         dataset=dataset,
         analysis=analysis,
+        best=best,
         activity=friendly_activity(events),
         steps=steps,
         now=now,

@@ -20,7 +20,9 @@ SYSTEM = (
     "numeric result yourself. Use placeholders only: {{metric:MODEL:METRIC}} (METRIC in macro_f1, "
     "accuracy, balanced_accuracy, mcc, false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}}, "
     "{{hyp:H1}}, and {{cite:KEY}} with KEY from the allowed citation keys. Results tables are added "
-    "automatically. Be precise and modest; mention CIC-IDS2017 limitations. Output JSON with keys "
+    "automatically. In related_work, discuss and cite EVERY allowed citation key at least once "
+    "using {{cite:KEY}} (cite only keys from the allowed list). Be precise and modest; mention "
+    "CIC-IDS2017 limitations. Output JSON with keys "
     "abstract, introduction, related_work, methodology, results, discussion, limitations, "
     "conclusion (markdown strings)."
 )

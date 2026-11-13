@@ -1,19 +1,100 @@
 {% extends "base.html" %}{% block title %}{{ project.title }}{% endblock %}
+{% block styles %}
+.hero{display:flex;gap:20px;align-items:flex-start;justify-content:space-between;margin-bottom:18px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px;color:var(--muted)}
+.chip b{color:var(--text);font-weight:600}
+.live{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--verified);white-space:nowrap;box-shadow:var(--shadow)}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--verified);box-shadow:0 0 0 4px color-mix(in srgb,var(--verified) 20%,transparent);animation:pulse 2s infinite}
+.live.off{color:var(--blocked)}.live.off .dot{background:var(--blocked);animation:none}
+.status-card{position:relative;overflow:hidden}
+.status-card:before{content:"";position:absolute;inset:0 0 auto 0;height:4px;background:linear-gradient(90deg,var(--running),#f59e0b)}
+.status-card.wait:before{background:linear-gradient(90deg,var(--accent),var(--accent-2))}
+.status-card.err:before{background:var(--blocked)}.status-card.ok:before{background:var(--verified)}
+.now-text{font-size:16px;margin-bottom:20px;display:flex;gap:10px;align-items:flex-start}
+.now-text .tag{flex:none;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent);margin-top:2px}
+.spinner{flex:none;width:16px;height:16px;margin-top:3px;border:2px solid var(--line);border-top-color:var(--running);border-radius:50%;animation:spin .9s linear infinite}
+.stepper{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(12,1fr);position:relative}
+.stepper:before{content:"";position:absolute;left:4%;right:4%;top:15px;height:2px;background:var(--line);z-index:0}
+.step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;font-size:12px;color:var(--muted);gap:6px;padding:0 2px}
+.step .bubble{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;border:2px solid var(--line);font-weight:700;background:var(--panel);font-size:13px;transition:all .3s}
+.step.done .bubble{background:var(--verified);border-color:var(--verified);color:#fff}
+.step.running .bubble{border-color:var(--running);color:var(--running);box-shadow:0 0 0 5px color-mix(in srgb,var(--running) 18%,transparent);animation:pulse 1.6s infinite}
+.step.waiting .bubble{background:linear-gradient(135deg,var(--accent),var(--accent-2));border-color:transparent;color:#fff;box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 18%,transparent)}
+.step.error .bubble{background:var(--blocked);border-color:var(--blocked);color:#fff}
+.step.done .slabel,.step.running .slabel,.step.waiting .slabel{color:var(--text);font-weight:600}
+.sdetail{font-size:11px;color:var(--muted)}
+.decision{border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));background:linear-gradient(180deg,var(--accent-soft),var(--panel) 60%)}
+.decision h2{display:flex;align-items:center;gap:10px}
+.decision .actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.tabbar{position:sticky;top:57px;z-index:10;display:flex;gap:4px;overflow-x:auto;padding:6px;margin:6px 0 18px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);scrollbar-width:none}
+.tabbar::-webkit-scrollbar{display:none}
+.tab{flex:none;display:inline-flex;align-items:center;gap:8px;padding:8px 14px;border-radius:9px;color:var(--muted);font-weight:600;font-size:14px;cursor:pointer;border:0;background:none;box-shadow:none}
+.tab:hover{background:var(--panel-2);color:var(--text);filter:none}
+.tab.active{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 35%,transparent)}
+.tab .count{font-size:11px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,currentColor 15%,transparent)}
+.tab .sdot{width:7px;height:7px;border-radius:50%}
+.sdot.done{background:var(--verified)}.sdot.running{background:var(--running);animation:pulse 1.6s infinite}.sdot.waiting{background:var(--accent)}.sdot.error{background:var(--blocked)}
+.panel{display:none;animation:fade .2s ease}.panel.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.kpi .k{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.kpi .v{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:4px}.kpi .s{font-size:12.5px;color:var(--muted)}
+.empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:28px;color:var(--muted);text-align:center}
+.empty .icon{font-size:28px;opacity:.6}
+.refrow{display:flex;gap:14px;padding:14px 4px;border-bottom:1px solid var(--line)}
+.refrow:target{background:var(--accent-soft);border-radius:10px}
+.refnum{flex:none;width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-weight:700;font-size:13px;background:var(--accent-soft);color:var(--accent)}
+.refbody{flex:1;min-width:0}.reftitle{font-weight:600;margin-bottom:2px}
+.refmeta{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px;font-size:12.5px;color:var(--muted);align-items:center}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 9px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);font-size:12px;color:var(--muted)}
+.pill.good{color:var(--verified);border-color:color-mix(in srgb,var(--verified) 35%,transparent);background:color-mix(in srgb,var(--verified) 8%,transparent)}
+.refrow.rejected{opacity:.7}.refrow.rejected .refnum{background:color-mix(in srgb,var(--unverified) 14%,transparent);color:var(--unverified)}
+.abstract{font-size:13px;color:var(--muted);margin:8px 0 0}
+details.inline summary{font-weight:500;color:var(--accent);font-size:12.5px;list-style:none}
+.bar{height:10px;background:var(--panel-2);border:1px solid var(--line);border-radius:999px;overflow:hidden;margin:6px 0 10px}
+.bar .fill{height:100%;background:linear-gradient(90deg,var(--verified),#22c55e);transition:width .6s}
+.trust{display:grid;gap:10px}
+.titem{display:flex;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--panel-2)}
+.ticon{flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff}
+.ticon.ok{background:var(--verified)}.ticon.warn{background:var(--running)}.ticon.bad{background:var(--blocked)}.ticon.pending{background:var(--muted)}
+.feed{list-style:none;padding:0;margin:0}
+.feed li{display:flex;gap:14px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px;align-items:baseline}
+.feed .t{flex:none;width:68px;color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px}
+.feed .d{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:6px}
+.feed li.ok .d{background:var(--verified)}.feed li.bad .d{background:var(--blocked)}.feed li.bad{color:var(--blocked)}
+.paper{border:1px solid var(--line);border-radius:12px;padding:12px 36px 24px;max-height:760px;overflow:auto;background:var(--panel-2);font-size:15px;line-height:1.7}
+.paper table{font-size:13px;margin:12px 0}.paper h1{font-size:24px}.paper h2{font-size:19px;margin-top:28px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.paper h3{text-transform:none;letter-spacing:0;color:var(--text);font-size:16px}.paper blockquote{margin:0;padding:8px 14px;border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:6px;font-size:13px}
+a.cite{font-size:.8em;vertical-align:super;font-weight:600}
+mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:inherit;border-radius:4px;padding:0 3px}
+@media (max-width:900px){.stepper{grid-template-columns:repeat(6,1fr);row-gap:14px}.stepper:before{display:none}.hero{flex-direction:column}.tabbar{top:52px}}
+{% endblock %}
 {% block content %}
 {% set pend = status.pending %}
-<div id="live-root" data-pid="{{ project.id }}" data-stamp="{{ stamp }}">
+{% set stmap = {} %}{% for st in steps %}{% set _ = stmap.update({st.key: st.state}) %}{% endfor %}
+<div id="live-root" data-pid="{{ project.id }}">
 
-<div class="titlebar">
+<div class="hero">
   <div>
     <h1>{{ project.title }}</h1>
-    <p class="muted"><span class="label {{ status.status_label }}">{{ status.status_label }}</span>
-      your role: <b>{{ role }}</b> · LLM tokens {{ "{:,}".format(status.llm_tokens_used) }} · GPU {{ status.gpu_minutes_used }} min{% if status.paused %} · <b>paused</b>{% endif %}</p>
+    <div class="chips">
+      <span class="label {{ status.status_label }}">{{ status.status_label }}</span>
+      <span class="chip">Role <b>{{ role }}</b></span>
+      <span class="chip">LLM tokens <b>{{ "{:,}".format(status.llm_tokens_used) }}</b></span>
+      <span class="chip">Compute <b>{{ status.gpu_minutes_used }} min</b></span>
+      {% if status.paused %}<span class="chip"><b>Paused</b></span>{% endif %}
+    </div>
   </div>
-  <div class="live-pill" id="live-pill" title="This page updates by itself"><span class="dot"></span> Live</div>
+  <div class="live" id="live-pill" title="This page updates by itself"><span class="dot"></span>Live</div>
 </div>
 
-<div class="card now {% if status.stage == 'error' %}now-error{% elif pend %}now-wait{% endif %}">
-  <div class="now-text">{% if status.stage not in ['error','released'] and not pend %}<span class="spinner"></span>{% endif %}<b>Now:</b> {{ now or "Working..." }}</div>
+<div class="card status-card {% if status.stage == 'error' %}err{% elif status.stage == 'released' %}ok{% elif pend %}wait{% endif %}">
+  <div class="now-text">
+    {% if status.stage not in ['error','released'] and not pend %}<span class="spinner"></span>{% endif %}
+    <span class="tag">Now</span><span>{{ now or "Working…" }}</span>
+  </div>
   <ol class="stepper">
     {% for st in steps %}<li class="step {{ st.state }}" title="{{ st.label }}{% if st.detail %}: {{ st.detail }}{% endif %}">
       <span class="bubble">{% if st.state == 'done' %}✓{% elif st.state == 'error' %}!{% else %}{{ loop.index }}{% endif %}</span>
@@ -22,154 +103,230 @@
   </ol>
 </div>
 
-{% if status.blocked_reason %}<div class="card" style="border-left:4px solid var(--blocked)"><b>Stopped:</b> {{ status.blocked_reason }}
-  {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry" style="margin-top:8px"><input type="hidden" name="csrf" value="{{ csrf }}"><button>Retry from the last checkpoint</button> <span class="muted">Nothing done so far is lost.</span></form>{% endif %}</div>{% endif %}
+{% if status.blocked_reason %}<div class="card" style="border-color:color-mix(in srgb,var(--blocked) 40%,var(--line))"><h2 class="error">Stopped</h2><p>{{ status.blocked_reason }}</p>
+  {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button>↻ Retry from the last checkpoint</button> <span class="muted">Nothing done so far is lost.</span></form>{% endif %}</div>{% endif %}
 
 {% if pend and pend.gate in ['A','D'] %}
-<div class="card gate" id="decision">
+<div class="card decision">
   {% if pend.gate == 'A' %}
-    <h2>Your decision: approve the protocol?</h2>
-    <p>Review the <a href="#protocol">protocol</a>, the <a href="#dataset">dataset check</a> and the <a href="#literature">literature</a> below. Approving starts <b>{{ (protocol.body.models|length) * (protocol.body.seeds|length) if protocol else '?' }} GPU jobs</b>. It authorizes exactly protocol v{{ pend.protocol_version }} (<span class="mono">{{ pend.protocol_sha256[:12] }}…</span>); any later change needs a new approval.</p>
+    <h2>🧑‍🔬 Your decision: approve the protocol?</h2>
+    <p>Check the <a href="#protocol" data-tab-link>Protocol</a>, <a href="#dataset" data-tab-link>Dataset</a> and <a href="#literature" data-tab-link>Literature</a> tabs. Approving starts <b>{{ (protocol.body.models|length) * (protocol.body.seeds|length) if protocol else '?' }} experiments</b> and authorizes exactly protocol v{{ pend.protocol_version }} (<span class="mono">{{ pend.protocol_sha256[:12] }}…</span>). Any later change needs a new approval.</p>
     {% if role == 'pi' %}
     <form method="post" action="/projects/{{ project.id }}/approve">
       <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.protocol_version }}"><input type="hidden" name="sha256" value="{{ pend.protocol_sha256 }}">
-      <label for="cm">Comment (optional; if you reject, the methodology agent revises the protocol using it)</label><textarea id="cm" name="comment" style="min-height:60px" placeholder="e.g. add a by-day split, drop the MLP, use 5 seeds"></textarea>
-      <p><button name="decision" value="approved">Approve and start experiments</button> <button class="danger" name="decision" value="rejected">Request changes</button></p>
+      <label for="cm">Comment <span class="muted">(optional; if you request changes, the methodology agent revises the protocol using it)</span></label>
+      <textarea id="cm" name="comment" style="min-height:70px" placeholder="e.g. add a by-day split, drop the MLP, use 5 seeds"></textarea>
+      <div class="actions"><button name="decision" value="approved">✓ Approve and start experiments</button><button class="danger" name="decision" value="rejected">Request changes</button></div>
     </form>
     {% else %}<p class="muted">Only the PI can approve. You are signed in as {{ role }}.</p>{% endif %}
   {% elif pend.gate == 'D' %}
-    <h2>Your decision: release the manuscript?</h2>
-    {% if pend.evidence_blockers %}<p class="error">Release is blocked by {{ pend.evidence_blockers|length }} evidence problem(s). See <a href="#verification">Verification</a>.</p>
+    <h2>📄 Your decision: release the manuscript?</h2>
+    {% if pend.evidence_blockers %}<p class="error">Release is blocked by {{ pend.evidence_blockers|length }} evidence problem(s). See the <a href="#verification" data-tab-link>Verification</a> tab.</p>
     {% elif role == 'pi' %}
-    <p>Draft v{{ pend.manuscript_version }} passed every evidence check. Read it in <a href="#manuscript">Manuscript</a>. Releasing records your approval; it does not submit or send anything.</p>
-    <form method="post" action="/projects/{{ project.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.manuscript_version }}"><button>Release manuscript v{{ pend.manuscript_version }}</button></form>
+    <p>Draft v{{ pend.manuscript_version }} passed every evidence check. Read it in the <a href="#manuscript" data-tab-link>Manuscript</a> tab. Releasing records your approval; it does not submit or send anything.</p>
+    <form method="post" action="/projects/{{ project.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.manuscript_version }}"><div class="actions"><button>✓ Release manuscript v{{ pend.manuscript_version }}</button></div></form>
     {% else %}<p class="muted">Only the PI can release.</p>{% endif %}
   {% endif %}
 </div>
 {% endif %}
 
-<nav class="tabs">
-  <a href="#overview">Overview</a><a href="#literature">Literature ({{ verified|length }})</a><a href="#dataset">Dataset</a><a href="#protocol">Protocol</a>
-  <a href="#experiments">Experiments{% if jobs %} ({{ job_counts.get('succeeded',0) }}/{{ jobs|length }}){% endif %}</a><a href="#results">Results</a><a href="#manuscript">Manuscript</a><a href="#verification">Verification</a><a href="#activity">Activity</a>
+<nav class="tabbar" role="tablist">
+  {% set tabs = [
+    ('overview','Overview',None,stmap.get('orchestrator')),
+    ('literature','Literature',verified|length,stmap.get('literature')),
+    ('dataset','Dataset',None,stmap.get('dataset')),
+    ('protocol','Protocol',None,stmap.get('methodology')),
+    ('experiments','Experiments',(job_counts.get('succeeded',0)|string ~ '/' ~ jobs|length) if jobs else None,stmap.get('experiments')),
+    ('results','Results',None,stmap.get('statistics')),
+    ('manuscript','Manuscript',None,stmap.get('writing')),
+    ('verification','Verification',None,None),
+    ('activity','Activity',None,None)] %}
+  {% for key, label, count, st in tabs %}<button type="button" class="tab" role="tab" data-tab="{{ key }}">{% if st in ['done','running','waiting','error'] %}<span class="sdot {{ st }}"></span>{% endif %}{{ label }}{% if count %}<span class="count">{{ count }}</span>{% endif %}</button>{% endfor %}
 </nav>
 
-<div class="grid" id="overview">
-  <div class="card"><h2>Plan <span class="label Proposed">Proposed</span></h2>
-    {% if notes.plan %}<p>{{ notes.plan.objective }}</p><h3>Search queries</h3><ul>{% for q in notes.plan.search_queries|aslist %}<li>{{ q|text }}</li>{% endfor %}</ul>
-    {% if notes.plan.risks %}<h3>Risks</h3><ul>{% for r in notes.plan.risks|aslist %}<li>{{ r|text }}</li>{% endfor %}</ul>{% endif %}
-    {% else %}<p class="muted">The orchestrator is planning…</p>{% endif %}</div>
-  <div class="card"><h2>Research gaps <span class="label Proposed">Proposed</span></h2>
-    {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps|aslist %}<li>{% if g is mapping %}<b>{{ g.gap|text }}</b> {{ g.why_it_matters|text }}{% if g.testable_with %} <span class="muted">Testable with: {{ g.testable_with|text }}</span>{% endif %}{% else %}{{ g|text }}{% endif %}</li>{% endfor %}</ul>
-    {% for c in notes.gaps.novelty_caveats|aslist %}<p class="muted">Caveat: {{ c|text }}</p>{% endfor %}{% else %}<p class="muted">Not yet.</p>{% endif %}</div>
-</div>
+<!-- ============================== OVERVIEW -->
+<section class="panel" id="tab-overview">
+  <div class="kpis">
+    <div class="kpi"><div class="k">Papers verified</div><div class="v">{{ verified|length }}</div><div class="s">{{ cites|length - verified|length }} rejected</div></div>
+    <div class="kpi"><div class="k">Clean dataset rows</div><div class="v">{% if dataset %}{{ "{:,}".format(dataset.manifest.n_rows_clean) }}{% else %}–{% endif %}</div><div class="s">{% if dataset %}{{ dataset.manifest.class_counts|length }} classes, 0 leakage{% else %}not checked yet{% endif %}</div></div>
+    <div class="kpi"><div class="k">Experiments</div><div class="v">{{ job_counts.get('succeeded',0) }}<span class="muted" style="font-size:16px"> / {{ jobs|length or '–' }}</span></div><div class="s">{% if jobs %}{{ job_counts.get('running',0) }} running · {{ job_counts.get('queued',0) }} queued{% else %}start after approval{% endif %}</div></div>
+    <div class="kpi"><div class="k">Best macro-F1</div><div class="v">{% if analysis %}{{ '%.3f'|format(analysis.models[best].aggregate.macro_f1.mean) }}{% else %}–{% endif %}</div><div class="s">{% if analysis %}{{ best }}{% else %}no results yet{% endif %}</div></div>
+  </div>
+  <div class="grid">
+    <div class="card"><h2>Plan <span class="label Proposed">Proposed</span></h2>
+      {% if notes.plan %}<p>{{ notes.plan.objective|text }}</p><h3>Search queries</h3><ul>{% for q in notes.plan.search_queries|aslist %}<li>{{ q|text }}</li>{% endfor %}</ul>
+      {% if notes.plan.risks %}<h3>Risks</h3><ul>{% for r in notes.plan.risks|aslist %}<li>{{ r|text }}</li>{% endfor %}</ul>{% endif %}
+      {% else %}<div class="empty"><span class="icon">🧭</span>The orchestrator is planning…</div>{% endif %}</div>
+    <div class="card"><h2>Research gaps <span class="label Proposed">Proposed</span></h2>
+      {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps|aslist %}<li>{% if g is mapping %}<b>{{ g.gap|text }}</b> {{ g.why_it_matters|text }}{% if g.testable_with %} <span class="muted">Testable with: {{ g.testable_with|text }}</span>{% endif %}{% else %}{{ g|text }}{% endif %}</li>{% endfor %}</ul>
+      {% for c in notes.gaps.novelty_caveats|aslist %}<p class="muted">⚠ {{ c|text }}</p>{% endfor %}{% else %}<div class="empty"><span class="icon">🔎</span>Not yet.</div>{% endif %}</div>
+  </div>
+</section>
 
-<div class="card" id="literature"><h2>Literature</h2>
+<!-- ============================== LITERATURE -->
+<section class="panel" id="tab-literature"><div class="card">
+<h2>Literature</h2>
 {% if cites %}
-<p class="muted">Every paper was found on OpenAlex and accepted only if its DOI resolves at Crossref with a matching title. Numbers [n] are how the manuscript cites them.</p>
-<table class="refs"><tr><th>#</th><th>Reference</th><th class="num">Cited by</th><th>Used in</th><th>Status</th></tr>
-{% for c in verified %}<tr id="ref-{{ c.key }}"><td>[{{ loop.index }}]</td>
-<td>{{ (c.authors or [])[:3]|join(', ') }}{% if (c.authors or [])|length > 3 %} et al.{% endif %} ({{ c.year or 'n.d.' }}). <b>{{ c.title }}</b>.{% if c.venue %} <i>{{ c.venue }}</i>.{% endif %}
-  {% if c.doi %}<a href="https://doi.org/{{ c.doi }}" target="_blank" rel="noopener noreferrer">doi:{{ c.doi }}</a>{% endif %}
-  <details class="inline"><summary>details</summary>
-    <div class="muted">Key <span class="mono">{{ c.key }}</span> · source {{ c.source }}{% if c.verification_note %} · {{ c.verification_note }}{% endif %}</div>
-    {% if c.abstract %}<p class="abstract">{{ c.abstract[:900] }}{% if c.abstract|length > 900 %}…{% endif %}</p>{% endif %}
-  </details></td>
-<td class="num">{{ "{:,}".format(c.cited_by) if c.cited_by is not none else "–" }}</td>
-<td>{% if cited_in.get(c.key) %}{{ cited_in[c.key]|join(', ') }}{% else %}<span class="muted">not cited</span>{% endif %}</td>
-<td><span class="label Verified">Verified</span></td></tr>{% endfor %}
-{% for c in cites if c.status != 'Verified' %}<tr class="rejected"><td>–</td><td>{{ c.title }} {% if c.doi %}<span class="mono">{{ c.doi }}</span>{% endif %}<div class="muted">Rejected: {{ c.verification_note or 'could not be verified' }}</div></td><td></td><td class="muted">never used</td><td><span class="label Unverified">Unverified</span></td></tr>{% endfor %}
-</table>
+<p class="muted">Each paper was found on OpenAlex and accepted only if its DOI resolves at Crossref with a matching title. The number [n] is how the manuscript cites it.
+{% if not manuscripts %}<b>Nothing is cited yet because the paper has not been written yet</b>; the writing agent cites these after the experiments.{% endif %}</p>
+{% for c in verified %}<div class="refrow" id="ref-{{ c.key }}"><div class="refnum">{{ loop.index }}</div><div class="refbody">
+  <div class="reftitle">{{ c.title }}</div>
+  <div class="muted">{{ (c.authors or [])[:4]|join(', ') }}{% if (c.authors or [])|length > 4 %} et al.{% endif %} · {{ c.year or 'n.d.' }}{% if c.venue %} · <i>{{ c.venue }}</i>{% endif %}</div>
+  <div class="refmeta">
+    <span class="pill good">✓ Verified</span>
+    {% if c.doi %}<a href="https://doi.org/{{ c.doi }}" target="_blank" rel="noopener noreferrer">↗ doi.org/{{ c.doi }}</a>{% endif %}
+    {% if c.cited_by is not none %}<span class="pill">Cited by {{ "{:,}".format(c.cited_by) }}</span>{% endif %}
+    {% if cited_in.get(c.key) %}<span class="pill good">Cited in: {{ cited_in[c.key]|join(', ') }}</span>{% elif manuscripts %}<span class="pill">Not cited in the draft</span>{% else %}<span class="pill">Not cited yet</span>{% endif %}
+  </div>
+  {% if c.abstract or c.verification_note %}<details class="inline"><summary>Abstract and verification ▾</summary>
+    {% if c.abstract %}<p class="abstract">{{ c.abstract[:1200] }}{% if c.abstract|length > 1200 %}…{% endif %}</p>{% endif %}
+    <p class="muted mono">key {{ c.key }} · {{ c.source }}{% if c.verification_note %} · {{ c.verification_note }}{% endif %}</p></details>{% endif %}
+</div></div>{% endfor %}
+{% for c in cites if c.status != 'Verified' %}<div class="refrow rejected"><div class="refnum">✗</div><div class="refbody">
+  <div class="reftitle">{{ c.title }}</div><div class="refmeta"><span class="pill">Rejected: {{ c.verification_note or 'could not be verified' }}</span>{% if c.doi %}<span class="mono">{{ c.doi }}</span>{% endif %}<span class="pill">never used in the paper</span></div></div></div>{% endfor %}
 {% if notes.evidence_matrix %}<h3>What the papers say <span class="label Proposed">Proposed</span></h3>
-  {% if notes.evidence_matrix.summary %}<p>{{ notes.evidence_matrix.summary }}</p>{% endif %}
-  {% if notes.evidence_matrix.matrix %}<table><tr><th>Paper</th><th>Method</th><th>Finding</th><th>Limitation</th></tr>
-  {% for r in notes.evidence_matrix.matrix|aslist if r is mapping %}<tr><td><a href="#ref-{{ r.key }}">{{ r.key }}</a></td><td>{{ r.method }}</td><td>{{ r.finding }}</td><td>{{ r.limitation }}</td></tr>{% endfor %}</table>{% endif %}
+  {% if notes.evidence_matrix.summary %}<p>{{ notes.evidence_matrix.summary|text }}</p>{% endif %}
+  {% set rows = notes.evidence_matrix.matrix|aslist %}{% if rows %}<table><tr><th>Paper</th><th>Method</th><th>Finding</th><th>Limitation</th></tr>
+  {% for r in rows if r is mapping %}<tr><td><a href="#ref-{{ r.key }}">{{ r.key }}</a></td><td>{{ r.method|text }}</td><td>{{ r.finding|text }}</td><td>{{ r.limitation|text }}</td></tr>{% endfor %}</table>{% endif %}
 {% endif %}
-{% else %}<p class="muted">The literature agent has not run yet.</p>{% endif %}</div>
+{% else %}<div class="empty"><span class="icon">📚</span>The literature agent has not run yet.</div>{% endif %}
+</div></section>
 
-<div class="card" id="dataset"><h2>Dataset check</h2>
+<!-- ============================== DATASET -->
+<section class="panel" id="tab-dataset"><div class="card">
+<h2>Dataset check</h2>
 {% if dataset %}{% set m = dataset.manifest %}
-<p><span class="label {{ 'Verified' if dataset.status == 'verified' else 'Blocked' }}">{{ dataset.status|capitalize }}</span> {{ m.name }}</p>
+<p><span class="label {{ 'Verified' if dataset.status == 'verified' else 'Blocked' }}">{{ dataset.status|capitalize }}</span> <b>{{ m.name }}</b></p>
+<div class="kpis">
+  <div class="kpi"><div class="k">Clean rows</div><div class="v">{{ "{:,}".format(m.n_rows_clean) }}</div><div class="s">from {{ "{:,}".format(m.n_rows_raw) }} raw</div></div>
+  <div class="kpi"><div class="k">Removed</div><div class="v">{{ "{:,}".format(m.n_duplicates_removed) }}</div><div class="s">duplicate or contradictory rows</div></div>
+  <div class="kpi"><div class="k">Train/test overlap</div><div class="v" style="color:{{ 'var(--verified)' if m.split_overlap_rows == 0 else 'var(--blocked)' }}">{{ m.split_overlap_rows }}</div><div class="s">rows in both (must be 0)</div></div>
+  <div class="kpi"><div class="k">Features</div><div class="v">{{ m.features|length }}</div><div class="s">numeric flow features</div></div>
+</div>
 <div class="grid">
-<div><p><b>{{ "{:,}".format(m.n_rows_clean) }}</b> clean rows from {{ "{:,}".format(m.n_rows_raw) }} raw. Removed {{ "{:,}".format(m.n_duplicates_removed) }} duplicate or contradictory rows. Rows shared between train and test: <b>{{ m.split_overlap_rows }}</b>.</p>
-<p class="muted">Licence: {{ m.license }}</p></div>
 <table><tr><th>Class</th><th class="num">Rows</th></tr>{% for k, v in m.class_counts.items() %}<tr><td>{{ k }}</td><td class="num">{{ "{:,}".format(v) }}</td></tr>{% endfor %}</table>
 <table><tr><th>Split</th><th class="num">Rows</th></tr>{% for k, v in m.split_counts.items() %}<tr><td>{{ k }}</td><td class="num">{{ "{:,}".format(v) }}</td></tr>{% endfor %}</table></div>
+<p class="muted">Licence: {{ m.license }}</p>
 <details><summary>File fingerprints (SHA-256)</summary><table>{% for f, h in m.files.items() %}<tr><td>{{ f }}</td><td class="mono">{{ h }}</td></tr>{% endfor %}</table></details>
 {% for r in m.blocked_reasons %}<p class="error">{{ r }}</p>{% endfor %}
-{% else %}<p class="muted">Not checked yet.</p>{% endif %}</div>
+{% else %}<div class="empty"><span class="icon">🗂</span>Not checked yet.</div>{% endif %}
+</div></section>
 
-<div class="card" id="protocol"><h2>Protocol {% if protocol %}v{{ protocol.version }}{% endif %}</h2>
+<!-- ============================== PROTOCOL -->
+<section class="panel" id="tab-protocol"><div class="card">
+<h2>Protocol {% if protocol %}v{{ protocol.version }}{% endif %}</h2>
 {% if protocol %}{% set b = protocol.body %}
 <h3>Research questions</h3><ul>{% for q in b.research_questions %}<li>{{ q }}</li>{% endfor %}</ul>
 <h3>Hypotheses</h3><ul>{% for h in b.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} <span class="muted">(tested as {{ h.comparison }} on {{ h.primary_metric }})</span></li>{% endfor %}</ul>
-<h3>Models</h3><table><tr><th>Name</th><th>Template</th><th>Role</th><th>Settings</th></tr>{% for m in b.models %}<tr><td>{{ m.name }}</td><td>{{ m.template }}</td><td>{{ m.role }}</td><td class="mono">{{ m.params or 'defaults' }}</td></tr>{% endfor %}</table>
-<p class="muted">Seeds {{ b.seeds|join(', ') }} · {{ b.split.strategy }} split, {{ (b.split.test_fraction*100)|round|int }}% test · tests: {{ b.statistical_tests|join(', ') }} · GPU budget {{ b.gpu_budget_minutes }} min · risk tier {{ b.risk_tier }} · <span class="mono">{{ protocol.sha256[:16] }}…</span></p>
-{% if protocol.rationale %}<p><b>Why</b> <span class="label Proposed">Proposed</span> {{ protocol.rationale }}</p>{% endif %}
-{% else %}<p class="muted">Not drafted yet.</p>{% endif %}</div>
+<h3>Models</h3><table><tr><th>Name</th><th>Template</th><th>Role</th><th>Settings</th></tr>{% for m in b.models %}<tr><td><b>{{ m.name }}</b></td><td>{{ m.template }}</td><td>{{ m.role }}</td><td class="mono">{{ m.params or 'defaults' }}</td></tr>{% endfor %}</table>
+<div class="chips" style="margin-top:14px"><span class="chip">Seeds <b>{{ b.seeds|join(', ') }}</b></span><span class="chip">Split <b>{{ b.split.strategy }}, {{ (b.split.test_fraction*100)|round|int }}% test</b></span><span class="chip">Tests <b>{{ b.statistical_tests|join(', ') }}</b></span><span class="chip">Budget <b>{{ b.gpu_budget_minutes }} min</b></span><span class="chip">Risk <b>{{ b.risk_tier }}</b></span><span class="chip mono">{{ protocol.sha256[:16] }}…</span></div>
+{% if protocol.rationale %}<p style="margin-top:14px"><b>Why</b> <span class="label Proposed">Proposed</span> {{ protocol.rationale }}</p>{% endif %}
+{% else %}<div class="empty"><span class="icon">🧪</span>Not drafted yet.</div>{% endif %}
+</div></section>
 
-<div class="card" id="experiments"><h2>Experiments</h2>
+<!-- ============================== EXPERIMENTS -->
+<section class="panel" id="tab-experiments"><div class="card">
+<h2>Experiments</h2>
 {% if jobs %}
 <div class="bar"><div class="fill" style="width:{{ (100 * job_counts.get('succeeded',0) / jobs|length)|round|int }}%"></div></div>
-<p class="muted">{% for k, v in job_counts.items() %}{{ k }}: {{ v }} · {% endfor %}one job at a time on the shared GPU.</p>
+<p class="muted">{% for k, v in job_counts.items() %}{{ k }} {{ v }} · {% endfor %}CPU models run in parallel; GPU jobs run one at a time on the shared GPU.</p>
 <table><tr><th>Experiment</th><th>State</th><th>Result</th><th>Time cap</th><th></th></tr>
-{% for j in jobs %}{% set r = runs.get(j.id) %}<tr><td>{{ j.manifest.model.name }} <span class="muted">seed {{ j.manifest.seed }}{% if j.manifest.use_gpu %} · GPU{% endif %}</span></td>
+{% for j in jobs %}{% set r = runs.get(j.id) %}<tr><td><b>{{ j.manifest.model.name }}</b> <span class="muted">seed {{ j.manifest.seed }}{% if j.manifest.use_gpu %} · GPU{% endif %}</span></td>
 <td><span class="label {{ {'queued':'Proposed','running':'Running','succeeded':'Measured','failed':'Blocked','canceled':'Blocked','blocked':'Blocked'}[j.state] }}">{{ j.state }}</span></td>
 <td>{% if r and r.metrics %}macro-F1 <b>{{ '%.4f'|format(r.metrics.macro_f1) }}</b> · acc {{ '%.4f'|format(r.metrics.accuracy) }}{% endif %}{% if j.failure_reason %}<span class="error">{{ j.failure_reason[:200] }}</span>{% endif %}</td>
 <td>{{ j.manifest.max_minutes }} min</td>
 <td>{% if j.state in ['queued','running'] and role in ['pi','researcher'] %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small">Cancel</button></form>{% endif %}</td></tr>{% endfor %}</table>
-{% else %}<p class="muted">No experiments yet. They are created only after the PI approves the protocol.</p>{% endif %}
-{% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/pause" style="margin-top:12px"><input type="hidden" name="csrf" value="{{ csrf }}">
-  {% if status.paused %}<button class="secondary" name="paused" value="no">Resume study</button>{% else %}<button class="secondary" name="paused" value="yes">Pause (no new jobs start)</button>{% endif %}</form>{% endif %}
-</div>
+{% else %}<div class="empty"><span class="icon">⚙️</span>No experiments yet. They are created only after the PI approves the protocol.</div>{% endif %}
+{% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/pause" style="margin-top:14px"><input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if status.paused %}<button class="secondary" name="paused" value="no">▶ Resume study</button>{% else %}<button class="secondary" name="paused" value="yes">⏸ Pause (no new jobs start)</button>{% endif %}</form>{% endif %}
+</div></section>
 
-<div class="card" id="results"><h2>Results</h2>
+<!-- ============================== RESULTS -->
+<section class="panel" id="tab-results"><div class="card">
+<h2>Results</h2>
 {% if analysis %}
-<p><span class="label {{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}">{{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}</span>
- every number below was recomputed from saved predictions.</p>
-<table><tr><th>Model</th><th class="num">Macro-F1 (mean ± sd over seeds)</th><th class="num">95% CI (first seed)</th><th class="num">Accuracy</th><th class="num">MCC</th><th class="num">False-positive rate</th></tr>
-{% for name, m in analysis.models.items() %}{% set a = m.aggregate %}<tr><td><b>{{ name }}</b> <span class="muted">{{ m.role }}</span></td>
+<p><span class="label {{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}">{{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}</span> every number below was recomputed from saved predictions.</p>
+<table><tr><th>Model</th><th class="num">Macro-F1 (mean ± sd)</th><th class="num">95% CI (first seed)</th><th class="num">Accuracy</th><th class="num">MCC</th><th class="num">False-positive rate</th></tr>
+{% for name, m in analysis.models.items() %}{% set a = m.aggregate %}<tr><td><b>{{ name }}</b> <span class="muted">{{ m.role }}</span>{% if name == best %} <span class="pill good">best</span>{% endif %}</td>
 <td class="num">{{ '%.4f'|format(a.macro_f1.mean) }} ± {{ '%.4f'|format(a.macro_f1.sd) }}</td>
 <td class="num">[{{ '%.4f'|format(m.macro_f1_ci.low) }}, {{ '%.4f'|format(m.macro_f1_ci.high) }}]</td>
 <td class="num">{{ '%.4f'|format(a.accuracy.mean) }}</td><td class="num">{{ '%.4f'|format(a.mcc.mean) }}</td>
 <td class="num">{% if a.false_positive_rate %}{{ '%.4f'|format(a.false_positive_rate.mean) }}{% endif %}</td></tr>{% endfor %}</table>
 <h3>Hypotheses</h3><ul>{% for h in analysis.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} → <b>{{ h.result }}</b>{% if h.mcnemar %} <span class="muted">(McNemar p = {{ '%.3g'|format(h.mcnemar.p_value) }})</span>{% endif %}</li>{% endfor %}</ul>
-{% if notes.interpretation %}<h3>Statistician's reading <span class="label Proposed">Proposed</span></h3><p>{{ notes.interpretation.interpretation }}</p>
-{% if notes.interpretation.caveats %}<ul>{% for c in notes.interpretation.caveats|aslist %}<li class="muted">{{ c|text }}</li>{% endfor %}</ul>{% endif %}{% endif %}
-{% else %}<p class="muted">No results yet.</p>{% endif %}</div>
+{% if notes.interpretation %}<h3>Statistician's reading <span class="label Proposed">Proposed</span></h3><p>{{ notes.interpretation.interpretation|text }}</p>
+{% set cv = notes.interpretation.caveats|aslist %}{% if cv %}<ul>{% for c in cv %}<li class="muted">{{ c|text }}</li>{% endfor %}</ul>{% endif %}{% endif %}
+{% else %}<div class="empty"><span class="icon">📊</span>No results yet.</div>{% endif %}
+</div></section>
 
-<div class="card" id="manuscript"><h2>Manuscript</h2>
+<!-- ============================== MANUSCRIPT -->
+<section class="panel" id="tab-manuscript"><div class="card">
+<h2>Manuscript</h2>
 {% if manuscripts %}{% set ms = manuscripts[0] %}
-<p>Draft v{{ ms.version }} · {{ ms.status }} ·
-  {% if ms.evidence_report.release_ready %}<span class="label Measured">evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}
-  · <a href="/manuscripts/{{ ms.id }}/download/md">Download Markdown</a> · <a href="/manuscripts/{{ ms.id }}/download/bib">Download BibTeX</a></p>
-{% if ms.review %}<details><summary>Reviewer agent: {{ ms.review.recommendation }} <span class="label Proposed">Proposed</span></summary>
+<div class="chips" style="margin-bottom:14px"><span class="chip">Draft <b>v{{ ms.version }}</b></span><span class="chip">Status <b>{{ ms.status }}</b></span>
+  {% if ms.evidence_report.release_ready %}<span class="pill good">✓ evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}
+  <a class="chip" href="/manuscripts/{{ ms.id }}/download/md">⬇ Markdown</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/bib">⬇ BibTeX</a></div>
+{% if ms.review %}<details style="margin-bottom:14px"><summary>Reviewer agent: {{ ms.review.recommendation|text }} <span class="label Proposed">Proposed</span></summary>
 <p class="muted">{% for k, v in (ms.review.scores if ms.review.scores is mapping else {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>
 <ul>{% for i in ms.review.major_issues|aslist %}<li>{{ i|text }}</li>{% endfor %}{% for i in ms.review.minor_issues|aslist %}<li class="muted">{{ i|text }}</li>{% endfor %}</ul></details>{% endif %}
 <article class="paper">{{ rendered|safe }}</article>
 {% if manuscripts|length > 1 %}<p class="muted">Earlier drafts: {% for o in manuscripts[1:] %}v{{ o.version }} ({{ o.status }}) {% endfor %}</p>{% endif %}
-{% else %}<p class="muted">No draft yet.</p>{% endif %}</div>
+{% else %}<div class="empty"><span class="icon">📝</span>No draft yet. The writing agent drafts the paper after the experiments and statistics.</div>{% endif %}
+</div></section>
 
-<div class="card" id="verification"><h2>Verification: how we know it is not hallucinating</h2>
-<p class="muted">The AI writes the words, but it is not trusted for facts. Each fact type has a separate, non-AI check:</p>
-<table class="trust">{% for t in trust %}<tr><td class="ticon {{ t.status }}">{{ {'ok':'✓','warn':'!','bad':'✗','pending':'…'}[t.status] }}</td><td><b>{{ t.check }}</b><div>{{ t.detail }}</div></td></tr>{% endfor %}</table>
-{% if manuscripts and manuscripts[0].evidence_report.flags %}<details><summary>All evidence flags ({{ manuscripts[0].evidence_report.flags|length }})</summary><ul>{% for f in manuscripts[0].evidence_report.flags %}<li class="{{ 'error' if f.severity == 'blocker' else 'muted' }}">{{ f.code }}: {{ f.message }}</li>{% endfor %}</ul></details>{% endif %}
-{% if manuscripts and manuscripts[0].evidence_report.resolved %}<details><summary>Every number in the paper and where it came from ({{ manuscripts[0].evidence_report.resolved|length }})</summary>
+<!-- ============================== VERIFICATION -->
+<section class="panel" id="tab-verification"><div class="card">
+<h2>How we know it is not hallucinating</h2>
+<p class="muted">The AI writes the words, but it is never trusted for facts. Each kind of fact has its own check that does not use AI:</p>
+<div class="trust">{% for t in trust %}<div class="titem"><div class="ticon {{ t.status }}">{{ {'ok':'✓','warn':'!','bad':'✗','pending':'…'}[t.status] }}</div><div><b>{{ t.check }}</b><div class="muted">{{ t.detail }}</div></div></div>{% endfor %}</div>
+{% if manuscripts and manuscripts[0].evidence_report.flags %}<details style="margin-top:14px"><summary>All evidence flags ({{ manuscripts[0].evidence_report.flags|length }})</summary><ul>{% for f in manuscripts[0].evidence_report.flags %}<li class="{{ 'error' if f.severity == 'blocker' else 'muted' }}">{{ f.code }}: {{ f.message }}</li>{% endfor %}</ul></details>{% endif %}
+{% if manuscripts and manuscripts[0].evidence_report.resolved %}<details style="margin-top:10px"><summary>Every number in the paper and where it came from ({{ manuscripts[0].evidence_report.resolved|length }})</summary>
 <table><tr><th>Placeholder written by the AI</th><th>Value inserted</th><th>Status</th></tr>{% for r in manuscripts[0].evidence_report.resolved %}<tr><td class="mono">{{ r.placeholder }}</td><td>{{ r.value if r.value is defined else r.doi }}</td><td>{{ r.status }}</td></tr>{% endfor %}</table></details>{% endif %}
-</div>
+</div></section>
 
-<div class="card" id="activity"><h2>Activity</h2>
-<ul class="feed">{% for a in activity %}<li class="{{ a.kind }}"><span class="muted">{{ a.ts }}</span> {{ a.text }}</li>{% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul></div>
+<!-- ============================== ACTIVITY -->
+<section class="panel" id="tab-activity"><div class="card">
+<h2>Activity</h2>
+<ul class="feed">{% for a in activity %}<li class="{{ a.kind }}"><span class="t">{{ a.ts }}</span><span class="d"></span><span>{{ a.text }}</span></li>{% else %}<li class="muted">Nothing yet.</li>{% endfor %}</ul>
+</div></section>
+
 </div>
 
 <script>
 (function () {
   const root = document.getElementById("live-root");
-  const pill = document.getElementById("live-pill");
+  const TABS = ["overview","literature","dataset","protocol","experiments","results","manuscript","verification","activity"];
+  let current = "overview";
+  function show(tab, push) {
+    if (!TABS.includes(tab)) tab = "overview";
+    current = tab;
+    root.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    root.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + tab));
+    if (push) history.replaceState(null, "", "#" + tab);
+  }
+  function fromHash() {
+    const h = location.hash.slice(1);
+    if (h.startsWith("ref-")) { show("literature"); setTimeout(() => document.getElementById(h)?.scrollIntoView({block:"center"}), 50); return; }
+    show(h || current);
+  }
+  root.addEventListener("click", e => {
+    const t = e.target.closest(".tab");
+    if (t) { show(t.dataset.tab, true); return; }
+    const a = e.target.closest("a[href^='#']");
+    if (a) {
+      const h = a.getAttribute("href").slice(1);
+      if (h.startsWith("ref-")) { e.preventDefault(); show("literature", true); document.getElementById(h)?.scrollIntoView({behavior:"smooth", block:"center"}); }
+      else if (TABS.includes(h)) { e.preventDefault(); show(h, true); window.scrollTo({top: root.querySelector(".tabbar").offsetTop - 70, behavior:"smooth"}); }
+    }
+  });
+  window.addEventListener("hashchange", fromHash);
+  fromHash();
+
+  const pill = () => document.getElementById("live-pill");
   let stamp = null, busy = false;
   async function tick() {
     if (busy || document.hidden) return;
     const el = document.activeElement;
-    if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return; // don't disturb typing
+    if (el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT")) return;
     busy = true;
     try {
       const r = await fetch(`/projects/${root.dataset.pid}/live`, {credentials: "same-origin"});
@@ -177,17 +334,19 @@
       const s = (await r.json()).stamp;
       if (stamp !== null && s !== stamp) {
         const html = await (await fetch(location.pathname, {credentials: "same-origin"})).text();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const fresh = doc.getElementById("live-root");
+        const fresh = new DOMParser().parseFromString(html, "text/html").getElementById("live-root");
         if (fresh) {
           const open = [...root.querySelectorAll("details[open]")].map(d => d.querySelector("summary")?.textContent);
+          const y = window.scrollY;
           root.innerHTML = fresh.innerHTML;
           root.querySelectorAll("details").forEach(d => { if (open.includes(d.querySelector("summary")?.textContent)) d.open = true; });
+          show(current);
+          window.scrollTo(0, y);
         }
       }
       stamp = s;
-      pill.classList.remove("off");
-    } catch (e) { pill.classList.add("off"); }
+      pill()?.classList.remove("off");
+    } catch (e) { pill()?.classList.add("off"); }
     finally { busy = false; }
   }
   tick();

@@ -142,6 +142,13 @@ def build_progress(
         if key in failed and stage == "error":
             state, detail = "error", failed[key][:120]
         steps.append(Step(key, label, state, detail))
+    # Studies started before step events existed: everything before a waiting gate is done.
+    gate_idx = max((i for i, st in enumerate(steps) if st.state == "waiting"), default=-1)
+    if stage == "released":
+        gate_idx = len(steps)
+    for st in steps[: max(gate_idx, 0)]:
+        if st.state == "todo":
+            st.state = "done"
     if stage == "error" and not now:
         now = "Stopped on an error. Read the reason below and use Retry; the study continues from its last checkpoint."
     if stage == "released":
