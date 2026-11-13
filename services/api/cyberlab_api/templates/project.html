@@ -104,7 +104,12 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 </div>
 
 {% if status.blocked_reason %}<div class="card" style="border-color:color-mix(in srgb,var(--blocked) 40%,var(--line))"><h2 class="error">Stopped</h2><p>{{ status.blocked_reason }}</p>
-  {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button>↻ Retry from the last checkpoint</button> <span class="muted">Nothing done so far is lost.</span></form>{% endif %}</div>{% endif %}
+  {% if 'BudgetExceeded' in status.blocked_reason %}
+    <p class="muted">The study used its whole AI token budget. Gemini's free tier and the local model cost nothing; the budget only stops runaway loops. Raise it to continue.</p>
+    {% if role == 'pi' %}<form method="post" action="/projects/{{ project.id }}/budget" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <select name="extra" style="width:auto"><option value="300000">+300,000 tokens</option><option value="1000000" selected>+1,000,000 tokens</option><option value="3000000">+3,000,000 tokens</option></select>
+      <button>Raise budget and continue</button></form>{% else %}<p class="muted">Only the PI can raise the budget.</p>{% endif %}
+  {% elif role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button>↻ Retry from the last checkpoint</button> <span class="muted">Nothing done so far is lost.</span></form>{% endif %}</div>{% endif %}
 
 {% if not pend and not status.blocked_reason and status.stage not in ['released','created'] and role in ['pi','researcher'] %}
 <details class="muted" style="margin:-8px 0 16px"><summary style="font-weight:500">Looks stuck?</summary>

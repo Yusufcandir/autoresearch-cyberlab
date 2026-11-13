@@ -65,7 +65,7 @@ class ResearchSpec(Versioned):
         description="If false, only the local LLM (Ollama) may see study data.",
     )
     gpu_budget_minutes: int = Field(default=480, ge=1, le=7 * 24 * 60)
-    llm_token_budget: int = Field(default=200_000, ge=0)
+    llm_token_budget: int = Field(default=1_000_000, ge=0)
 
 
 class Hypothesis(Versioned):

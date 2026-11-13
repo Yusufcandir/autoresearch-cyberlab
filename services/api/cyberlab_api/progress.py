@@ -231,6 +231,7 @@ _FRIENDLY = {
     "project.paused": "Study paused",
     "project.resumed": "Study resumed",
     "manuscript.redraft_requested": "Rewrite of the draft requested",
+    "budget.raised": "LLM token budget raised",
     "llm.status": "AI service",
 }
 

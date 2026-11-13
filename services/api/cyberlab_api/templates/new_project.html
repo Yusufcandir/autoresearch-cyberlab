@@ -17,7 +17,7 @@ At most one GPU job at a time</textarea>
     <div><label for="d">May study data be sent to the cloud LLM (Gemini)?</label>
       <select id="d" name="data_may_leave_host"><option value="no">No, local model only</option><option value="yes">Yes (public data only)</option></select></div>
     <div><label for="gb">GPU budget (minutes)</label><input id="gb" name="gpu_budget_minutes" type="number" value="480" min="1"></div>
-    <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="200000" min="0"></div>
+    <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="1000000" min="0" title="Gemini free tier and the local model cost nothing; this only stops runaway loops"></div>
   </div>
   <p class="muted">The agents will plan, review literature, propose a protocol and check the dataset. Nothing runs on the GPU until you approve the protocol.</p>
   <button type="submit">Start study</button>

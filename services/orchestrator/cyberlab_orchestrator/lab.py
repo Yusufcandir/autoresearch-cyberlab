@@ -279,6 +279,25 @@ class Lab:
         )
         return self._invoke(project_id, None)
 
+    def raise_budget(self, principal: Principal, project_id: str, extra_tokens: int) -> int:
+        """PI raises the study's LLM token budget (recorded in the audit log)."""
+        if not 1_000 <= extra_tokens <= 10_000_000:
+            raise GateError("choose an increase between 1,000 and 10,000,000 tokens")
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "pi")
+            spec = dict(p.spec)
+            old = int(spec.get("llm_token_budget", 0))
+            spec["llm_token_budget"] = max(old, p.llm_tokens_used) + extra_tokens
+            p.spec = spec
+            audit(
+                s,
+                principal.username,
+                "budget.raised",
+                project_id,
+                {"from": old, "to": spec["llm_token_budget"]},
+            )
+            return int(spec["llm_token_budget"])
+
     def pause(self, principal: Principal, project_id: str, paused: bool) -> None:
         with self.db.session() as s:
             p = require_project_role(s, principal, project_id, "researcher")
