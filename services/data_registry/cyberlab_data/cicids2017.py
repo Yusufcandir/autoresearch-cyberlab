@@ -128,20 +128,28 @@ def download(root: Path, url: str = CICIDS2017.download_url) -> Path:  # pragma:
         with target.open("wb") as fh:
             for chunk in r.iter_bytes(1 << 20):
                 fh.write(chunk)
-    return unzip(root)
-
-
-def unzip(root: Path) -> Path:
-    """Extract the CSVs from raw/MachineLearningCSV.zip (path-traversal safe)."""
-    raw = root / "raw"
-    target = raw / "MachineLearningCSV.zip"
-    if not target.exists():
-        raise DatasetBlocked([MANUAL_STEPS.format(raw=raw)])
-    with zipfile.ZipFile(target) as z:
-        for member in z.namelist():
-            if member.endswith(".csv") and ".." not in member:
-                (raw / Path(member).name).write_bytes(z.read(member))
+    unzip(root)
     return raw
+
+
+def unzip(root: Path) -> list[Path]:
+    """Extract every CSV from the zip(s) in raw/, flattening folders (path-traversal safe)."""
+    raw = root / "raw"
+    zips = sorted(raw.glob("*.zip"))
+    if not zips:
+        raise DatasetBlocked([MANUAL_STEPS.format(raw=raw)])
+    out: list[Path] = []
+    for target in zips:
+        with zipfile.ZipFile(target) as z:
+            for member in z.namelist():
+                name = Path(member).name
+                if name.lower().endswith(".csv") and not name.startswith("."):
+                    dest = raw / name
+                    with z.open(member) as src, dest.open("wb") as fh:
+                        while chunk := src.read(1 << 20):
+                            fh.write(chunk)
+                    out.append(dest)
+    return out
 
 
 def _read_csv(path: Path) -> pd.DataFrame:

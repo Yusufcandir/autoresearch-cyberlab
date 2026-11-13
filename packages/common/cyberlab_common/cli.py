@@ -142,10 +142,19 @@ def _dataset(args: argparse.Namespace) -> int:
     s = Settings()
     root = s.dataset_root / "cicids2017"
     if args.action == "download":
-        print(
-            f"downloading the official CIC-IDS2017 MachineLearningCSV.zip into {root / 'raw'} ..."
-        )
-        cicids2017.download(root)
+        print("trying the official CIC-IDS2017 download ...")
+        try:
+            cicids2017.download(root)
+        except cicids2017.DatasetBlocked as exc:
+            print(exc)
+            return 2
+    elif args.action == "unzip":
+        files = cicids2017.unzip(root)
+        print(f"extracted {len(files)} CSV files into {root / 'raw'}:")
+        for f in files:
+            print(f"  {f.name}")
+        print("next: cyberlab dataset prepare")
+        return 0 if files else 2
     elif args.action == "fixture":
         cicids2017.write_fixture(root / "raw")
         print(f"wrote a small SYNTHETIC test fixture to {root / 'raw'} (not real data)")
