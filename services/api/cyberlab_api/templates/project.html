@@ -172,6 +172,13 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
       {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps|aslist %}<li>{% if g is mapping %}<b>{{ g.gap|text }}</b> {{ g.why_it_matters|text }}{% if g.testable_with %} <span class="muted">Testable with: {{ g.testable_with|text }}</span>{% endif %}{% else %}{{ g|text }}{% endif %}</li>{% endfor %}</ul>
       {% for c in notes.gaps.novelty_caveats|aslist %}<p class="muted">⚠ {{ c|text }}</p>{% endfor %}{% else %}<div class="empty"><span class="icon">🔎</span>Not yet.</div>{% endif %}</div>
   </div>
+{% if role == 'pi' and status.stage != 'released' %}<div class="card"><details class="danger-zone" id="delete"><summary>Delete this study</summary>
+<form method="post" action="/projects/{{ project.id }}/delete" onsubmit="return confirm('Delete this study? It will be hidden for everyone and its running jobs stopped.')">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<p class="muted">The study is hidden for everyone and its queued and running jobs are stopped. Its records and evidence are kept for audit, and an administrator can restore it. Released studies cannot be deleted.</p>
+<label for="confirm-title">Type the study title to confirm</label>
+<input id="confirm-title" name="confirm_title" required placeholder="{{ project.title }}" autocomplete="off">
+<button class="danger" style="margin-top:8px">Delete study</button></form></details></div>{% endif %}
 </section>
 
 <!-- ============================== LITERATURE -->
@@ -250,13 +257,6 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 {% else %}<div class="empty"><span class="icon">⚙️</span>No experiments yet. They are created only after the PI approves the protocol.</div>{% endif %}
 {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/pause" style="margin-top:14px"><input type="hidden" name="csrf" value="{{ csrf }}">
   {% if status.paused %}<button class="secondary" name="paused" value="no">▶ Resume study</button>{% else %}<button class="secondary" name="paused" value="yes">⏸ Pause (no new jobs start)</button>{% endif %}</form>{% endif %}
-{% if role == 'pi' and status.stage != 'released' %}<details class="danger-zone" style="margin-top:14px"><summary>Delete this study</summary>
-<form method="post" action="/projects/{{ project.id }}/delete" onsubmit="return confirm('Delete this study? It will be hidden for everyone and its running jobs stopped.')">
-<input type="hidden" name="csrf" value="{{ csrf }}">
-<p class="muted">The study is hidden for everyone and its queued and running jobs are stopped. Its records and evidence are kept for audit, and an administrator can restore it. Released studies cannot be deleted.</p>
-<label for="confirm-title">Type the study title to confirm</label>
-<input id="confirm-title" name="confirm_title" required placeholder="{{ project.title }}" autocomplete="off">
-<button class="danger" style="margin-top:8px">Delete study</button></form></details>{% endif %}
 </div></section>
 
 <!-- ============================== RESULTS -->
@@ -402,4 +402,5 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
   }), 1000);
 })();
 </script>
+<script>if (location.search.includes('delete=1')) { const d = document.getElementById('delete'); if (d) { d.open = true; d.scrollIntoView({behavior: 'smooth', block: 'center'}); } }</script>
 {% endblock %}

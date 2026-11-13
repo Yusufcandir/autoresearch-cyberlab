@@ -8,7 +8,7 @@
 <tr><th>Study</th><th>Stage</th><th>Status</th><th>Waiting for</th><th>Jobs</th></tr>
 {% for r in rows %}{% set p = r.p %}{% set pend = pending[p.id] %}
 <tr>
-  <td><a href="/projects/{{ p.id }}">{{ p.title }}</a><div class="muted">{{ p.created_at.strftime('%Y-%m-%d') }}</div></td>
+  <td><a href="/projects/{{ p.id }}">{{ p.title }}</a><div class="muted">{{ p.created_at.strftime('%Y-%m-%d') }}{% if p.stage != 'released' %} · <a class="muted" href="/projects/{{ p.id }}?delete=1#overview">delete…</a>{% endif %}</div></td>
   <td>{{ p.stage.replace('_',' ') }}</td>
   <td><span class="label {{ p.status_label }}">{{ p.status_label }}</span>{% if p.blocked_reason %}<div class="error">{{ p.blocked_reason[:160] }}</div>{% endif %}</td>
   <td>{% if pend %}{{ pend.title }}{% else %}<span class="muted">nothing</span>{% endif %}</td>
