@@ -35,7 +35,7 @@
 .tab .count{font-size:11px;padding:1px 7px;border-radius:999px;background:color-mix(in srgb,currentColor 15%,transparent)}
 .tab .sdot{width:7px;height:7px;border-radius:50%}
 .sdot.done{background:var(--verified)}.sdot.running{background:var(--running);animation:pulse 1.6s infinite}.sdot.waiting{background:var(--accent)}.sdot.error{background:var(--blocked)}
-.panel{display:none;animation:fade .2s ease}.panel.active{display:block}
+.panel{display:none}.panel.active{display:block}.panel.enter{animation:fade .2s ease}
 @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:18px}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
@@ -301,7 +301,11 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
     current = tab;
     root.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
     root.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + tab));
-    if (push) history.replaceState(null, "", "#" + tab);
+    if (push) {
+      history.replaceState(null, "", "#" + tab);
+      const p = document.getElementById("tab-" + tab);
+      if (p) { p.classList.remove("enter"); void p.offsetWidth; p.classList.add("enter"); }
+    }
   }
   function fromHash() {
     const h = location.hash.slice(1);
@@ -321,6 +325,32 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
   window.addEventListener("hashchange", fromHash);
   fromHash();
 
+  // Update only the blocks whose content changed, so the page never flashes.
+  function normalize(el) {
+    el.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === current));
+    el.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + current));
+  }
+  function keepOpen(oldEl, newEl) {
+    const open = [...oldEl.querySelectorAll("details[open]")].map(d => d.querySelector("summary")?.textContent);
+    newEl.querySelectorAll("details").forEach(d => { if (open.includes(d.querySelector("summary")?.textContent)) d.open = true; });
+  }
+  function patch(oldRoot, newRoot) {
+    normalize(newRoot);
+    const a = [...oldRoot.children], b = [...newRoot.children];
+    if (a.length !== b.length) { keepOpen(oldRoot, newRoot); oldRoot.innerHTML = newRoot.innerHTML; normalize(oldRoot); return; }
+    a.forEach((el, i) => {
+      if (el.outerHTML === b[i].outerHTML) return;
+      if (el.tagName === "SECTION" && el.children.length === b[i].children.length) {
+        [...el.children].forEach((c, j) => {
+          const n = b[i].children[j];
+          if (c.outerHTML !== n.outerHTML) { keepOpen(c, n); c.replaceWith(n.cloneNode(true)); }
+        });
+      } else {
+        keepOpen(el, b[i]);
+        el.replaceWith(b[i].cloneNode(true));
+      }
+    });
+  }
   const pill = () => document.getElementById("live-pill");
   let stamp = null, busy = false;
   async function tick() {
@@ -335,14 +365,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
       if (stamp !== null && s !== stamp) {
         const html = await (await fetch(location.pathname, {credentials: "same-origin"})).text();
         const fresh = new DOMParser().parseFromString(html, "text/html").getElementById("live-root");
-        if (fresh) {
-          const open = [...root.querySelectorAll("details[open]")].map(d => d.querySelector("summary")?.textContent);
-          const y = window.scrollY;
-          root.innerHTML = fresh.innerHTML;
-          root.querySelectorAll("details").forEach(d => { if (open.includes(d.querySelector("summary")?.textContent)) d.open = true; });
-          show(current);
-          window.scrollTo(0, y);
-        }
+        if (fresh) patch(root, fresh);
       }
       stamp = s;
       pill()?.classList.remove("off");

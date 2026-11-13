@@ -246,14 +246,16 @@ class Broker:
                         continue
                     others = foreign_gpu_processes()
                     if others:
-                        job.failure_reason = f"waiting: GPU in use by other processes {others}"
-                        audit(
-                            s,
-                            "broker",
-                            "job.contention",
-                            job.project_id,
-                            {"job_id": job.id, "others": others},
-                        )
+                        reason = "waiting: the GPU is in use by another user's process"
+                        if job.failure_reason != reason:  # log once, not on every poll
+                            job.failure_reason = reason
+                            audit(
+                                s,
+                                "broker",
+                                "job.contention",
+                                job.project_id,
+                                {"job_id": job.id, "others": others},
+                            )
                         continue
                 job.state = "running"
                 job.attempts += 1
