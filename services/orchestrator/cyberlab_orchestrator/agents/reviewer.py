@@ -16,8 +16,16 @@ from typing import Any
 
 from sqlalchemy import select
 
-from cyberlab_common.db import CitationRecord, ManuscriptRecord, audit
+from cyberlab_common.db import (
+    CitationRecord,
+    ManuscriptRecord,
+    ProtocolVersion,
+    RunRecord,
+    audit,
+)
 from cyberlab_llm.gateway import as_list, wrap_untrusted
+from cyberlab_manuscript import manuscript_sha
+from cyberlab_orchestrator.agents.writing import MAX_REVISIONS
 from cyberlab_orchestrator.context import LabContext
 
 DIMENSIONS = [
@@ -62,10 +70,70 @@ def citing_sentences(markdown: str) -> list[dict[str, Any]]:
     return out
 
 
+def experiments_run(ctx: LabContext, pid: str) -> str:
+    """Plain description of what was actually run, derived from the stored protocol and jobs."""
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion)
+            .where(ProtocolVersion.project_id == pid)
+            .order_by(ProtocolVersion.version.desc())
+        )
+        runs = list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))
+    body = pv.body if pv else {}
+    models = ", ".join(sorted({r.model_name for r in runs if r.status == "succeeded"}))
+    split = body.get("split", {})
+    return (
+        f"Dataset {body.get('dataset_id')} after cleaning and de-duplication; one "
+        f"{split.get('strategy', 'stratified')} split (seed {split.get('seed')}); models: {models}; "
+        f"model seeds {body.get('seeds')}; metrics on the test split, bootstrap CIs and McNemar "
+        "tests. NOT run: any experiment on non-deduplicated data or without cleaning, any other "
+        "dataset, hyper-parameter tuning, cross-validation, feature-importance or ablation studies, "
+        "runtime or efficiency measurements."
+    )
+
+
+# Deterministic catch for one very common untested claim: the *effect* of de-duplication.
+UNTESTED_EFFECT = re.compile(
+    r"(dedup\w*|duplicat\w*|leakage)[^.]{0,120}\b(inflat\w*|overestimat\w*|bias\w*|"
+    r"improv\w*|lower\w*|reduc\w*|prevent\w*|necessit\w*|underscor\w*|demonstrat\w*|"
+    r"show\w*|reveal\w*|illusion)|"
+    r"(inflat\w*|overestimat\w*|illusion)[^.]{0,120}(dedup\w*|duplicat\w*)",
+    re.I,
+)
+
+
+def untested_effect_sentences(markdown: str) -> list[str]:
+    body = markdown.split("\n## Evidence", 1)[0]
+    body = re.sub(r"\n## (Related Work|Limitations)\n.*?(?=\n## )", "\n", body, flags=re.S)
+    out = []
+    for para in body.split("\n"):
+        if para.startswith(("|", "#", ">")):
+            continue
+        for sent in re.split(r"(?<=[.!?])\s+", para):
+            if UNTESTED_EFFECT.search(sent) and "[@" not in sent:
+                out.append(sent.strip())
+    return out
+
+
+def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
+    removed = 0
+    for sent in sorted(set(sentences), key=len, reverse=True):
+        if len(sent) > 20 and sent in markdown:
+            markdown = markdown.replace(sent, "", 1)
+            removed += 1
+    markdown = re.sub(r"[ \t]{2,}", " ", markdown)
+    markdown = re.sub(r"(?m)^ (?=\S)", "", markdown)  # no stray space where a sentence was cut
+    return markdown, removed
+
+
 def claim_check(ctx: LabContext, pid: str, markdown: str) -> dict[str, Any]:
     with ctx.db.session() as s:
         papers = {
-            c.key: {"title": c.title, "abstract": (c.abstract or "")[:700]}
+            c.key: {
+                "title": c.title,
+                "authors": (c.authors or [])[:6],
+                "abstract": (c.abstract or "")[:2500],
+            }
             for c in s.scalars(
                 select(CitationRecord).where(
                     CitationRecord.project_id == pid, CitationRecord.status == "Verified"
@@ -78,10 +146,7 @@ def claim_check(ctx: LabContext, pid: str, markdown: str) -> dict[str, Any]:
         for i, x in enumerate(sents)
     ]
     payload = {
-        "experiments_run": "One de-duplicated CIC-IDS2017 split; logistic regression, random "
-        "forest, XGBoost and MLP trained with several seeds; metrics, bootstrap CIs and McNemar "
-        "tests on the same test set. Nothing else (no non-deduplicated baseline, no other dataset, "
-        "no tuning, no cross-validation).",
+        "experiments_run": experiments_run(ctx, pid),
         "citing_sentences": items,
     }
     prompt = (
@@ -107,6 +172,16 @@ def claim_check(ctx: LabContext, pid: str, markdown: str) -> dict[str, Any]:
         for c in as_list(result.get("unsupported_claims"))
         if isinstance(c, dict) and c.get("sentence")
     ]
+    seen = {c["sentence"] for c in bad_claims}
+    for sent in untested_effect_sentences(markdown):
+        if sent not in seen:
+            bad_claims.append(
+                {
+                    "sentence": sent,
+                    "reason": "claims an effect of de-duplication or leakage, but no experiment "
+                    "compared against non-deduplicated data",
+                }
+            )
     return {
         "checked_sentences": len(sents),
         "unsupported_citations": bad_cites,
@@ -144,6 +219,21 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 "message": f'{c["reason"]} | "{c["sentence"][:160]}"',
             }
         )
+    final = state.get("revisions", 0) >= MAX_REVISIONS
+    if final and (checks["unsupported_citations"] or checks["unsupported_claims"]):
+        doomed = [c["sentence"] for c in checks["unsupported_citations"]] + [
+            c["sentence"] for c in checks["unsupported_claims"]
+        ]
+        markdown, n_removed = remove_sentences(markdown, doomed)
+        if n_removed:
+            flags.append(
+                {
+                    "severity": "warning",
+                    "code": "UNSUPPORTED_SENTENCES_REMOVED",
+                    "message": f"{n_removed} sentence(s) with unsupported citations or untested "
+                    "claims were removed from the final draft (listed above).",
+                }
+            )
     evidence["flags"] = flags
     blockers = [f for f in flags if f["severity"] == "blocker"]
     review["evidence_blockers"] = blockers
@@ -157,6 +247,9 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         assert ms is not None
         ms.review = review
         ms.evidence_report = evidence
+        if ms.markdown != markdown:
+            ms.markdown = markdown
+            ms.sha256 = manuscript_sha(markdown)
         ctx.note(s, pid, "reviewer", "review", review)
         audit(
             s,
@@ -182,7 +275,7 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         ]
         + [str(x) for x in as_list(review.get("major_issues"))][:5]
     )
-    needs_revision = bool(
+    needs_revision = not final and bool(
         blockers or checks["unsupported_citations"] or checks["unsupported_claims"]
     )
     ctx.set_stage(pid, "reviewed", "Unverified" if blockers else "Measured")

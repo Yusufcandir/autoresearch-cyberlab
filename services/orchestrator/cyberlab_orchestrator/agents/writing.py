@@ -21,15 +21,15 @@ SYSTEM = (
     "You are a scientific writing agent drafting an intrusion-detection paper. Rules, strictly:\n"
     "1. NEVER type a number yourself (no percentages, counts, scores or sizes). Use only "
     "placeholders: {{metric:MODEL:METRIC}} (METRIC in macro_f1, accuracy, balanced_accuracy, mcc, "
-    "false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}}, {{fact:NAME}} for any method "
-    "detail listed under 'facts', and {{hyp:H1}} which renders as e.g. 'H1 (supported)'. MODEL must "
+    "false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}} (renders the complete text '95% CI [low, high], seed N'; do not add '95%' or 'CI' around it), {{fact:NAME}} for any method "
+    "detail listed under 'facts', and {{hyp:H1}} which renders as 'H1 (supported)' or 'H1 (not supported)', so write e.g. 'the results support {{hyp:H1}}'. MODEL must "
     "be a real model name from 'models'.\n"
     "2. Describe the method ONLY with what is in 'method_facts' and 'facts'. Do not invent "
     "procedures (cross-validation, per-seed splits, tuning) that are not listed.\n"
     "3. Do not claim comparisons that were not run. There was NO experiment on non-deduplicated "
     "data, so do not say that de-duplication changed or lowered the scores.\n"
     "4. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'. Say about a "
-    "paper only what its title and abstract support. In related_work, cite every paper at least once.\n"
+    "paper only what its title and abstract support; name authors exactly as in 'authors'. In related_work, cite every paper at least once.\n"
     "5. Be precise and modest; mention CIC-IDS2017 limitations.\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
     "discussion, limitations, conclusion (markdown strings)."
@@ -176,7 +176,8 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             k: {
                 "title": cites[k]["title"],
                 "year": cites[k]["year"],
-                "abstract": (cites[k].get("abstract") or "")[:900],
+                "authors": (cites[k].get("authors") or [])[:6],
+                "abstract": (cites[k].get("abstract") or "")[:2500],
             }
             for k in verified_keys
         },

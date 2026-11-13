@@ -143,7 +143,9 @@ def render_text(
         report.resolved.append(
             {"placeholder": m.group(0), "value": [ci["low"], ci["high"]], "status": status}
         )
-        return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}]"
+        seed = (mdl or {}).get("ci_seed")
+        label = f", seed {seed}" if seed is not None else ""
+        return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}]{label}"
 
     def check_numbers(segment: str) -> str:
         def num(m: re.Match[str]) -> str:
@@ -166,6 +168,127 @@ def render_text(
         pos = m.end()
     out.append(check_numbers(text[pos:]))
     return "".join(out)
+
+
+_NAME = r"[A-Z][A-Za-zÀ-ÿ'’\-]+"
+AUTHOR_CITE = re.compile(
+    rf"(?P<first>{_NAME})(?P<rest>\s+et al\.|\s+and\s+(?P<second>{_NAME}))?(?P<gap>\s*)"
+    rf"\[@(?P<key>[A-Za-z0-9_]+)"
+)
+
+
+def _surname(full: str) -> str:
+    return full.strip().split()[-1] if full.strip() else ""
+
+
+def _norm(s: str) -> str:
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+
+
+def fix_author_names(
+    text: str, citations: dict[str, dict[str, Any]], report: EvidenceReport, section: str
+) -> str:
+    """'Tufan and Kaya [@Key]' must name the real authors of Key; wrong names are corrected."""
+
+    def sub(m: re.Match[str]) -> str:
+        c = citations.get(m.group("key")) or {}
+        authors = [a for a in (c.get("authors") or []) if a]
+        if not authors:
+            return m.group(0)
+        s1 = _surname(authors[0])
+        s2 = _surname(authors[1]) if len(authors) > 1 else ""
+        first_ok = _norm(m.group("first")) == _norm(s1)
+        second = m.group("second")
+        second_ok = second is None or (len(authors) == 2 and _norm(second) == _norm(s2))
+        if first_ok and second_ok:
+            return m.group(0)
+        if not first_ok and _norm(m.group("first")) not in {_norm(_surname(a)) for a in authors}:
+            if m.group("rest") is None:
+                return m.group(0)  # a normal word before the citation, not an author name
+        correct = (
+            s1 if len(authors) == 1 else (f"{s1} and {s2}" if len(authors) == 2 else f"{s1} et al.")
+        )
+        written = m.group("first") + (m.group("rest") or "")
+        report.flag(
+            "warning",
+            "AUTHOR_CORRECTED",
+            f"{section}: '{written}' corrected to '{correct}' for {m.group('key')}",
+        )
+        return f"{correct}{m.group('gap')}[@{m.group('key')}"
+
+    return AUTHOR_CITE.sub(sub, text)
+
+
+_CI_PREFIX = re.compile(
+    r"(?:CI:\s*|95\s*%\s*(?:percentile\s+)?(?:bootstrap\s+)?(?:confidence\s+interval|CI)"
+    r"(?:\s+(?:of|is|was))?\s*[:=]?\s*)(?=95% CI \[)",
+    re.I,
+)
+_HYP_VERB = re.compile(
+    r"\b(confirm(?:s|ed|ing)?|support(?:s|ed|ing)?|validat(?:e|es|ed|ing)|verif(?:y|ies|ied))\s+"
+    r"((?:H\d+ \((?:supported|not supported)\)(?:,\s*|\s+and\s+)?)+)",
+    re.I,
+)
+
+
+def tidy_prose(text: str) -> str:
+    """Fix wording problems that come from combining agent prose with rendered evidence."""
+    text = _CI_PREFIX.sub("", text)
+    text = re.sub(r"\(\s*\(95% CI ([^)]*)\)\s*\)", r"(95% CI \1)", text)
+
+    def hyp(m: re.Match[str]) -> str:
+        items = re.findall(r"(H\d+) \((supported|not supported)\)", m.group(2))
+        ok = [h for h, r in items if r == "supported"]
+        bad = [h for h, r in items if r != "supported"]
+        tail = (
+            m.group(2)[len(m.group(2).rstrip(", ")) :] if m.group(2).endswith((", ", " ")) else ""
+        )
+        parts = []
+        if ok:
+            parts.append(f"{m.group(1)} {' and '.join(ok)}")
+        if bad:
+            parts.append(f"does not support {' and '.join(bad)}")
+        return ", but ".join(parts) + tail
+
+    text = _HYP_VERB.sub(hyp, text)
+    # "we test H1 (supported)" should not reveal the result: drop it after test verbs.
+    return re.sub(
+        r"\b(test(?:s|ed|ing)?|evaluat(?:e|es|ed|ing)|examin(?:e|es|ed|ing))(\s+(?:whether\s+)?)"
+        r"((?:H\d+ \((?:supported|not supported)\)(?:,\s*|\s+and\s+)?)+)",
+        lambda m: (
+            m.group(1) + m.group(2) + re.sub(r" \((?:supported|not supported)\)", "", m.group(3))
+        ),
+        text,
+        flags=re.I,
+    )
+
+
+def metric_definitions() -> str:
+    return (
+        "### Metric definitions\n\n"
+        "Macro-F1 is the unweighted mean of per-class F1 scores, so every class counts equally. "
+        "MCC is the multiclass Matthews correlation coefficient. Balanced accuracy is the mean "
+        "per-class recall. For the operational metrics the multiclass output is read as attack "
+        "versus BENIGN: the detection rate is the share of attack rows predicted as any attack "
+        "class, and the false-positive rate is the share of BENIGN rows predicted as an attack."
+    )
+
+
+def small_class_note(analysis: dict[str, Any]) -> str:
+    small: dict[str, int] = {}
+    for m in analysis.get("models", {}).values():
+        for cls, pc in (m.get("per_class") or {}).items():
+            if pc.get("support", 0) < 30:
+                small[cls] = int(pc["support"])
+    if not small:
+        return ""
+    listed = ", ".join(f"{c} ({n:,} test rows)" for c, n in sorted(small.items()))
+    return (
+        f"Some classes have very few test rows: {listed}. Their per-class scores, and the "
+        "macro-averaged metrics they feed into, are therefore highly uncertain."
+    )
 
 
 def results_table(analysis: dict[str, Any]) -> str:
@@ -209,21 +332,29 @@ def hypotheses_table(analysis: dict[str, Any]) -> str:
             continue
         rows.append(
             f"| {h['id']} | {h['a']} > {h['b']} ({h['metric']}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
-            f"{h['mcnemar']['p_value']:.3g} | {h['result']} |"
+            f"{_fmt_p(h['mcnemar']['p_value'])} | {h['result']} |"
         )
     return "\n".join(rows)
+
+
+def _fmt_p(p: float) -> str:
+    return "< 0.001" if p < 1e-3 else f"{p:.3f}"
+
+
+def _n(v: Any) -> str:
+    return f"{v:,}" if isinstance(v, int) else str(v)
 
 
 def dataset_section(analysis: dict[str, Any]) -> str:
     ds = analysis.get("dataset") or {}
     if not ds:
         return "_Dataset manifest missing._"
-    counts = "\n".join(f"| {k} | {v} |" for k, v in ds.get("class_counts", {}).items())
-    splits = ", ".join(f"{k}: {v}" for k, v in ds.get("split_counts", {}).items())
+    counts = "\n".join(f"| {k} | {_n(v)} |" for k, v in ds.get("class_counts", {}).items())
+    splits = ", ".join(f"{k}: {_n(v)}" for k, v in ds.get("split_counts", {}).items())
     return (
         f"Dataset: {ds.get('name')} (`{ds.get('dataset_id')}`), licence: {ds.get('license')}\n\n"
-        f"Rows after cleaning: {ds.get('n_rows_clean')} of {ds.get('n_rows_raw')} raw; "
-        f"duplicates or conflicting rows removed: {ds.get('n_duplicates_removed')}; "
+        f"Rows after cleaning: {_n(ds.get('n_rows_clean'))} of {_n(ds.get('n_rows_raw'))} raw; "
+        f"duplicates or conflicting rows removed: {_n(ds.get('n_duplicates_removed'))}; "
         f"train/test overlap rows: {ds.get('split_overlap_rows')}. Splits: {splits}.\n\n"
         f"| Class | Rows |\n|---|---|\n{counts}"
     )
@@ -262,9 +393,12 @@ def build_manuscript(
         body = sections.get(key, "")
         out += [f"## {heading}", ""]
         if body:
-            out += [render_text(body, analysis, citations, report, key, guardrail), ""]
+            rendered = render_text(body, analysis, citations, report, key, guardrail)
+            out += [tidy_prose(fix_author_names(rendered, citations, report, key)), ""]
         if key == "methodology":
-            out += ["### Data", "", dataset_section(analysis), ""]
+            out += [metric_definitions(), "", "### Data", "", dataset_section(analysis), ""]
+        if key == "limitations" and (note := small_class_note(analysis)):
+            out += [note, ""]
         if key == "results":
             out += [
                 "### Main results",

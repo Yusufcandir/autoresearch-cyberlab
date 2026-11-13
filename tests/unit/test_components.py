@@ -283,3 +283,28 @@ def test_tracker_rolls_back_when_writing_restarts() -> None:
     assert state["writing"] == "running"
     assert state["reviewer"] == "todo"
     assert "Rewriting the draft" in now
+
+
+def test_prose_tidying_and_automatic_sections() -> None:
+    from cyberlab_manuscript.builder import small_class_note, tidy_prose
+
+    assert (
+        tidy_prose("Testing confirms H1 (supported) and H2 (supported).")
+        == "Testing confirms H1 and H2."
+    )
+    assert tidy_prose("we test H1 (supported).") == "we test H1."
+    assert (
+        tidy_prose("F1 0.9 (CI: 95% CI [0.8, 0.95], seed 42)")
+        == "F1 0.9 (95% CI [0.8, 0.95], seed 42)"
+    )
+    analysis = {"models": {"m": {"per_class": {"Rare": {"support": 9}, "DoS": {"support": 900}}}}}
+    assert "Rare (9 test rows)" in small_class_note(analysis)
+
+
+def test_untested_deduplication_claims_are_caught_and_removed() -> None:
+    from cyberlab_orchestrator.agents.reviewer import remove_sentences, untested_effect_sentences
+
+    md = "## Discussion\n\nDe-duplication prevented inflated scores. Trees did best.\n\n## Evidence\n"
+    found = untested_effect_sentences(md)
+    assert found == ["De-duplication prevented inflated scores."]
+    assert "inflated" not in remove_sentences(md, found)[0]
