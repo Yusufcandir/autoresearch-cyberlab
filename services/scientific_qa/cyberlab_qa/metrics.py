@@ -89,8 +89,29 @@ def _accuracy_cm(cm: np.ndarray) -> float:
     return float(np.trace(cm) / max(cm.sum(), 1))
 
 
+def _balanced_accuracy_cm(cm: np.ndarray) -> float:
+    support = cm.sum(axis=1)
+    present = support > 0  # sklearn averages recall over classes present in y_true
+    recall = np.diag(cm)[present] / support[present]
+    return float(recall.mean()) if recall.size else 0.0
+
+
+def _mcc_cm(cm: np.ndarray) -> float:
+    t = cm.sum(axis=1).astype(float)
+    p = cm.sum(axis=0).astype(float)
+    c = float(np.trace(cm))
+    s = float(cm.sum())
+    denom = np.sqrt((s * s - p @ p) * (s * s - t @ t))
+    return float((c * s - t @ p) / denom) if denom > 0 else 0.0
+
+
 def _fast_metric(metric: str) -> Any:
-    return {"macro_f1": _macro_f1_cm, "accuracy": _accuracy_cm}.get(metric)
+    return {
+        "macro_f1": _macro_f1_cm,
+        "accuracy": _accuracy_cm,
+        "balanced_accuracy": _balanced_accuracy_cm,
+        "mcc": _mcc_cm,
+    }.get(metric)
 
 
 def bootstrap_ci(

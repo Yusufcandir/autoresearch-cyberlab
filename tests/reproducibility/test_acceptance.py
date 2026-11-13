@@ -92,3 +92,21 @@ def test_restore_drill_verifies_hashes_and_approvals_at21(tmp_path: Path) -> Non
 def test_restore_drill_detects_a_modified_artifact_at21(tmp_path: Path) -> None:
     report = verify_backup(_make_backup(tmp_path, tamper=True), tmp_path / "restore")
     assert not report["ok"] and "does not match its hash" in report["problems"][0]
+
+
+def test_fast_bootstrap_metrics_match_sklearn_exactly() -> None:
+    import numpy as np
+    from sklearn import metrics as skm
+
+    from cyberlab_qa.metrics import _balanced_accuracy_cm, _mcc_cm
+
+    rng = np.random.default_rng(3)
+    labels = np.array(["A", "B", "C", "D"])
+    y = labels[rng.choice(4, size=5000, p=[0.7, 0.2, 0.09, 0.01])]
+    p = np.where(rng.random(5000) < 0.8, y, labels[rng.integers(0, 4, size=5000)])
+    p[:3] = "E"  # a label that only appears in predictions
+    allv, codes = np.unique(np.concatenate([y, p]), return_inverse=True)
+    k = len(allv)
+    cm = np.bincount(codes[:5000] * k + codes[5000:], minlength=k * k).reshape(k, k)
+    assert abs(_balanced_accuracy_cm(cm) - skm.balanced_accuracy_score(y, p)) < 1e-12
+    assert abs(_mcc_cm(cm) - skm.matthews_corrcoef(y, p)) < 1e-12
