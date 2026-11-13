@@ -127,7 +127,8 @@ def require_project_role(
 ) -> Project:
     project = s.get(Project, project_id)
     role = project_role(s, principal, project_id) if project else None
-    if project is None or role is None:
+    # A deleted study behaves as if it did not exist (an admin restores it from the console).
+    if project is None or role is None or project.deleted_at is not None:
         raise NotFoundOrForbidden(project_id)
     if PROJECT_RANK[role] < PROJECT_RANK[minimum]:
         raise Forbidden(f"requires project role {minimum}")
@@ -135,12 +136,13 @@ def require_project_role(
 
 
 def accessible_projects(s: Session, principal: Principal) -> list[Project]:
+    live = Project.deleted_at.is_(None)
     if principal.is_admin:
-        return list(s.scalars(select(Project).order_by(Project.created_at.desc())))
+        return list(s.scalars(select(Project).where(live).order_by(Project.created_at.desc())))
     q = (
         select(Project)
         .join(Membership, Membership.project_id == Project.id)
-        .where(Membership.user_id == principal.id)
+        .where(Membership.user_id == principal.id, live)
         .order_by(Project.created_at.desc())
     )
     return list(s.scalars(q))

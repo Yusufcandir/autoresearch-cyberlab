@@ -23,6 +23,7 @@ from cyberlab_common.db import (
     Project,
     ProtocolVersion,
     audit,
+    now,
 )
 from cyberlab_evidence import ArtifactStore
 from cyberlab_exec import Broker
@@ -306,6 +307,57 @@ class Lab:
                 s, principal.username, "project.paused" if paused else "project.resumed", project_id
             )
 
+    def delete_project(self, principal: Principal, project_id: str, confirm_title: str) -> None:
+        """Soft-delete a study (NFR-009). PI only; the typed title must match; released
+        studies are protected records and cannot be deleted. Queued jobs are canceled and
+        running ones stopped; all records and evidence stay for audit and can be restored."""
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "pi")
+            if p.stage == "released":
+                raise GateError("a released study is a protected record and cannot be deleted")
+            if confirm_title.strip() != p.title.strip():
+                raise GateError("type the study title exactly to confirm the deletion")
+            jobs = list(
+                s.scalars(
+                    select(JobRecord).where(
+                        JobRecord.project_id == project_id,
+                        JobRecord.state.in_(["queued", "running"]),
+                    )
+                )
+            )
+            for job in jobs:
+                self.ctx.broker.cancel(s, job.id, principal.username)
+            p.paused = True
+            p.deleted_at = now()
+            p.deleted_by = principal.username
+            audit(
+                s, principal.username, "project.deleted", project_id, {"jobs_canceled": len(jobs)}
+            )
+
+    def restore_project(self, principal: Principal, project_id: str) -> None:
+        """Admin only: bring a deleted study back (it stays paused until resumed)."""
+        if not principal.is_admin:
+            raise Forbidden("only an administrator can restore a deleted study")
+        with self.db.session() as s:
+            p = s.get(Project, project_id)
+            if p is None or p.deleted_at is None:
+                raise GateError("no deleted study with that id")
+            p.deleted_at, p.deleted_by = None, None
+            audit(s, principal.username, "project.restored", project_id)
+
+    def deleted_projects(self, principal: Principal) -> list[dict[str, Any]]:
+        if not principal.is_admin:
+            return []
+        with self.db.session() as s:
+            return [
+                {"id": p.id, "title": p.title, "deleted_at": p.deleted_at, "by": p.deleted_by}
+                for p in s.scalars(
+                    select(Project)
+                    .where(Project.deleted_at.is_not(None))
+                    .order_by(Project.deleted_at.desc())
+                )
+            ]
+
     # ----------------------------------------------------------------- worker
     def worker_tick(self, prepared_dir: Any = None, wait: bool = False) -> dict[str, Any]:
         """Start queued jobs up to capacity (several CPU jobs + one GPU job in parallel),
@@ -349,7 +401,12 @@ class Lab:
         ran = started[0] if started else None
         advanced = []
         with self.db.session() as s:
-            waiting = [p.id for p in s.scalars(select(Project).where(Project.stage == "running"))]
+            waiting = [
+                p.id
+                for p in s.scalars(
+                    select(Project).where(Project.stage == "running", Project.deleted_at.is_(None))
+                )
+            ]
         for pid in waiting:
             pend = self.pending(pid)
             if pend and pend.get("gate") == "jobs":

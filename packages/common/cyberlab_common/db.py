@@ -70,6 +70,10 @@ class Project(Base):
     gpu_minutes_used: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # Soft delete (NFR-009): hidden from everyone; records and evidence are kept for audit and
+    # retention, and an admin can restore the study.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class Membership(Base):

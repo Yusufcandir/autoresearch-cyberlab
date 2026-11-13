@@ -602,7 +602,57 @@ def admin(
         lock=lab.ctx.broker.lock.owner(),
         settings=lab.settings,
         llm_log=lab.ctx.llm.log[-20:],
+        deleted=lab.deleted_projects(me),
     )
+
+
+def _message(title: str, text: str, back: str) -> HTMLResponse:
+    import html as _html
+
+    return HTMLResponse(
+        f"<!doctype html><meta charset='utf-8'><title>{_html.escape(title)}</title>"
+        "<body style='font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem'>"
+        f"<h1>{_html.escape(title)}</h1><p>{_html.escape(text)}</p>"
+        f"<p><a href='{_html.escape(back)}'>Back</a></p></body>",
+        status_code=409,
+    )
+
+
+@router.post("/projects/{pid}/delete")
+def delete_post(
+    pid: str,
+    request: Request,
+    confirm_title: str = Form(""),
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    try:
+        lab.delete_project(me, pid, confirm_title)
+    except GateError as exc:
+        return _message("Study not deleted", str(exc), f"/projects/{pid}")
+    return RedirectResponse("/", status_code=303)
+
+
+@router.post("/admin/projects/{pid}/restore")
+def restore_post(
+    pid: str,
+    request: Request,
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    try:
+        lab.restore_project(me, pid)
+    except (GateError, Forbidden) as exc:
+        return _message("Study not restored", str(exc), "/admin")
+    return RedirectResponse("/admin", status_code=303)
 
 
 @router.post("/admin/users")

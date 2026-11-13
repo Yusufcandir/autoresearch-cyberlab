@@ -23,4 +23,6 @@
 <div class="card"><h2>Policy denials</h2>{% if denials %}<table>{% for d in denials %}<tr><td class="muted">{{ d.ts.strftime('%m-%d %H:%M') }}</td><td>{{ d.actor }}</td><td class="mono">{{ d.detail }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}</div>
 <div class="card"><h2>Recent LLM calls (this process)</h2>{% if llm_log %}<table><tr><th>Task</th><th>Provider</th><th class="num">Tokens</th><th class="num">Seconds</th></tr>
 {% for c in llm_log %}<tr><td>{{ c.task }}</td><td>{{ c.provider }} / {{ c.model }}</td><td class="num">{{ c.tokens }}</td><td class="num">{{ c.seconds }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None yet.</p>{% endif %}</div>
+<div class="card"><h2>Deleted studies</h2>{% if deleted %}<p class="muted">Deleted studies are hidden from everyone but kept for audit. Restoring brings a study back paused.</p><table>
+{% for d in deleted %}<tr><td>{{ d.title }}</td><td class="muted">deleted {{ d.deleted_at.strftime('%Y-%m-%d %H:%M') }} by {{ d.by }}</td><td><form method="post" action="/admin/projects/{{ d.id }}/restore"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Restore</button></form></td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}</div>
 {% endblock %}
