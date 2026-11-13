@@ -137,7 +137,13 @@ def build_progress(
             state, now = "waiting", desc
         if key in open_steps and stage != "error" and key != "experiments":
             state = "running"
-            msg = f"{label} ({_ago(open_steps[key])} so far): {desc}"
+            since = (
+                open_steps[key] if open_steps[key].tzinfo else open_steps[key].replace(tzinfo=UTC)
+            )
+            msg = (
+                f'{label} (<span class="elapsed" data-since="{since.isoformat()}">'
+                f"{_ago(open_steps[key])}</span> so far): {desc}"
+            )
             now = f"{now}  |  {msg}" if now else msg
         if key in failed and stage == "error":
             state, detail = "error", failed[key][:120]

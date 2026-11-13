@@ -93,7 +93,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 <div class="card status-card {% if status.stage == 'error' %}err{% elif status.stage == 'released' %}ok{% elif pend %}wait{% endif %}">
   <div class="now-text">
     {% if status.stage not in ['error','released'] and not pend %}<span class="spinner"></span>{% endif %}
-    <span class="tag">Now</span><span>{{ now or "Working…" }}</span>
+    <span class="tag">Now</span><span>{{ (now or "Working…")|safe }}</span>
   </div>
   <ol class="stepper">
     {% for st in steps %}<li class="step {{ st.state }}" title="{{ st.label }}{% if st.detail %}: {{ st.detail }}{% endif %}">
@@ -105,6 +105,12 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 
 {% if status.blocked_reason %}<div class="card" style="border-color:color-mix(in srgb,var(--blocked) 40%,var(--line))"><h2 class="error">Stopped</h2><p>{{ status.blocked_reason }}</p>
   {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button>↻ Retry from the last checkpoint</button> <span class="muted">Nothing done so far is lost.</span></form>{% endif %}</div>{% endif %}
+
+{% if not pend and not status.blocked_reason and status.stage not in ['released','created'] and role in ['pi','researcher'] %}
+<details class="muted" style="margin:-8px 0 16px"><summary style="font-weight:500">Looks stuck?</summary>
+<p>If nothing has changed for 10+ minutes (for example after restarting the worker or dashboard), resume the study from its last checkpoint. Don't use this while a step is still working.</p>
+<form method="post" action="/projects/{{ project.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small">↻ Resume from last checkpoint</button></form></details>
+{% endif %}
 
 {% if pend and pend.gate in ['A','D'] %}
 <div class="card decision">
@@ -374,6 +380,12 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
   }
   tick();
   setInterval(tick, 3000);
+  // Elapsed-time counters tick every second on their own.
+  function fmt(s) { return s < 60 ? s + "s" : s < 3600 ? Math.floor(s/60) + "m " + String(s%60).padStart(2,"0") + "s" : Math.floor(s/3600) + "h " + String(Math.floor(s%3600/60)).padStart(2,"0") + "m"; }
+  setInterval(() => document.querySelectorAll(".elapsed[data-since]").forEach(el => {
+    const s = Math.max(0, Math.floor((Date.now() - Date.parse(el.dataset.since)) / 1000));
+    el.textContent = fmt(s);
+  }), 1000);
 })();
 </script>
 {% endblock %}

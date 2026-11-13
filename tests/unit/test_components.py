@@ -214,3 +214,16 @@ def test_dashboard_list_filter_never_iterates_characters() -> None:
 
     assert _aslist("CIC-IDS2017 is widely studied.") == ["CIC-IDS2017 is widely studied."]
     assert _aslist(["a", "b"]) == ["a", "b"] and _aslist(None) == []
+
+
+def test_fast_bootstrap_macro_f1_matches_sklearn() -> None:
+    import numpy as np
+    from sklearn.metrics import f1_score
+
+    from cyberlab_qa.metrics import _macro_f1_cm
+
+    rng = np.random.default_rng(1)
+    y = rng.integers(0, 5, 2000)
+    p = np.where(rng.random(2000) < 0.2, rng.integers(0, 5, 2000), y)
+    cm = np.bincount(y * 5 + p, minlength=25).reshape(5, 5)
+    assert abs(_macro_f1_cm(cm) - f1_score(y, p, average="macro")) < 1e-12
