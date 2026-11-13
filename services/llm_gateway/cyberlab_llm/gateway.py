@@ -218,6 +218,8 @@ class LLMGateway:
     local: Provider | None = None
     budget_lookup: Callable[[str], tuple[int, int]] | None = None  # project -> (used, limit)
     charge: Callable[[str, int], None] | None = None
+    # project -> True if the study's data must stay on the host (local model only)
+    private_lookup: Callable[[str], bool] | None = None
     log: list[dict[str, Any]] = field(default_factory=list)
 
     def complete(
@@ -231,6 +233,8 @@ class LLMGateway:
         json_mode: bool = False,
         temperature: float = 0.2,
     ) -> LLMResult:
+        if project_id and self.private_lookup and self.private_lookup(project_id):
+            sensitive = True
         provider = self._route(sensitive)
         if project_id and self.budget_lookup:
             used, limit = self.budget_lookup(project_id)

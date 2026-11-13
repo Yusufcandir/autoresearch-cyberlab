@@ -102,8 +102,16 @@ def normalize_label(raw: str) -> str:
     return s
 
 
+MANUAL_STEPS = (
+    "CIC-IDS2017 is distributed by UNB after a short registration form, so it cannot be fetched "
+    "automatically. 1) Open https://www.unb.ca/cic/datasets/ids-2017.html and request the dataset. "
+    "2) Download MachineLearningCSV.zip (about 230 MB). 3) Copy it to {raw} and run "
+    "`cyberlab dataset unzip`, or extract the eight CSV files into {raw} yourself."
+)
+
+
 def download(root: Path, url: str = CICIDS2017.download_url) -> Path:  # pragma: no cover - network
-    """Fetch the official zip (about 230 MB) into raw/ and unzip it. Allowlisted URL only."""
+    """Try the allowlisted official URL; if UNB serves its registration page, explain the manual steps."""
     import httpx
 
     if url != CICIDS2017.download_url:
@@ -113,9 +121,22 @@ def download(root: Path, url: str = CICIDS2017.download_url) -> Path:  # pragma:
     target = raw / "MachineLearningCSV.zip"
     with httpx.stream("GET", url, timeout=httpx.Timeout(60, read=600), follow_redirects=True) as r:
         r.raise_for_status()
+        if "zip" not in r.headers.get("content-type", "") and "octet-stream" not in r.headers.get(
+            "content-type", ""
+        ):
+            raise DatasetBlocked([MANUAL_STEPS.format(raw=raw)])
         with target.open("wb") as fh:
             for chunk in r.iter_bytes(1 << 20):
                 fh.write(chunk)
+    return unzip(root)
+
+
+def unzip(root: Path) -> Path:
+    """Extract the CSVs from raw/MachineLearningCSV.zip (path-traversal safe)."""
+    raw = root / "raw"
+    target = raw / "MachineLearningCSV.zip"
+    if not target.exists():
+        raise DatasetBlocked([MANUAL_STEPS.format(raw=raw)])
     with zipfile.ZipFile(target) as z:
         for member in z.namelist():
             if member.endswith(".csv") and ".." not in member:
@@ -147,9 +168,7 @@ def prepare(
     raw = root / "raw"
     csvs = sorted(raw.glob("*.csv")) if raw.exists() else []
     if not csvs:
-        raise DatasetBlocked(
-            [f"no CSV files in {raw}; download MachineLearningCSV.zip from {CICIDS2017.source_url}"]
-        )
+        raise DatasetBlocked([MANUAL_STEPS.format(raw=raw)])
     files = {p.name: sha256_file(p) for p in csvs}
     df = pd.concat([_read_csv(p) for p in csvs], ignore_index=True)
     if "Label" not in df.columns:

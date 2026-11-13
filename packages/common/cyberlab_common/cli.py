@@ -81,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_create_user)
 
     p = sub.add_parser("dataset", help="CIC-IDS2017: download (official URL only) or prepare")
-    p.add_argument("action", choices=["download", "prepare", "fixture"])
+    p.add_argument("action", choices=["download", "unzip", "prepare", "fixture"])
     p.add_argument("--benign-cap", type=int, default=400_000)
     p.set_defaults(func=_dataset)
 

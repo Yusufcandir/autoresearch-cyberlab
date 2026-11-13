@@ -64,7 +64,7 @@ class ResearchSpec(Versioned):
         default=False,
         description="If false, only the local LLM (Ollama) may see study data.",
     )
-    gpu_budget_minutes: int = Field(default=120, ge=1, le=24 * 60)
+    gpu_budget_minutes: int = Field(default=480, ge=1, le=7 * 24 * 60)
     llm_token_budget: int = Field(default=200_000, ge=0)
 
 
@@ -108,7 +108,7 @@ class Protocol(Versioned):
     models: list[ModelSpec] = Field(min_length=1)
     seeds: list[int] = Field(default_factory=lambda: [42])
     statistical_tests: list[StatTest] = Field(default_factory=_default_tests)
-    gpu_budget_minutes: int = Field(default=120, ge=1)
+    gpu_budget_minutes: int = Field(default=480, ge=1)
     risk_tier: Literal["T0", "T1", "T2", "T3"] = "T1"
     created_at: datetime = Field(default_factory=utcnow)
 

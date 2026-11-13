@@ -1,0 +1,55 @@
+# Lab server deployment (lab-server). Run from the repo root:
+#   docker compose -f infra/compose.server.yaml --env-file .env up -d --build
+# Every port binds to 127.0.0.1 only; reach the dashboard through an SSH tunnel.
+# GPU inside Docker needs the NVIDIA Container Toolkit (admin installs it once). Without it,
+# use the "worker on the host" option in docs/operator_runbook.md.
+name: cyberlab
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cyberlab
+      POSTGRES_DB: cyberlab
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports: ["127.0.0.1:5433:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cyberlab"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: { context: .., dockerfile: Dockerfile }
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://cyberlab:${POSTGRES_PASSWORD}@postgres:5432/cyberlab
+      DATA_DIR: /data
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: [labdata:/data]
+    ports: ["127.0.0.1:8100:8100"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: unless-stopped
+
+  worker:
+    build: { context: .., dockerfile: Dockerfile }
+    command: ["cyberlab", "worker"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://cyberlab:${POSTGRES_PASSWORD}@postgres:5432/cyberlab
+      DATA_DIR: /data
+      OLLAMA_HOST: http://host.docker.internal:11434
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: [labdata:/data]
+    depends_on: { postgres: { condition: service_healthy } }
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  labdata:

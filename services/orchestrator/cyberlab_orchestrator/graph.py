@@ -28,10 +28,9 @@ from cyberlab_orchestrator.agents import (
     writing_agent,
 )
 from cyberlab_orchestrator.agents.experiment import all_jobs_done, jobs_status
+from cyberlab_orchestrator.agents.writing import MAX_REVISIONS
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ApprovalGate
-
-MAX_REVISIONS = 1
 
 
 class LabState(TypedDict, total=False):

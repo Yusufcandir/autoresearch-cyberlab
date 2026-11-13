@@ -61,7 +61,12 @@ def render_text(
     citations: dict[str, dict[str, Any]],
     report: EvidenceReport,
     section: str,
+    guardrail: bool = False,
 ) -> str:
+    """Resolve placeholders. With guardrail=True (final revision) unsupported content is removed
+    and recorded as a warning instead of blocking release."""
+    sev = "warning" if guardrail else "blocker"
+    missing = "[not reported]" if guardrail else "[missing evidence]"
     models = analysis.get("models", {})
     hyps = {h["id"]: h for h in analysis.get("hypotheses", [])}
     status = "Verified" if analysis.get("metrics_recomputed_match") else "Measured"
@@ -75,15 +80,13 @@ def render_text(
                     {"placeholder": m.group(0), "status": "Verified", "doi": c.get("doi")}
                 )
                 return f"[@{arg}]"
-            report.flag(
-                "blocker", "UNVERIFIED_CITATION", f"{section}: citation {arg!r} is not verified"
-            )
-            return "[citation needed]"
+            report.flag(sev, "UNVERIFIED_CITATION", f"{section}: citation {arg!r} is not verified")
+            return "" if guardrail else "[citation needed]"
         if kind == "hyp":
             h = hyps.get(arg)
             if not h:
-                report.flag("blocker", "UNKNOWN_HYPOTHESIS", f"{section}: {arg} has no evidence")
-                return "[missing evidence]"
+                report.flag(sev, "UNKNOWN_HYPOTHESIS", f"{section}: {arg} has no evidence")
+                return missing
             report.resolved.append(
                 {"placeholder": m.group(0), "value": h["result"], "status": status}
             )
@@ -91,16 +94,14 @@ def render_text(
         try:
             model, metric = (x.strip() for x in arg.split(":"))
         except ValueError:
-            report.flag("blocker", "BAD_PLACEHOLDER", f"{section}: {m.group(0)}")
-            return "[missing evidence]"
+            report.flag(sev, "BAD_PLACEHOLDER", f"{section}: {m.group(0)}")
+            return missing
         mdl = models.get(model)
         if kind == "metric":
             v = (mdl or {}).get("aggregate", {}).get(metric)
             if v is None:
-                report.flag(
-                    "blocker", "MISSING_EVIDENCE", f"{section}: no result for {model}/{metric}"
-                )
-                return "[missing evidence]"
+                report.flag(sev, "MISSING_EVIDENCE", f"{section}: no result for {model}/{metric}")
+                return missing
             report.resolved.append(
                 {
                     "placeholder": m.group(0),
@@ -113,23 +114,34 @@ def render_text(
             return _fmt(v["mean"]) + sd
         ci = (mdl or {}).get(f"{metric}_ci")
         if ci is None:
-            report.flag("blocker", "MISSING_EVIDENCE", f"{section}: no CI for {model}/{metric}")
-            return "[missing evidence]"
+            report.flag(sev, "MISSING_EVIDENCE", f"{section}: no CI for {model}/{metric}")
+            return missing
         report.resolved.append(
             {"placeholder": m.group(0), "value": [ci["low"], ci["high"]], "status": status}
         )
         return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}]"
 
-    rendered = PLACEHOLDER.sub(sub, text)
-    stripped = PLACEHOLDER.sub("", text)
-    for num in NUMBER.findall(stripped):
-        if num not in ALLOWED_PLAIN_NUMBERS:
+    def check_numbers(segment: str) -> str:
+        def num(m: re.Match[str]) -> str:
+            if m.group(1) in ALLOWED_PLAIN_NUMBERS:
+                return m.group(0)
             report.flag(
-                "blocker",
+                sev,
                 "UNSUPPORTED_NUMBER",
-                f"{section}: number {num!r} is not linked to evidence; use a placeholder",
+                f"{section}: number {m.group(1)!r} is not linked to evidence"
+                + (" and was removed" if guardrail else "; use a placeholder"),
             )
-    return rendered
+            return "[number removed]" if guardrail else m.group(0)
+
+        return NUMBER.sub(num, segment)
+
+    out, pos = [], 0
+    for m in PLACEHOLDER.finditer(text):
+        out.append(check_numbers(text[pos : m.start()]))
+        out.append(sub(m))
+        pos = m.end()
+    out.append(check_numbers(text[pos:]))
+    return "".join(out)
 
 
 def results_table(analysis: dict[str, Any]) -> str:
@@ -211,6 +223,7 @@ def build_manuscript(
     analysis: dict[str, Any],
     citations: dict[str, dict[str, Any]],
     bibtex: str,
+    guardrail: bool = False,
 ) -> tuple[str, EvidenceReport]:
     report = EvidenceReport()
     out = [
@@ -225,7 +238,7 @@ def build_manuscript(
         body = sections.get(key, "")
         out += [f"## {heading}", ""]
         if body:
-            out += [render_text(body, analysis, citations, report, key), ""]
+            out += [render_text(body, analysis, citations, report, key, guardrail), ""]
         if key == "methodology":
             out += ["### Data", "", dataset_section(analysis), ""]
         if key == "results":

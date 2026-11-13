@@ -209,8 +209,19 @@ class Broker:
                 q = q.where(JobRecord.project_id == project_id)
             for job in s.scalars(q):
                 proj = s.get(Project, job.project_id)
-                if proj and not proj.paused:
-                    return job.id
+                if proj is None or proj.paused:
+                    continue
+                budget = float(proj.spec.get("gpu_budget_minutes", 0) or 0)
+                if budget and proj.gpu_minutes_used >= budget:  # AT-11: budget cap
+                    job.state = "blocked"
+                    job.failure_reason = (
+                        f"compute budget exhausted ({proj.gpu_minutes_used:.1f}/{budget:.0f} min)"
+                    )
+                    audit(
+                        s, "broker", "budget.threshold_reached", job.project_id, {"job_id": job.id}
+                    )
+                    continue
+                return job.id
         return None
 
     def run_once(

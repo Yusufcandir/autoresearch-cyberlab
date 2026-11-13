@@ -13,6 +13,8 @@ from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec
 
+MAX_REVISIONS = 1
+
 SYSTEM = (
     "You are a scientific writing agent drafting an intrusion-detection paper. NEVER write a "
     "numeric result yourself. Use placeholders only: {{metric:MODEL:METRIC}} (METRIC in macro_f1, "
@@ -62,7 +64,9 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "writing.draft", SYSTEM, json.dumps(context, default=str), project_id=pid
     )
     sections = {k: str(v) for k, v in sections.items() if isinstance(v, str | int | float)}
-    md, report = build_manuscript(spec.title, sections, analysis, cites, "")
+    # Final revision: the deterministic guardrail removes anything still unsupported.
+    final = state.get("revisions", 0) >= MAX_REVISIONS
+    md, report = build_manuscript(spec.title, sections, analysis, cites, "", guardrail=final)
     bib = "\n\n".join(
         bibtex_entry(
             Paper(

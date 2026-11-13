@@ -98,8 +98,6 @@ def compile_protocol(
         for side in h.comparison.split(">"):
             if side.strip() not in names:
                 reasons.append(f"{h.id} compares unknown model {side.strip()!r}")
-    n_jobs = len(protocol.models) * len(protocol.seeds)
-    per_job = max(1, protocol.gpu_budget_minutes // max(n_jobs, 1))
     if reasons:
         raise CompileError(reasons)
     return [
@@ -114,7 +112,7 @@ def compile_protocol(
             label_scheme=protocol.label_scheme,
             split=protocol.split,
             risk_tier=protocol.risk_tier,
-            max_minutes=min(per_job, max_job_minutes),
+            max_minutes=min(protocol.gpu_budget_minutes, max_job_minutes),
             use_gpu=use_gpu and m.template in GPU_TEMPLATES,
         )
         for m in protocol.models

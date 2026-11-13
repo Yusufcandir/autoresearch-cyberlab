@@ -51,9 +51,9 @@ class Lab:
         self.db.create_all()
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         store = ArtifactStore(settings.artifact_root)
-        gateway = llm or build_gateway(settings, budget_lookup=self._budget, charge=self._charge)
-        if llm is not None:
-            gateway.budget_lookup, gateway.charge = self._budget, self._charge
+        gateway = llm or build_gateway(settings)
+        gateway.budget_lookup, gateway.charge = self._budget, self._charge
+        gateway.private_lookup = self._private
         self.ctx = LabContext(
             settings=settings,
             db=self.db,
@@ -77,6 +77,11 @@ class Lab:
             if p is None:
                 return 0, 0
             return p.llm_tokens_used, int(p.spec.get("llm_token_budget", 0))
+
+    def _private(self, project_id: str) -> bool:
+        with self.db.session() as s:
+            p = s.get(Project, project_id)
+            return p is None or not bool(p.spec.get("data_may_leave_host", False))
 
     def _charge(self, project_id: str, tokens: int) -> None:
         with self.db.session() as s:
