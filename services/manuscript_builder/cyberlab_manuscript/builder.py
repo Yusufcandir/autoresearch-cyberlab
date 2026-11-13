@@ -227,7 +227,9 @@ _CI_PREFIX = re.compile(
     re.I,
 )
 _HYP_VERB = re.compile(
-    r"\b(confirm(?:s|ed|ing)?|support(?:s|ed|ing)?|validat(?:e|es|ed|ing)|verif(?:y|ies|ied))\s+"
+    r"\b(confirm(?:s|ed|ing)?|support(?:s|ed|ing)?|validat(?:e|es|ed|ing)|verif(?:y|ies|ied)|"
+    r"corroborat(?:e|es|ed|ing)|substantiat(?:e|es|ed|ing)|reinforc(?:e|es|ed|ing)|"
+    r"consistent with|in line with)\s+"
     r"((?:H\d+ \((?:supported|not supported)\)(?:,\s*|\s+and\s+)?)+)",
     re.I,
 )
@@ -319,7 +321,7 @@ def per_class_table(analysis: dict[str, Any], model: str) -> str:
     rows = ["| Class | Precision | Recall | F1 | Support |", "|---|---|---|---|---|"]
     for cls, v in pc.items():
         rows.append(
-            f"| {cls} | {_fmt(v['precision'])} | {_fmt(v['recall'])} | {_fmt(v['f1'])} | {v['support']} |"
+            f"| {cls} | {_fmt(v['precision'])} | {_fmt(v['recall'])} | {_fmt(v['f1'])} | {v['support']:,} |"
         )
     return "\n".join(rows)
 
@@ -415,6 +417,9 @@ def build_manuscript(
                 key=lambda n: analysis["models"][n]["aggregate"]["macro_f1"]["mean"],
             )
             out += [f"### Per-class results ({best})", "", per_class_table(analysis, best), ""]
+    for required in ("abstract", "introduction", "methodology", "results", "conclusion"):
+        if not str(sections.get(required, "")).strip():
+            report.flag("blocker", "EMPTY_SECTION", f"the {required} section is empty")
     for f in analysis.get("qa_flags", []):
         report.flag("blocker" if f["severity"] == "blocker" else "warning", f["code"], f["message"])
     out += [

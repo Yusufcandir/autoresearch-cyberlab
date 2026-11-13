@@ -136,6 +136,10 @@ def write_sections(ctx: LabContext, pid: str, context: dict[str, Any]) -> dict[s
     sections: dict[str, str] = {}
     for part in parts:
         sections.update(part)
+    wanted = [k for group in SECTION_GROUPS for k in group]
+    missing = [k for k in wanted if not sections.get(k, "").strip()]
+    if missing:  # the model sometimes drops a key: ask once more for just those sections
+        sections.update(one(missing))
     if not sections:
         raise LLMError("the writing model returned no sections")
     return sections

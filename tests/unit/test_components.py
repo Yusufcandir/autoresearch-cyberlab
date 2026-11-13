@@ -308,3 +308,22 @@ def test_untested_deduplication_claims_are_caught_and_removed() -> None:
     found = untested_effect_sentences(md)
     assert found == ["De-duplication prevented inflated scores."]
     assert "inflated" not in remove_sentences(md, found)[0]
+
+
+def test_sentence_removal_never_empties_a_required_section() -> None:
+    from cyberlab_orchestrator.agents.reviewer import remove_sentences
+
+    md = "## Abstract\n\nOnly one sentence claiming inflated scores here.\n\n## Results\n\nok\n"
+    out, n = remove_sentences(md, ["Only one sentence claiming inflated scores here."])
+    assert n == 0 and out == md
+    para = "First sentence here is long enough. Second sentence is also long."
+    md2 = f"## Discussion\n\n{para} Keep this one.\n"
+    assert remove_sentences(md2, [para])[1] == 0  # multi-sentence chunks are never removed
+
+
+def test_more_hypothesis_verbs_are_tidied() -> None:
+    from cyberlab_manuscript.builder import tidy_prose
+
+    assert (
+        tidy_prose("corroborating H1 (supported) and H2 (supported).") == "corroborating H1 and H2."
+    )

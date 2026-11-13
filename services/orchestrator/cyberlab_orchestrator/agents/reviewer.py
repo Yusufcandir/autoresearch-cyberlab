@@ -115,14 +115,29 @@ def untested_effect_sentences(markdown: str) -> list[str]:
     return out
 
 
+REQUIRED_SECTIONS = ("Abstract", "Introduction", "Methodology", "Results", "Conclusion")
+
+
+def _section_bodies(markdown: str) -> dict[str, str]:
+    parts = re.split(r"(?m)^## (.+)$", markdown)
+    return {parts[i].strip(): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+
+
 def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
+    """Remove single flagged sentences. Never removes whole paragraphs or empties a section."""
+    original = markdown
     removed = 0
     for sent in sorted(set(sentences), key=len, reverse=True):
-        if len(sent) > 20 and sent in markdown:
+        single = len(re.findall(r"[.!?](?:\s|$)", sent.strip())) <= 1 and "\n" not in sent
+        if single and len(sent) > 20 and sent in markdown:
             markdown = markdown.replace(sent, "", 1)
             removed += 1
     markdown = re.sub(r"[ \t]{2,}", " ", markdown)
     markdown = re.sub(r"(?m)^ (?=\S)", "", markdown)  # no stray space where a sentence was cut
+    before, after = _section_bodies(original), _section_bodies(markdown)
+    for name in REQUIRED_SECTIONS:
+        if before.get(name, "").strip() and not after.get(name, "").strip():
+            return original, 0  # removing would leave a required section empty: keep it, flag only
     return markdown, removed
 
 
