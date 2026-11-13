@@ -15,6 +15,12 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
 
 from cyberlab_api.deps import get_lab
+from cyberlab_api.progress import (
+    build_progress,
+    friendly_activity,
+    render_manuscript,
+    trust_summary,
+)
 from cyberlab_authz.rbac import (
     AuthError,
     Forbidden,
@@ -256,13 +262,21 @@ def project_page(
             analysis["artifact_sha256"] = analysis_rec.sha256
         events = list(
             s.scalars(
-                select(AuditEvent)
-                .where(AuditEvent.project_id == pid)
-                .order_by(AuditEvent.id.desc())
-                .limit(40)
+                select(AuditEvent).where(AuditEvent.project_id == pid).order_by(AuditEvent.id)
             )
         )
+        artifact_check = lab.ctx.store.verify_all(s, pid)
         status = lab.status(pid)
+    latest_ms = mss[0] if mss else None
+    verified = [c for c in cites if c.status == "Verified"]
+    rendered, cited_in = (
+        render_manuscript(latest_ms.markdown, [c.key for c in verified]) if latest_ms else ("", {})
+    )
+    steps, now = build_progress(events, status["stage"], status["pending"], jobs)
+    trust = trust_summary(cites, notes.get("evidence_matrix"), analysis, latest_ms, artifact_check)
+    job_counts: dict[str, int] = {}
+    for j in jobs:
+        job_counts[j.state] = job_counts.get(j.state, 0) + 1
     return render(
         request,
         lab,
@@ -273,14 +287,46 @@ def project_page(
         status=status,
         protocol=protocol,
         cites=cites,
+        verified=verified,
+        cited_in=cited_in,
         notes=notes,
         jobs=jobs,
+        job_counts=job_counts,
         runs=runs,
         manuscripts=mss,
+        rendered=rendered,
         dataset=dataset,
         analysis=analysis,
-        events=events,
+        activity=friendly_activity(events),
+        steps=steps,
+        now=now,
+        trust=trust,
+        stamp=events[-1].id if events else 0,
     )
+
+
+@router.get("/projects/{pid}/live")
+def project_live(
+    pid: str, me: Principal | None = Depends(web_user), lab: Lab = Depends(lab_dep)
+) -> dict[str, Any]:
+    """Tiny poll target: the page reloads its content only when something changed."""
+    if me is None:
+        raise AuthError("not signed in")
+    with lab.db.session() as s:
+        require_project_role(s, me, pid)
+        last = s.scalar(
+            select(AuditEvent.id)
+            .where(AuditEvent.project_id == pid)
+            .order_by(AuditEvent.id.desc())
+            .limit(1)
+        )
+        running = s.scalar(
+            select(JobRecord.updated_at)
+            .where(JobRecord.project_id == pid)
+            .order_by(JobRecord.updated_at.desc())
+            .limit(1)
+        )
+    return {"stamp": f"{last or 0}:{running.isoformat() if running else ''}"}
 
 
 @router.post("/projects/{pid}/approve")

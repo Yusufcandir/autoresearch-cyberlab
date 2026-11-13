@@ -70,6 +70,8 @@ def literature_agent(
                     year=v.year,
                     venue=v.venue,
                     abstract=(p.abstract or v.abstract),
+                    cited_by=p.cited_by or None,
+                    verification_note=v.verification_note,
                     status=v.status,
                     source=v.source,
                 )
@@ -88,6 +90,10 @@ def literature_agent(
     matrix = ctx.llm.complete_json(
         "literature.matrix", SYSTEM, records or "No verified papers.", project_id=pid
     )
+    # Hallucination guard: keep only matrix rows about papers we actually verified.
+    rows = matrix.get("matrix", []) if isinstance(matrix.get("matrix"), list) else []
+    kept = [r for r in rows if isinstance(r, dict) and r.get("key") in keys]
+    matrix["matrix"], matrix["dropped_unverified_rows"] = kept, len(rows) - len(kept)
     with ctx.db.session() as s:
         ctx.note(s, pid, "literature", "evidence_matrix", {**matrix, "search_errors": errors})
     ctx.set_stage(pid, "literature_reviewed", "Proposed")

@@ -26,6 +26,8 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     event,
+    inspect,
+    text,
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -168,6 +170,8 @@ class CitationRecord(Base):
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     venue: Mapped[str | None] = mapped_column(Text, nullable=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cited_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verification_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16))  # Verified | Unverified
     source: Mapped[str] = mapped_column(String(40))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -256,6 +260,22 @@ class Database:
 
     def create_all(self) -> None:
         Base.metadata.create_all(self.engine)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Tiny forward-only migration: add nullable columns that newer code expects."""
+        insp = inspect(self.engine)
+        with self.engine.begin() as conn:
+            for table in Base.metadata.sorted_tables:
+                if not insp.has_table(table.name):
+                    continue
+                existing = {c["name"] for c in insp.get_columns(table.name)}
+                for col in table.columns:
+                    if col.name not in existing and col.nullable:
+                        ddl = col.type.compile(dialect=self.engine.dialect)
+                        conn.execute(
+                            text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {ddl}')
+                        )
 
     @contextmanager
     def session(self) -> Iterator[Session]:

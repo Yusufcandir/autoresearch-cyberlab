@@ -137,4 +137,7 @@ def test_dashboard_pages(client: tuple[TestClient, Lab]) -> None:
     )
     assert r.status_code == 303
     page = c.get(r.headers["location"])
-    assert page.status_code == 200 and "Approve protocol" in page.text
+    assert page.status_code == 200 and "approve the protocol?" in page.text
+    assert "Verification: how we know" in page.text and "doi.org/10.5220" in page.text
+    live = c.get(r.headers["location"] + "/live")
+    assert live.status_code == 200 and "stamp" in live.json()

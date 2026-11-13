@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head %}{% endblock %}
 <title>{% block title %}CyberLab{% endblock %} · AutoResearch-CyberLab</title>
 <style>
 :root{--bg:#f7f7f5;--panel:#fff;--text:#1d1d1b;--muted:#6b6b66;--line:#e4e3de;--accent:#2f5bd3;
@@ -28,7 +29,41 @@ button.secondary{background:transparent;color:var(--text);border:1px solid var(-
 .gate{border-left:4px solid var(--approved)}.error{color:var(--blocked)}
 pre{white-space:pre-wrap;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:12px;max-height:520px;overflow:auto;font-size:13px}
 details summary{cursor:pointer;font-weight:600}
-@media (max-width:640px){header{flex-wrap:wrap}main{padding:16px}}
+.titlebar{display:flex;gap:16px;align-items:flex-start;justify-content:space-between}
+.live-pill{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;white-space:nowrap}
+.live-pill .dot{width:8px;height:8px;border-radius:50%;background:var(--verified);animation:pulse 2s infinite}
+.live-pill.off .dot{background:var(--blocked);animation:none}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.now{border-left:4px solid var(--running)}.now-wait{border-left-color:var(--approved)}.now-error{border-left-color:var(--blocked)}
+.now-text{font-size:16px;margin-bottom:14px}
+.spinner{display:inline-block;width:12px;height:12px;margin-right:8px;border:2px solid var(--line);border-top-color:var(--running);border-radius:50%;animation:spin 1s linear infinite;vertical-align:-1px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.stepper{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
+.step{display:flex;flex-direction:column;align-items:center;min-width:76px;flex:1;font-size:12px;color:var(--muted);text-align:center}
+.step .bubble{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid var(--line);font-weight:700;margin-bottom:4px;background:var(--panel)}
+.step.done .bubble{background:var(--verified);border-color:var(--verified);color:#fff}
+.step.running .bubble{border-color:var(--running);color:var(--running);animation:pulse 1.5s infinite}
+.step.waiting .bubble{background:var(--approved);border-color:var(--approved);color:#fff}
+.step.error .bubble{background:var(--blocked);border-color:var(--blocked);color:#fff}
+.step.done .slabel,.step.running .slabel,.step.waiting .slabel{color:var(--text);font-weight:600}
+.sdetail{font-size:11px}
+.tabs{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:4px 14px;background:var(--bg);padding:10px 0;margin-bottom:8px;border-bottom:1px solid var(--line);font-size:14px}
+.tabs a,a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.bar{height:10px;background:var(--line);border-radius:999px;overflow:hidden;margin:4px 0 8px}.bar .fill{height:100%;background:var(--verified);transition:width .5s}
+.refs td{font-size:13.5px}.refs tr:target{background:color-mix(in srgb,var(--accent) 12%,transparent)}
+tr.rejected td{opacity:.75}
+details.inline{display:block;margin-top:4px}details.inline summary{font-weight:400;color:var(--muted);font-size:12px}
+.abstract{font-size:13px;color:var(--muted)}
+.trust td{border:0;padding:8px 6px}.ticon{width:28px;font-size:18px;font-weight:700;text-align:center}
+.ticon.ok{color:var(--verified)}.ticon.warn{color:var(--running)}.ticon.bad{color:var(--blocked)}.ticon.pending{color:var(--muted)}
+.feed{list-style:none;padding:0;margin:0;max-height:360px;overflow:auto}.feed li{padding:4px 0;border-bottom:1px solid var(--line);font-size:14px}
+.feed li.bad{color:var(--blocked)}
+.paper{border:1px solid var(--line);border-radius:8px;padding:8px 24px;max-height:700px;overflow:auto;background:var(--bg)}
+.paper table{font-size:13px}.paper h1{font-size:22px}.paper h2{font-size:18px;margin-top:20px}
+a.cite{font-size:.85em;vertical-align:super}
+mark.flag{background:color-mix(in srgb,var(--unverified) 25%,transparent);color:inherit;border-radius:3px;padding:0 2px}
+button.small{padding:4px 10px;font-size:13px}
+@media (max-width:640px){header{flex-wrap:wrap}main{padding:16px}.step{min-width:60px}.titlebar{flex-direction:column}}
 </style>
 </head>
 <body>

@@ -8,13 +8,14 @@ humans at gate A (protocol and data rights) and gate D (manuscript release), and
 
 from __future__ import annotations
 
+import time
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import select
 
-from cyberlab_common.db import ApprovalRecord, ManuscriptRecord, ProtocolVersion, RunRecord
+from cyberlab_common.db import ApprovalRecord, ManuscriptRecord, ProtocolVersion, RunRecord, audit
 from cyberlab_orchestrator.agents import (
     coding_agent,
     dataset_agent,
@@ -62,9 +63,35 @@ class LabState(TypedDict, total=False):
 
 
 def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
-    def node(fn: Any) -> Any:
+    def node(fn: Any, step: str) -> Any:
         def run(state: LabState) -> dict[str, Any]:
-            return dict(fn(ctx, dict(state)))
+            pid = state["project_id"]
+            with ctx.db.session() as s:
+                audit(s, step, "agent.started", pid, {"step": step}, emit=False)
+            t0 = time.monotonic()
+            try:
+                out = dict(fn(ctx, dict(state)))
+            except Exception as exc:
+                with ctx.db.session() as s:
+                    audit(
+                        s,
+                        step,
+                        "agent.failed",
+                        pid,
+                        {"step": step, "error": str(exc)[:500]},
+                        emit=False,
+                    )
+                raise
+            with ctx.db.session() as s:
+                audit(
+                    s,
+                    step,
+                    "agent.finished",
+                    pid,
+                    {"step": step, "seconds": round(time.monotonic() - t0, 1)},
+                    emit=False,
+                )
+            return out
 
         run.__name__ = fn.__name__
         return run
@@ -153,19 +180,19 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
         return {"released": released}
 
     g = StateGraph(LabState)
-    g.add_node("orchestrator", node(orchestrator_agent))
-    g.add_node("literature", node(literature_agent))
-    g.add_node("research_gap", node(gap_agent))
-    g.add_node("methodology", node(methodology_agent))
-    g.add_node("dataset", node(dataset_agent))
+    g.add_node("orchestrator", node(orchestrator_agent, "orchestrator"))
+    g.add_node("literature", node(literature_agent, "literature"))
+    g.add_node("research_gap", node(gap_agent, "research_gap"))
+    g.add_node("methodology", node(methodology_agent, "methodology"))
+    g.add_node("dataset", node(dataset_agent, "dataset"))
     g.add_node("gate_a", gate_a)
-    g.add_node("coding", node(coding_agent))
-    g.add_node("experiment", node(experiment_agent))
+    g.add_node("coding", node(coding_agent, "coding"))
+    g.add_node("experiment", node(experiment_agent, "experiment"))
     g.add_node("wait_jobs", wait_jobs)
     g.add_node("check_runs", check_runs)
-    g.add_node("statistics", node(statistics_agent))
-    g.add_node("writing", node(writing_agent))
-    g.add_node("reviewer", node(reviewer_agent))
+    g.add_node("statistics", node(statistics_agent, "statistics"))
+    g.add_node("writing", node(writing_agent, "writing"))
+    g.add_node("reviewer", node(reviewer_agent, "reviewer"))
     g.add_node("gate_d", gate_d)
 
     g.add_edge(START, "orchestrator")
