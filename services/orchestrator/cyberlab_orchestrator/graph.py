@@ -83,15 +83,23 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
             }
         )
         with ctx.db.session() as s:
-            pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid,
-                                                        ProtocolVersion.version == version))
+            pv = s.scalar(
+                select(ProtocolVersion).where(
+                    ProtocolVersion.project_id == pid, ProtocolVersion.version == version
+                )
+            )
             rec = s.scalar(
                 select(ApprovalRecord)
-                .where(ApprovalRecord.project_id == pid, ApprovalRecord.gate == ApprovalGate.A_PROTOCOL.value)
+                .where(
+                    ApprovalRecord.project_id == pid,
+                    ApprovalRecord.gate == ApprovalGate.A_PROTOCOL.value,
+                )
                 .order_by(ApprovalRecord.created_at.desc())
             )
             valid = (
-                pv is not None and rec is not None and rec.subject_version == version
+                pv is not None
+                and rec is not None
+                and rec.subject_version == version
                 and rec.subject_sha256 == pv.sha256
             )
             decision = rec.decision if valid and rec is not None else "invalid"
@@ -111,7 +119,11 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     def check_runs(state: LabState) -> dict[str, Any]:
         pid = state["project_id"]
         with ctx.db.session() as s:
-            ok = s.scalar(select(RunRecord).where(RunRecord.project_id == pid, RunRecord.status == "succeeded"))
+            ok = s.scalar(
+                select(RunRecord).where(
+                    RunRecord.project_id == pid, RunRecord.status == "succeeded"
+                )
+            )
         if ok is None:
             ctx.set_stage(pid, "experiments_failed", "Blocked", "no experiment succeeded")
             return {"blocked_reason": "no experiment succeeded"}
@@ -119,12 +131,23 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
 
     def gate_d(state: LabState) -> dict[str, Any]:
         pid, version = state["project_id"], state["manuscript_version"]
-        ctx.set_stage(pid, "awaiting_release", "Unverified" if state.get("evidence_blockers") else "Measured")
-        interrupt({"gate": "D", "title": "Release manuscript", "manuscript_version": version,
-                   "evidence_blockers": state.get("evidence_blockers", [])})
+        ctx.set_stage(
+            pid, "awaiting_release", "Unverified" if state.get("evidence_blockers") else "Measured"
+        )
+        interrupt(
+            {
+                "gate": "D",
+                "title": "Release manuscript",
+                "manuscript_version": version,
+                "evidence_blockers": state.get("evidence_blockers", []),
+            }
+        )
         with ctx.db.session() as s:
-            ms = s.scalar(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid,
-                                                         ManuscriptRecord.version == version))
+            ms = s.scalar(
+                select(ManuscriptRecord).where(
+                    ManuscriptRecord.project_id == pid, ManuscriptRecord.version == version
+                )
+            )
             released = ms is not None and ms.status == "released"
         if released:
             ctx.set_stage(pid, "released", "Approved")
@@ -151,15 +174,25 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     g.add_edge("literature", "research_gap")
     g.add_edge("research_gap", "methodology")
     g.add_edge("methodology", "dataset")
-    g.add_conditional_edges("dataset", lambda s: "gate_a" if s.get("dataset_status") == "verified" else END)
+    g.add_conditional_edges(
+        "dataset", lambda s: "gate_a" if s.get("dataset_status") == "verified" else END
+    )
     g.add_conditional_edges(
         "gate_a",
-        lambda s: "coding" if s.get("gate_a") == "approved" else ("methodology" if s.get("gate_a") == "rejected" else "gate_a"),
+        lambda s: (
+            "coding"
+            if s.get("gate_a") == "approved"
+            else ("methodology" if s.get("gate_a") == "rejected" else "gate_a")
+        ),
     )
     g.add_conditional_edges("coding", lambda s: END if s.get("compile_error") else "experiment")
     g.add_edge("experiment", "wait_jobs")
-    g.add_conditional_edges("wait_jobs", lambda s: "wait_jobs" if s.get("jobs_pending") else "check_runs")
-    g.add_conditional_edges("check_runs", lambda s: END if s.get("blocked_reason") else "statistics")
+    g.add_conditional_edges(
+        "wait_jobs", lambda s: "wait_jobs" if s.get("jobs_pending") else "check_runs"
+    )
+    g.add_conditional_edges(
+        "check_runs", lambda s: END if s.get("blocked_reason") else "statistics"
+    )
     g.add_edge("statistics", "writing")
     g.add_edge("writing", "reviewer")
 

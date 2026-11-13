@@ -37,8 +37,13 @@ class GateError(ValueError):
 
 
 class Lab:
-    def __init__(self, settings: Settings, llm: LLMGateway | None = None,
-                 scholar: ScholarlyClient | None = None, db: Database | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        llm: LLMGateway | None = None,
+        scholar: ScholarlyClient | None = None,
+        db: Database | None = None,
+    ) -> None:
         if settings.database_url is None:
             raise RuntimeError("DATABASE_URL is not set")
         self.settings = settings
@@ -57,7 +62,9 @@ class Lab:
             broker=Broker(self.db, settings),
             store=store,
         )
-        self._conn = sqlite3.connect(str(settings.data_dir / "checkpoints.sqlite"), check_same_thread=False)
+        self._conn = sqlite3.connect(
+            str(settings.data_dir / "checkpoints.sqlite"), check_same_thread=False
+        )
         self.saver = SqliteSaver(self._conn)
         self.graph = build_graph(self.ctx, self.saver)
         self._locks: dict[str, threading.Lock] = {}
@@ -94,7 +101,9 @@ class Lab:
             try:
                 self.graph.invoke(payload, self._config(project_id))
             except Exception as exc:
-                self.ctx.set_stage(project_id, "error", "Blocked", f"{type(exc).__name__}: {exc}"[:2000])
+                self.ctx.set_stage(
+                    project_id, "error", "Blocked", f"{type(exc).__name__}: {exc}"[:2000]
+                )
                 raise
         return self.status(project_id)
 
@@ -106,7 +115,9 @@ class Lab:
             p = Project(title=spec.title, owner_id=principal.id, spec=spec.model_dump(mode="json"))
             s.add(p)
             s.flush()
-            add_member(s, p.id, principal.id, "pi" if principal.role in {"pi", "admin"} else "researcher")
+            add_member(
+                s, p.id, principal.id, "pi" if principal.role in {"pi", "admin"} else "researcher"
+            )
             audit(s, principal.username, "project.created", p.id, {"title": spec.title})
             return p.id
 
@@ -128,7 +139,7 @@ class Lab:
             p = s.get(Project, project_id)
             if p is None:
                 raise KeyError(project_id)
-            info = {
+            info: dict[str, Any] = {
                 "project_id": p.id,
                 "title": p.title,
                 "stage": p.stage,
@@ -141,23 +152,47 @@ class Lab:
         info["pending"] = self.pending(project_id)
         return info
 
-    def approve_protocol(self, principal: Principal, project_id: str, version: int, sha256: str,
-                         decision: str, comment: str = "") -> dict[str, Any]:
+    def approve_protocol(
+        self,
+        principal: Principal,
+        project_id: str,
+        version: int,
+        sha256: str,
+        decision: str,
+        comment: str = "",
+    ) -> dict[str, Any]:
         pend = self.pending(project_id)
         if not pend or pend.get("gate") != "A":
             raise GateError("this study is not waiting for protocol approval")
         with self.db.session() as s:
             require_project_role(s, principal, project_id, "pi")
             latest = s.scalar(
-                select(ProtocolVersion).where(ProtocolVersion.project_id == project_id)
+                select(ProtocolVersion)
+                .where(ProtocolVersion.project_id == project_id)
                 .order_by(ProtocolVersion.version.desc())
             )
             if latest is None or latest.version != version or latest.sha256 != sha256:
-                raise GateError("stale approval: protocol version or hash does not match the current protocol")
-            s.add(ApprovalRecord(project_id=project_id, gate=ApprovalGate.A_PROTOCOL.value,
-                                 subject_version=version, subject_sha256=sha256,
-                                 approver_id=principal.id, decision=decision, comment=comment))
-            audit(s, principal.username, f"protocol.{decision}", project_id, {"version": version, "sha256": sha256})
+                raise GateError(
+                    "stale approval: protocol version or hash does not match the current protocol"
+                )
+            s.add(
+                ApprovalRecord(
+                    project_id=project_id,
+                    gate=ApprovalGate.A_PROTOCOL.value,
+                    subject_version=version,
+                    subject_sha256=sha256,
+                    approver_id=principal.id,
+                    decision=decision,
+                    comment=comment,
+                )
+            )
+            audit(
+                s,
+                principal.username,
+                f"protocol.{decision}",
+                project_id,
+                {"version": version, "sha256": sha256},
+            )
         return self._invoke(project_id, Command(resume={"decision": decision, "comment": comment}))
 
     def release(self, principal: Principal, project_id: str, version: int) -> dict[str, Any]:
@@ -166,24 +201,42 @@ class Lab:
             raise GateError("this manuscript version is not awaiting release")
         with self.db.session() as s:
             require_project_role(s, principal, project_id, "pi")
-            ms = s.scalar(select(ManuscriptRecord).where(ManuscriptRecord.project_id == project_id,
-                                                         ManuscriptRecord.version == version))
+            ms = s.scalar(
+                select(ManuscriptRecord).where(
+                    ManuscriptRecord.project_id == project_id, ManuscriptRecord.version == version
+                )
+            )
             if ms is None:
                 raise GateError("manuscript not found")
             if not ms.evidence_report.get("release_ready"):
                 raise GateError("release blocked: manuscript has unresolved evidence flags")
             ms.status = "released"
-            s.add(ApprovalRecord(project_id=project_id, gate=ApprovalGate.D_RELEASE.value,
-                                 subject_version=version, subject_sha256=ms.sha256,
-                                 approver_id=principal.id, decision="approved"))
-            audit(s, principal.username, "manuscript.released", project_id, {"version": version, "sha256": ms.sha256})
+            s.add(
+                ApprovalRecord(
+                    project_id=project_id,
+                    gate=ApprovalGate.D_RELEASE.value,
+                    subject_version=version,
+                    subject_sha256=ms.sha256,
+                    approver_id=principal.id,
+                    decision="approved",
+                )
+            )
+            audit(
+                s,
+                principal.username,
+                "manuscript.released",
+                project_id,
+                {"version": version, "sha256": ms.sha256},
+            )
         return self._invoke(project_id, Command(resume={"released": True}))
 
     def pause(self, principal: Principal, project_id: str, paused: bool) -> None:
         with self.db.session() as s:
             p = require_project_role(s, principal, project_id, "researcher")
             p.paused = paused
-            audit(s, principal.username, "project.paused" if paused else "project.resumed", project_id)
+            audit(
+                s, principal.username, "project.paused" if paused else "project.resumed", project_id
+            )
 
     # ----------------------------------------------------------------- worker
     def worker_tick(self, prepared_dir: Any = None) -> dict[str, Any]:
@@ -197,8 +250,11 @@ class Lab:
             pend = self.pending(pid)
             if pend and pend.get("gate") == "jobs":
                 with self.db.session() as s:
-                    active = s.scalar(select(JobRecord).where(JobRecord.project_id == pid,
-                                                              JobRecord.state.in_(["queued", "running"])))
+                    active = s.scalar(
+                        select(JobRecord).where(
+                            JobRecord.project_id == pid, JobRecord.state.in_(["queued", "running"])
+                        )
+                    )
                 if active is None:
                     self._invoke(pid, Command(resume={"jobs": "done"}))
                     advanced.append(pid)

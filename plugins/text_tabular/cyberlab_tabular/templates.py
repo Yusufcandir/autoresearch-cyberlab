@@ -100,7 +100,9 @@ TEMPLATES: dict[str, Callable[[dict[str, Any], int, bool], Any]] = {
 }
 
 
-def run_experiment(manifest: ExperimentManifest, prepared_dir: Path, out_dir: Path) -> dict[str, Any]:
+def run_experiment(
+    manifest: ExperimentManifest, prepared_dir: Path, out_dir: Path
+) -> dict[str, Any]:
     """Train one model and write predictions.csv, model_info.json. Returns run metadata."""
     tmpl = manifest.model.template
     _check_params(tmpl, manifest.model.params)
@@ -145,7 +147,9 @@ def run_experiment(manifest: ExperimentManifest, prepared_dir: Path, out_dir: Pa
         },
     }
     if hasattr(model, "feature_importances_"):
-        imp = dict(zip(x_train.columns, np.asarray(model.feature_importances_).tolist(), strict=True))
+        imp = dict(
+            zip(x_train.columns, np.asarray(model.feature_importances_).tolist(), strict=True)
+        )
         info["feature_importance"] = dict(sorted(imp.items(), key=lambda kv: -kv[1])[:20])
     (out_dir / "model_info.json").write_text(json.dumps(info, indent=2))
     return info

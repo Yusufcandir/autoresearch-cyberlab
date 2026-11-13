@@ -19,7 +19,9 @@ def experiment_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     job_ids = []
     with ctx.db.session() as s:
         for raw in state.get("experiments", []):
-            job = ctx.broker.submit(s, ExperimentManifest.model_validate(raw), actor="experiment_agent")
+            job = ctx.broker.submit(
+                s, ExperimentManifest.model_validate(raw), actor="experiment_agent"
+            )
             job_ids.append(job.id)
     ctx.set_stage(pid, "running", "Running")
     return {"job_ids": job_ids}

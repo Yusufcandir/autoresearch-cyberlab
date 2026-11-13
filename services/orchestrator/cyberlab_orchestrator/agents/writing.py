@@ -32,9 +32,15 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         project = s.get(Project, pid)
         assert project is not None
         spec = ResearchSpec.model_validate(project.spec)
-        cites = {
-            c.key: {"status": c.status, "doi": c.doi, "title": c.title, "authors": c.authors,
-                    "year": c.year, "venue": c.venue}
+        cites: dict[str, dict[str, Any]] = {
+            c.key: {
+                "status": c.status,
+                "doi": c.doi,
+                "title": c.title,
+                "authors": c.authors,
+                "year": c.year,
+                "venue": c.venue,
+            }
             for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))
         }
     verified_keys = [k for k, c in cites.items() if c["status"] == "Verified"]
@@ -42,26 +48,60 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "title": spec.title,
         "goal": spec.goal,
         "models": list(analysis["models"]),
-        "hypotheses": [{"id": h["id"], "statement": h["statement"]} for h in analysis["hypotheses"]],
+        "hypotheses": [
+            {"id": h["id"], "statement": h["statement"]} for h in analysis["hypotheses"]
+        ],
         "allowed_citation_keys": {k: cites[k]["title"] for k in verified_keys},
-        "dataset": {k: analysis["dataset"].get(k) for k in ("name", "license")} if analysis.get("dataset") else {},
+        "dataset": {k: analysis["dataset"].get(k) for k in ("name", "license")}
+        if analysis.get("dataset")
+        else {},
         "statistician_notes": state.get("interpretation", {}),
         "reviewer_feedback": state.get("review_feedback", []),
     }
-    sections = ctx.llm.complete_json("writing.draft", SYSTEM, json.dumps(context, default=str), project_id=pid)
+    sections = ctx.llm.complete_json(
+        "writing.draft", SYSTEM, json.dumps(context, default=str), project_id=pid
+    )
     sections = {k: str(v) for k, v in sections.items() if isinstance(v, str | int | float)}
     md, report = build_manuscript(spec.title, sections, analysis, cites, "")
     bib = "\n\n".join(
-        bibtex_entry(Paper(title=c["title"], doi=c["doi"], year=c["year"], authors=c["authors"] or [],
-                           venue=c["venue"]), key=k)
-        for k, c in cites.items() if c["status"] == "Verified"
+        bibtex_entry(
+            Paper(
+                title=c["title"],
+                doi=c["doi"],
+                year=c["year"],
+                authors=c["authors"] or [],
+                venue=c["venue"],
+            ),
+            key=k,
+        )
+        for k, c in cites.items()
+        if c["status"] == "Verified"
     )
     with ctx.db.session() as s:
-        version = (s.scalar(select(func.max(ManuscriptRecord.version)).where(ManuscriptRecord.project_id == pid)) or 0) + 1
-        s.add(ManuscriptRecord(project_id=pid, version=version, markdown=md, bibtex=bib,
-                               sha256=manuscript_sha(md), evidence_report=report.as_dict(), status="draft"))
-        audit(s, "writing_agent", "manuscript.drafted", pid,
-              {"version": version, "blockers": len(report.blockers)})
+        version = (
+            s.scalar(
+                select(func.max(ManuscriptRecord.version)).where(ManuscriptRecord.project_id == pid)
+            )
+            or 0
+        ) + 1
+        s.add(
+            ManuscriptRecord(
+                project_id=pid,
+                version=version,
+                markdown=md,
+                bibtex=bib,
+                sha256=manuscript_sha(md),
+                evidence_report=report.as_dict(),
+                status="draft",
+            )
+        )
+        audit(
+            s,
+            "writing_agent",
+            "manuscript.drafted",
+            pid,
+            {"version": version, "blockers": len(report.blockers)},
+        )
     ctx.set_stage(pid, "drafted", "Unverified" if report.blockers else "Measured")
     return {"manuscript_version": version, "evidence_blockers": report.blockers}
 

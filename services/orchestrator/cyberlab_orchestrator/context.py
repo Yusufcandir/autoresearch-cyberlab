@@ -36,15 +36,27 @@ class LabContext:
         write_audit(d, self.settings)
         if not d.allowed:
             with self.db.session() as s:
-                audit(s, agent, "security.policy_denied", project_id, {"tool": tool, "code": d.code})
+                audit(
+                    s, agent, "security.policy_denied", project_id, {"tool": tool, "code": d.code}
+                )
             raise ToolDenied(f"{agent}: {d.code}: {d.reason}")
 
-    def note(self, s: Session, project_id: str, agent: str, kind: str, content: dict[str, Any]) -> None:
+    def note(
+        self, s: Session, project_id: str, agent: str, kind: str, content: dict[str, Any]
+    ) -> None:
         s.add(AgentNote(project_id=project_id, agent=agent, kind=kind, content=content))
 
-    def set_stage(self, project_id: str, stage: str, label: str, blocked: str | None = None) -> None:
+    def set_stage(
+        self, project_id: str, stage: str, label: str, blocked: str | None = None
+    ) -> None:
         with self.db.session() as s:
             p = s.get(Project, project_id)
             if p is not None:
                 p.stage, p.status_label, p.blocked_reason = stage, label, blocked
-                audit(s, "orchestrator", "project.stage", project_id, {"stage": stage, "blocked": blocked})
+                audit(
+                    s,
+                    "orchestrator",
+                    "project.stage",
+                    project_id,
+                    {"stage": stage, "blocked": blocked},
+                )

@@ -17,7 +17,11 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     root = ctx.settings.dataset_root / "cicids2017"
     with ctx.db.session() as s:
         existing = s.get(DatasetRecord, DATASET_ID)
-        if existing is not None and existing.status == "verified" and (root / "prepared" / "clean.parquet").exists():
+        if (
+            existing is not None
+            and existing.status == "verified"
+            and (root / "prepared" / "clean.parquet").exists()
+        ):
             m = DatasetManifest.model_validate(existing.manifest)
             return {"dataset_status": "verified", "dataset_summary": _summary(m)}
     try:
@@ -31,8 +35,14 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     with ctx.db.session() as s:
         rec = s.get(DatasetRecord, DATASET_ID)
         if rec is None:
-            s.add(DatasetRecord(id=DATASET_ID, name=manifest.name, manifest=manifest.model_dump(mode="json"),
-                                status=manifest.status))
+            s.add(
+                DatasetRecord(
+                    id=DATASET_ID,
+                    name=manifest.name,
+                    manifest=manifest.model_dump(mode="json"),
+                    status=manifest.status,
+                )
+            )
         else:
             rec.manifest, rec.status = manifest.model_dump(mode="json"), manifest.status
         audit(s, "dataset_agent", f"dataset.{manifest.status}", pid, _summary(manifest))

@@ -9,4 +9,11 @@ from cyberlab_data.cicids2017 import (
     write_fixture,
 )
 
-__all__ = ["CICIDS2017", "DatasetBlocked", "PreparedDataset", "load_split", "prepare", "write_fixture"]
+__all__ = [
+    "CICIDS2017",
+    "DatasetBlocked",
+    "PreparedDataset",
+    "load_split",
+    "prepare",
+    "write_fixture",
+]

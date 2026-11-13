@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block title %}New study{% endblock %}
+{% block content %}
+<h1>New research study</h1>
+<div class="card">
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form method="post" action="/projects/new">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label for="t">Title</label>
+  <input id="t" name="title" required minlength="5" value="Duplicate-aware evaluation of intrusion detection models on CIC-IDS2017">
+  <label for="g">Research goal</label>
+  <textarea id="g" name="goal" required minlength="20">Compare logistic regression, random forest, gradient boosting and a neural network for multiclass intrusion detection on CIC-IDS2017 after removing duplicate flows, and report per-class performance with confidence intervals.</textarea>
+  <label for="c">Constraints (one per line)</label>
+  <textarea id="c" name="constraints">Public dataset only (CIC-IDS2017)
+Report macro-F1 with 95% confidence intervals
+At most one GPU job at a time</textarea>
+  <div class="grid">
+    <div><label for="d">May study data be sent to the cloud LLM (Gemini)?</label>
+      <select id="d" name="data_may_leave_host"><option value="no">No, local model only</option><option value="yes">Yes (public data only)</option></select></div>
+    <div><label for="gb">GPU budget (minutes)</label><input id="gb" name="gpu_budget_minutes" type="number" value="120" min="1"></div>
+    <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="200000" min="0"></div>
+  </div>
+  <p class="muted">The agents will plan, review literature, propose a protocol and check the dataset. Nothing runs on the GPU until you approve the protocol.</p>
+  <button type="submit">Start study</button>
+</form>
+</div>
+{% endblock %}

@@ -34,7 +34,9 @@ DATASET_ID = "cicids2017-mlcsv-v1"
 class _Info:
     name: str = "CIC-IDS2017 (MachineLearningCSV)"
     source_url: str = "https://www.unb.ca/cic/datasets/ids-2017.html"
-    download_url: str = "http://205.174.165.80/CICDataset/CIC-IDS-2017/Dataset/MachineLearningCSV.zip"
+    download_url: str = (
+        "http://205.174.165.80/CICDataset/CIC-IDS-2017/Dataset/MachineLearningCSV.zip"
+    )
     license: str = (
         "Canadian Institute for Cybersecurity dataset licence: free for research use; "
         "redistribution not permitted; cite Sharafaldin et al. (2018)."
@@ -109,7 +111,7 @@ def download(root: Path, url: str = CICIDS2017.download_url) -> Path:  # pragma:
     raw = root / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     target = raw / "MachineLearningCSV.zip"
-    with httpx.stream("GET", url, timeout=None, follow_redirects=True) as r:
+    with httpx.stream("GET", url, timeout=httpx.Timeout(60, read=600), follow_redirects=True) as r:
         r.raise_for_status()
         with target.open("wb") as fh:
             for chunk in r.iter_bytes(1 << 20):
@@ -174,7 +176,8 @@ def prepare(
     n_dups = before - len(df)
     feat_hash = pd.util.hash_pandas_object(df[features], index=False)
     conflict_mask = feat_hash.duplicated(keep=False) & (
-        df.groupby(feat_hash.values)["Class"].transform("nunique").to_numpy() > 1
+        df.assign(_h=feat_hash.to_numpy()).groupby("_h")["Class"].transform("nunique").to_numpy()
+        > 1
     )
     n_conflicts = int(conflict_mask.sum())
     df = df.loc[~conflict_mask]

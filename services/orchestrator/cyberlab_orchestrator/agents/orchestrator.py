@@ -32,7 +32,10 @@ def orchestrator_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]
     )
     queries = [q for q in plan.get("search_queries", []) if isinstance(q, str)][:5]
     if not queries:
-        queries = ["CIC-IDS2017 intrusion detection machine learning", "explainable intrusion detection"]
+        queries = [
+            "CIC-IDS2017 intrusion detection machine learning",
+            "explainable intrusion detection",
+        ]
     plan["search_queries"] = queries
     with ctx.db.session() as s:
         ctx.note(s, pid, "orchestrator", "plan", plan)

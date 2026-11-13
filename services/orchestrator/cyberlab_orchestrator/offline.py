@@ -56,7 +56,16 @@ def offline_responder(task: str, system: str, prompt: str) -> str:
         keys = re.findall(r"UNTRUSTED PAPER (\S+):", prompt)
         return json.dumps(
             {
-                "matrix": [{"key": k, "method": "see abstract", "dataset": "", "finding": "", "limitation": ""} for k in keys],
+                "matrix": [
+                    {
+                        "key": k,
+                        "method": "see abstract",
+                        "dataset": "",
+                        "finding": "",
+                        "limitation": "",
+                    }
+                    for k in keys
+                ],
                 "summary": f"[Offline] {len(keys)} verified papers collected.",
             }
         )
@@ -91,8 +100,14 @@ def offline_responder(task: str, system: str, prompt: str) -> str:
     if task == "reviewer.review":
         return json.dumps(
             {
-                "scores": {"scientific_contribution": 2, "methodological_rigor": 4, "reproducibility": 5,
-                           "statistical_validity": 4, "clarity": 3, "threats_to_validity": 3},
+                "scores": {
+                    "scientific_contribution": 2,
+                    "methodological_rigor": 4,
+                    "reproducibility": 5,
+                    "statistical_validity": 4,
+                    "clarity": 3,
+                    "threats_to_validity": 3,
+                },
                 "major_issues": ["Novelty is limited for a widely studied dataset."],
                 "minor_issues": [],
                 "recommendation": "major revision",

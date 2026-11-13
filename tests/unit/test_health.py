@@ -24,7 +24,7 @@ def test_ready_when_configured() -> None:
     settings = Settings(
         _env_file=None,
         database_url="postgresql://u:p@localhost/db",
-        redis_url="redis://localhost:6379/0",
+        secret_key="x" * 32,
         audit_log_destination="file:///tmp/audit.log",
     )
     assert _client(settings).get("/health/ready").status_code == 200

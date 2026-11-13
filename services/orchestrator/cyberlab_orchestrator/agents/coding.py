@@ -20,12 +20,19 @@ from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol
 def coding_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid, version = state["project_id"], state["protocol_version"]
     with ctx.db.session() as s:
-        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid, ProtocolVersion.version == version))
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid, ProtocolVersion.version == version
+            )
+        )
         assert pv is not None
         protocol = Protocol.model_validate(pv.body)
         rec = s.scalar(
             select(ApprovalRecord)
-            .where(ApprovalRecord.project_id == pid, ApprovalRecord.gate == ApprovalGate.A_PROTOCOL.value)
+            .where(
+                ApprovalRecord.project_id == pid,
+                ApprovalRecord.gate == ApprovalGate.A_PROTOCOL.value,
+            )
             .order_by(ApprovalRecord.created_at.desc())
         )
         approval = None
@@ -36,7 +43,7 @@ def coding_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 subject_version=rec.subject_version,
                 subject_sha256=rec.subject_sha256,
                 approver=rec.approver_id,
-                decision=rec.decision,  # type: ignore[arg-type]
+                decision=rec.decision,
             )
         ds = s.get(DatasetRecord, protocol.dataset_id)
         dataset = DatasetManifest.model_validate(ds.manifest) if ds else None
@@ -52,6 +59,11 @@ def coding_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         ctx.set_stage(pid, "compile_blocked", "Blocked", "; ".join(exc.reasons))
         return {"compile_error": exc.reasons}
     with ctx.db.session() as s:
-        ctx.note(s, pid, "coding", "experiment_manifests",
-                 {"count": len(manifests), "experiments": [m.experiment_id for m in manifests]})
+        ctx.note(
+            s,
+            pid,
+            "coding",
+            "experiment_manifests",
+            {"count": len(manifests), "experiments": [m.experiment_id for m in manifests]},
+        )
     return {"experiments": [m.model_dump(mode="json") for m in manifests]}

@@ -29,7 +29,11 @@ SYSTEM = (
 def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid, version = state["project_id"], state["manuscript_version"]
     with ctx.db.session() as s:
-        ms = s.scalar(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid, ManuscriptRecord.version == version))
+        ms = s.scalar(
+            select(ManuscriptRecord).where(
+                ManuscriptRecord.project_id == pid, ManuscriptRecord.version == version
+            )
+        )
         assert ms is not None
         markdown, evidence = ms.markdown, ms.evidence_report
     review = ctx.llm.complete_json("reviewer.review", SYSTEM, markdown[:30000], project_id=pid)
@@ -37,11 +41,23 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     review["evidence_blockers"] = blockers
     review["release_ready"] = not blockers
     with ctx.db.session() as s:
-        ms = s.scalar(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid, ManuscriptRecord.version == version))
+        ms = s.scalar(
+            select(ManuscriptRecord).where(
+                ManuscriptRecord.project_id == pid, ManuscriptRecord.version == version
+            )
+        )
         assert ms is not None
         ms.review = review
         ctx.note(s, pid, "reviewer", "review", review)
-        audit(s, "reviewer_agent", "review.requested", pid, {"version": version, "blockers": len(blockers)})
-    feedback = [f["message"] for f in blockers] + [str(x) for x in review.get("major_issues", [])][:5]
+        audit(
+            s,
+            "reviewer_agent",
+            "review.requested",
+            pid,
+            {"version": version, "blockers": len(blockers)},
+        )
+    feedback = [f["message"] for f in blockers] + [str(x) for x in review.get("major_issues", [])][
+        :5
+    ]
     ctx.set_stage(pid, "reviewed", "Unverified" if blockers else "Measured")
     return {"review": review, "review_feedback": feedback, "revisions": state.get("revisions", 0)}

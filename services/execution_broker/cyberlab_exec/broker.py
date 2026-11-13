@@ -73,7 +73,12 @@ class GpuLock:
             return None
 
     def acquire(self, job_id: str) -> None:
-        info = {"pid": os.getpid(), "host": socket.gethostname(), "job_id": job_id, "since": time.time()}
+        info = {
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "job_id": job_id,
+            "since": time.time(),
+        }
         for _ in range(2):
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -130,7 +135,9 @@ class Broker:
         existing = s.scalar(select(JobRecord).where(JobRecord.idempotency_key == key))
         if existing is not None:
             return existing
-        decision = decide(ExecutionRequest("run_experiment_template", manifest.risk_tier), self.settings)
+        decision = decide(
+            ExecutionRequest("run_experiment_template", manifest.risk_tier), self.settings
+        )
         state = "queued" if decision.allowed else "blocked"
         job = JobRecord(
             project_id=manifest.project_id,
@@ -142,9 +149,13 @@ class Broker:
         )
         s.add(job)
         s.flush()
-        audit(s, actor, "job.submitted" if decision.allowed else "security.policy_denied",
-              manifest.project_id, {"job_id": job.id, "experiment_id": manifest.experiment_id,
-                                    "decision": decision.code})
+        audit(
+            s,
+            actor,
+            "job.submitted" if decision.allowed else "security.policy_denied",
+            manifest.project_id,
+            {"job_id": job.id, "experiment_id": manifest.experiment_id, "decision": decision.code},
+        )
         return job
 
     def cancel(self, s: Session, job_id: str, actor: str) -> JobRecord:
@@ -180,7 +191,13 @@ class Broker:
                     job.state = "failed"
                     job.failure_reason = "interrupted too many times"
                 job.updated_at = now()
-                audit(s, "broker", "job.reconciled", job.project_id, {"job_id": job.id, "state": job.state})
+                audit(
+                    s,
+                    "broker",
+                    "job.reconciled",
+                    job.project_id,
+                    {"job_id": job.id, "state": job.state},
+                )
                 fixed += 1
         return fixed
 
@@ -196,7 +213,9 @@ class Broker:
                     return job.id
         return None
 
-    def run_once(self, project_id: str | None = None, prepared_dir: Path | None = None) -> str | None:
+    def run_once(
+        self, project_id: str | None = None, prepared_dir: Path | None = None
+    ) -> str | None:
         job_id = self.next_job_id(project_id)
         if job_id is None:
             return None
@@ -208,7 +227,13 @@ class Broker:
                 others = foreign_gpu_processes()
                 if others:
                     job.failure_reason = f"waiting: GPU in use by other processes {others}"
-                    audit(s, "broker", "job.contention", job.project_id, {"job_id": job.id, "others": others})
+                    audit(
+                        s,
+                        "broker",
+                        "job.contention",
+                        job.project_id,
+                        {"job_id": job.id, "others": others},
+                    )
                     return None
         try:
             self.lock.acquire(job_id)
@@ -226,7 +251,9 @@ class Broker:
             done.append(jid)
         return done
 
-    def _execute(self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None) -> None:
+    def _execute(
+        self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None
+    ) -> None:
         prepared = prepared_dir or (self.settings.dataset_root / "cicids2017" / "prepared")
         work = self.work_root / job_id
         work.mkdir(parents=True, exist_ok=True)
@@ -239,11 +266,26 @@ class Broker:
             job.attempts += 1
             job.external_ref = f"local:{socket.gethostname()}:{os.getpid()}:{job_id[:8]}"
             job.updated_at = now()
-            audit(s, "broker", "job.started", job.project_id, {"job_id": job_id, "ref": job.external_ref})
+            audit(
+                s,
+                "broker",
+                "job.started",
+                job.project_id,
+                {"job_id": job_id, "ref": job.external_ref},
+            )
 
-        cmd = [sys.executable, "-m", "cyberlab_exec.runner", str(work / "manifest.json"), str(prepared), str(work / "out")]
+        cmd = [
+            sys.executable,
+            "-m",
+            "cyberlab_exec.runner",
+            str(work / "manifest.json"),
+            str(prepared),
+            str(work / "out"),
+        ]
         env = {**os.environ, "CUDA_VISIBLE_DEVICES": "0" if manifest.use_gpu else ""}
-        proc = subprocess.Popen(cmd, stdout=(work / "stdout.log").open("w"), stderr=subprocess.STDOUT, env=env)  # noqa: S603
+        proc = subprocess.Popen(
+            cmd, stdout=(work / "stdout.log").open("w"), stderr=subprocess.STDOUT, env=env
+        )  # noqa: S603
         deadline = time.monotonic() + manifest.max_minutes * 60
         reason: str | None = None
         while proc.poll() is None:
@@ -283,13 +325,19 @@ class Broker:
                     rec = self.store.put(s, manifest.project_id, out / name, name=name)
                     artifacts[name] = rec.sha256
             if (work / "stdout.log").exists():
-                artifacts["stdout.log"] = self.store.put(s, manifest.project_id, work / "stdout.log").sha256
+                artifacts["stdout.log"] = self.store.put(
+                    s, manifest.project_id, work / "stdout.log"
+                ).sha256
             ok = reason is None and returncode == 0 and "predictions.csv" in artifacts
             metrics: dict[str, Any] = {}
             if ok:
                 metrics = compute_metrics(pd.read_csv(out / "predictions.csv"))
             error = reason or (None if ok else _error_text(out, returncode))
-            info = json.loads((out / "model_info.json").read_text()) if (out / "model_info.json").exists() else {}
+            info = (
+                json.loads((out / "model_info.json").read_text())
+                if (out / "model_info.json").exists()
+                else {}
+            )
             receipt = {
                 "job_id": job_id,
                 "experiment_id": manifest.experiment_id,
@@ -329,8 +377,13 @@ class Broker:
             proj = s.get(Project, manifest.project_id)
             if proj is not None:
                 proj.gpu_minutes_used += (finished - started).total_seconds() / 60
-            audit(s, "broker", f"job.{job.state}", manifest.project_id,
-                  {"job_id": job_id, "run_id": run_id, "artifacts": artifacts, "error": error})
+            audit(
+                s,
+                "broker",
+                f"job.{job.state}",
+                manifest.project_id,
+                {"job_id": job_id, "run_id": run_id, "artifacts": artifacts, "error": error},
+            )
         shutil.rmtree(out, ignore_errors=True)
 
 
@@ -345,5 +398,7 @@ def _code_version() -> str:
     git = shutil.which("git")
     if git is None:
         return "unknown"
-    res = subprocess.run([git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False)  # noqa: S603
+    res = subprocess.run(
+        [git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
+    )  # noqa: S603
     return res.stdout.strip() or "unknown"

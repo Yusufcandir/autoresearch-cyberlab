@@ -1,4 +1,4 @@
-"""`cyberlab` command line: read-only checks for Phase A."""
+"""`cyberlab` command line: host checks, setup, worker and server."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import json
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from cyberlab_common.config import Settings
 
@@ -69,9 +70,126 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--summarize", action="store_true", help="summarize an existing CSV")
     p.set_defaults(func=_gpu_baseline)
 
+    p = sub.add_parser("init-db", help="create database tables")
+    p.set_defaults(func=_init_db)
+
+    p = sub.add_parser("create-user", help="create a user (prompts for the password)")
+    p.add_argument("username")
+    p.add_argument(
+        "--role", default="researcher", choices=["admin", "pi", "researcher", "reviewer"]
+    )
+    p.set_defaults(func=_create_user)
+
+    p = sub.add_parser("dataset", help="CIC-IDS2017: download (official URL only) or prepare")
+    p.add_argument("action", choices=["download", "prepare", "fixture"])
+    p.add_argument("--benign-cap", type=int, default=400_000)
+    p.set_defaults(func=_dataset)
+
+    p = sub.add_parser("worker", help="run the job broker loop (one GPU job at a time)")
+    p.add_argument("--interval", type=float, default=5.0)
+    p.add_argument("--once", action="store_true")
+    p.set_defaults(func=_worker)
+
+    p = sub.add_parser("serve", help="start the API and dashboard (localhost only)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8100)
+    p.set_defaults(func=_serve)
+
+    p = sub.add_parser("llm-check", help="send one tiny prompt through the configured LLM gateway")
+    p.set_defaults(func=_llm_check)
+
     args = parser.parse_args(argv)
     result: int = args.func(args)
     return result
+
+
+def _db() -> Any:
+    from cyberlab_common.db import Database
+
+    s = Settings()
+    if s.database_url is None:
+        raise SystemExit("DATABASE_URL is not set (see .env)")
+    db = Database(s.database_url.get_secret_value())
+    db.create_all()
+    return db
+
+
+def _init_db(args: argparse.Namespace) -> int:
+    _db()
+    print("database ready")
+    return 0
+
+
+def _create_user(args: argparse.Namespace) -> int:
+    import getpass
+
+    from cyberlab_authz.rbac import create_user
+
+    pw = getpass.getpass("Password (10+ characters): ")
+    if pw != getpass.getpass("Repeat password: "):
+        print("passwords differ")
+        return 1
+    with _db().session() as s:
+        u = create_user(s, args.username, pw, args.role)
+        print(f"created {u.username} ({u.role})")
+    return 0
+
+
+def _dataset(args: argparse.Namespace) -> int:
+    from cyberlab_data import cicids2017
+
+    s = Settings()
+    root = s.dataset_root / "cicids2017"
+    if args.action == "download":
+        print(
+            f"downloading the official CIC-IDS2017 MachineLearningCSV.zip into {root / 'raw'} ..."
+        )
+        cicids2017.download(root)
+    elif args.action == "fixture":
+        cicids2017.write_fixture(root / "raw")
+        print(f"wrote a small SYNTHETIC test fixture to {root / 'raw'} (not real data)")
+        return 0
+    prepared = cicids2017.prepare(root, benign_cap=args.benign_cap)
+    print(json.dumps(cicids2017.manifest_summary(prepared.manifest), indent=2))
+    return 0 if prepared.manifest.status == "verified" else 2
+
+
+def _worker(args: argparse.Namespace) -> int:
+    import time
+
+    from cyberlab_orchestrator.lab import Lab
+
+    lab = Lab(Settings())
+    print("worker started; Ctrl+C to stop")
+    try:
+        while True:
+            info = lab.worker_tick()
+            if info["ran_job"] or info["advanced"] or info["reconciled"]:
+                print(json.dumps(info))
+            if args.once:
+                return 0
+            if not info["ran_job"]:
+                time.sleep(args.interval)
+    except KeyboardInterrupt:
+        return 0
+
+
+def _serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    uvicorn.run("cyberlab_api.main:app", host=args.host, port=args.port)
+    return 0
+
+
+def _llm_check(args: argparse.Namespace) -> int:
+    from cyberlab_llm import build_gateway
+
+    gw = build_gateway(Settings())
+    res = gw.complete("health.check", "Answer in five words or fewer.", "Say hello to the lab.")
+    print(
+        f"{res.provider}/{res.model}: {res.text.strip()!r} ({res.total_tokens} tokens, {res.seconds:.1f}s)"
+    )
+    return 0
 
 
 if __name__ == "__main__":

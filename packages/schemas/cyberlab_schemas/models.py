@@ -44,7 +44,7 @@ class StatusLabel(StrEnum):
 
 class Versioned(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    schema_version: Literal["1"] = SCHEMA_VERSION
+    schema_version: Literal["1"] = "1"
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -90,6 +90,13 @@ class SplitSpec(Versioned):
     test_days: list[str] = Field(default_factory=list)
 
 
+StatTest = Literal["bootstrap_ci", "mcnemar"]
+
+
+def _default_tests() -> list[StatTest]:
+    return ["bootstrap_ci", "mcnemar"]
+
+
 class Protocol(Versioned):
     project_id: str
     version: int = Field(ge=1)
@@ -100,9 +107,7 @@ class Protocol(Versioned):
     split: SplitSpec = Field(default_factory=SplitSpec)
     models: list[ModelSpec] = Field(min_length=1)
     seeds: list[int] = Field(default_factory=lambda: [42])
-    statistical_tests: list[Literal["bootstrap_ci", "mcnemar"]] = Field(
-        default_factory=lambda: ["bootstrap_ci", "mcnemar"]
-    )
+    statistical_tests: list[StatTest] = Field(default_factory=_default_tests)
     gpu_budget_minutes: int = Field(default=120, ge=1)
     risk_tier: Literal["T0", "T1", "T2", "T3"] = "T1"
     created_at: datetime = Field(default_factory=utcnow)

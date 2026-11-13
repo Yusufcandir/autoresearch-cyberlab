@@ -9,7 +9,13 @@ import pytest
 from sqlalchemy import select
 
 from cyberlab_authz.rbac import Forbidden, Principal, create_user
-from cyberlab_common.db import CitationRecord, JobRecord, ManuscriptRecord, ProtocolVersion, RunRecord
+from cyberlab_common.db import (
+    CitationRecord,
+    JobRecord,
+    ManuscriptRecord,
+    ProtocolVersion,
+    RunRecord,
+)
 from cyberlab_orchestrator.lab import GateError, Lab
 from cyberlab_schemas import ResearchSpec
 from tests.fixtures.fakes import FAKE_DOI, fake_gateway, fake_scholar, make_settings
@@ -31,7 +37,9 @@ def _users(lab: Lab) -> tuple[Principal, Principal]:
     with lab.db.session() as s:
         pi = create_user(s, "prof", "correct-horse-battery", "pi")
         other = create_user(s, "student", "correct-horse-battery", "researcher")
-        return Principal(pi.id, pi.username, pi.role), Principal(other.id, other.username, other.role)
+        return Principal(pi.id, pi.username, pi.role), Principal(
+            other.id, other.username, other.role
+        )
 
 
 def test_full_study(lab: Lab) -> None:
@@ -41,7 +49,10 @@ def test_full_study(lab: Lab) -> None:
     assert status["pending"]["gate"] == "A", status
 
     with lab.db.session() as s:
-        cites = {c.doi: c.status for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))}
+        cites = {
+            c.doi: c.status
+            for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))
+        }
         pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
         assert pv is not None
         version, sha = pv.version, pv.sha256
@@ -67,8 +78,11 @@ def test_full_study(lab: Lab) -> None:
     with lab.db.session() as s:
         runs = list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))
         assert all(r.status == "succeeded" for r in runs), [r.receipt.get("error") for r in runs]
-        ms = s.scalar(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid)
-                      .order_by(ManuscriptRecord.version.desc()))
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
         assert ms is not None
         md, report, mversion = ms.markdown, ms.evidence_report, ms.version
     assert "| xgboost |" in md and "[citation needed]" not in md

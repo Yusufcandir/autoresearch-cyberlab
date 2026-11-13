@@ -9,4 +9,11 @@ from cyberlab_qa.metrics import (
     recompute_matches,
 )
 
-__all__ = ["QAFlag", "bootstrap_ci", "compute_metrics", "leakage_audit", "mcnemar", "recompute_matches"]
+__all__ = [
+    "QAFlag",
+    "bootstrap_ci",
+    "compute_metrics",
+    "leakage_audit",
+    "mcnemar",
+    "recompute_matches",
+]

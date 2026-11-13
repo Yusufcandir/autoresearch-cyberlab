@@ -89,8 +89,9 @@ class Provider(Protocol):
     model: str
     local: bool
 
-    def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
-        ...
+    def generate(
+        self, system: str, prompt: str, json_mode: bool, temperature: float
+    ) -> LLMResult: ...
 
 
 class GeminiProvider:
@@ -98,7 +99,9 @@ class GeminiProvider:
     local = False
     URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-    def __init__(self, api_key: str, model: str, timeout: float = 120, client: httpx.Client | None = None):
+    def __init__(
+        self, api_key: str, model: str, timeout: float = 120, client: httpx.Client | None = None
+    ):
         self.api_key = api_key
         self.model = model
         self.client = client or httpx.Client(timeout=timeout)
@@ -144,7 +147,9 @@ class OllamaProvider:
     name = "ollama"
     local = True
 
-    def __init__(self, host: str, model: str, timeout: float = 300, client: httpx.Client | None = None):
+    def __init__(
+        self, host: str, model: str, timeout: float = 300, client: httpx.Client | None = None
+    ):
         self.host = host.rstrip("/")
         self.model = model
         self.client = client or httpx.Client(timeout=timeout)
@@ -256,7 +261,9 @@ class LLMGateway:
     def complete_json(self, task: str, system: str, prompt: str, **kw: Any) -> Any:
         last: Exception | None = None
         for _ in range(2):
-            res = self.complete(task, system + "\nReply with valid JSON only.", prompt, json_mode=True, **kw)
+            res = self.complete(
+                task, system + "\nReply with valid JSON only.", prompt, json_mode=True, **kw
+            )
             try:
                 return res.json()
             except (json.JSONDecodeError, ValueError) as exc:
@@ -272,13 +279,17 @@ class LLMGateway:
 
 
 def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
-    ollama = OllamaProvider(settings.ollama_host, settings.ollama_model, settings.llm_timeout_seconds)
+    ollama = OllamaProvider(
+        settings.ollama_host, settings.ollama_model, settings.llm_timeout_seconds
+    )
     provider = (settings.llm_provider or "fake").lower()
     if provider == "gemini":
         if settings.gemini_api_key is None:
             raise LLMError("LLM_PROVIDER=gemini but GEMINI_API_KEY is not set")
         primary: Provider = GeminiProvider(
-            settings.gemini_api_key.get_secret_value(), settings.gemini_model, settings.llm_timeout_seconds
+            settings.gemini_api_key.get_secret_value(),
+            settings.gemini_model,
+            settings.llm_timeout_seconds,
         )
         return LLMGateway(primary, ollama, **hooks)
     if provider == "ollama":

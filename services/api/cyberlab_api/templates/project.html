@@ -1,0 +1,112 @@
+{% extends "base.html" %}{% block title %}{{ project.title }}{% endblock %}
+{% block content %}
+{% set pend = status.pending %}
+<h1>{{ project.title }}</h1>
+<p><span class="label {{ status.status_label }}">{{ status.status_label }}</span>
+  <span class="muted">stage: {{ status.stage.replace('_',' ') }} · your role: {{ role }} · LLM tokens {{ status.llm_tokens_used }} · GPU {{ status.gpu_minutes_used }} min{% if status.paused %} · <b>paused</b>{% endif %}</span></p>
+{% if status.blocked_reason %}<div class="card" style="border-left:4px solid var(--blocked)"><b>Blocked:</b> {{ status.blocked_reason }}
+  {% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/retry" style="margin-top:8px"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Retry from the last checkpoint</button></form>{% endif %}</div>{% endif %}
+
+{% if pend %}
+<div class="card gate">
+  <h2>Waiting for: {{ pend.title }}</h2>
+  {% if pend.gate == 'A' %}
+    <p>Protocol version <b>{{ pend.protocol_version }}</b>, hash <span class="mono">{{ pend.protocol_sha256 }}</span>. Approving authorizes exactly this version; any change needs a new approval.</p>
+    {% if role == 'pi' %}
+    <form method="post" action="/projects/{{ project.id }}/approve">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.protocol_version }}"><input type="hidden" name="sha256" value="{{ pend.protocol_sha256 }}">
+      <label for="cm">Comment (sent to the methodology agent if you reject)</label><textarea id="cm" name="comment" style="min-height:60px"></textarea>
+      <p><button name="decision" value="approved">Approve protocol and data use</button> <button class="danger" name="decision" value="rejected">Reject and request changes</button></p>
+    </form>
+    {% else %}<p class="muted">Only the PI can approve.</p>{% endif %}
+  {% elif pend.gate == 'jobs' %}
+    <p>Experiments are running in the job broker: {% for k, v in pend.jobs.items() %}{{ k }} {{ v }} {% endfor %}. Make sure the worker is running (<span class="mono">cyberlab worker</span>).</p>
+  {% elif pend.gate == 'D' %}
+    {% if pend.evidence_blockers %}<p class="error">Release is blocked by {{ pend.evidence_blockers|length }} evidence problem(s); see the manuscript section.</p>
+    {% elif role == 'pi' %}
+    <form method="post" action="/projects/{{ project.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.manuscript_version }}">
+      <p>Manuscript v{{ pend.manuscript_version }} passed the evidence checks. Releasing records your approval; it does not submit anything anywhere.</p><button>Release manuscript v{{ pend.manuscript_version }}</button></form>
+    {% else %}<p class="muted">Only the PI can release.</p>{% endif %}
+  {% endif %}
+</div>
+{% endif %}
+
+{% if role in ['pi','researcher'] %}
+<form method="post" action="/projects/{{ project.id }}/pause" style="margin-bottom:16px"><input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if status.paused %}<button class="secondary" name="paused" value="no">Resume study</button>{% else %}<button class="secondary" name="paused" value="yes">Pause study (no new jobs start)</button>{% endif %}</form>
+{% endif %}
+
+<div class="grid">
+  <div class="card"><h2>Plan <span class="label Proposed">Proposed</span></h2>
+    {% if notes.plan %}<p>{{ notes.plan.objective }}</p><h3>Search queries</h3><ul>{% for q in notes.plan.search_queries %}<li>{{ q }}</li>{% endfor %}</ul>
+    {% if notes.plan.risks %}<h3>Risks</h3><ul>{% for r in notes.plan.risks %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    {% else %}<p class="muted">The orchestrator is planning…</p>{% endif %}</div>
+  <div class="card"><h2>Research gaps <span class="label Proposed">Proposed</span></h2>
+    {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps %}<li><b>{{ g.gap }}</b> {{ g.why_it_matters }}</li>{% endfor %}</ul>
+    {% for c in notes.gaps.novelty_caveats or [] %}<p class="muted">Caveat: {{ c }}</p>{% endfor %}{% else %}<p class="muted">Not yet.</p>{% endif %}</div>
+</div>
+
+<div class="card"><h2>Literature</h2>
+{% if cites %}<table><tr><th>Status</th><th>Reference</th><th>DOI</th></tr>
+{% for c in cites %}<tr><td><span class="label {{ c.status }}">{{ c.status }}</span></td><td>{{ c.title }} <span class="muted">({{ c.year }}{% if c.venue %}, {{ c.venue }}{% endif %})</span></td><td class="mono">{{ c.doi or '' }}</td></tr>{% endfor %}</table>
+<p class="muted">Unverified references never appear in the manuscript.</p>
+{% if notes.evidence_matrix and notes.evidence_matrix.summary %}<h3>Summary <span class="label Proposed">Proposed</span></h3><p>{{ notes.evidence_matrix.summary }}</p>{% endif %}
+{% else %}<p class="muted">The literature agent has not run yet.</p>{% endif %}</div>
+
+<div class="card"><h2>Dataset gate</h2>
+{% if dataset %}{% set m = dataset.manifest %}
+<p><span class="label {{ 'Verified' if dataset.status == 'verified' else 'Blocked' }}">{{ dataset.status|capitalize }}</span> {{ m.name }} · <span class="muted">{{ m.license }}</span></p>
+<p>{{ m.n_rows_clean }} rows after cleaning ({{ m.n_rows_raw }} raw, {{ m.n_duplicates_removed }} duplicate or conflicting rows removed). Train/test overlap: <b>{{ m.split_overlap_rows }}</b> rows.</p>
+<div class="grid"><table><tr><th>Class</th><th class="num">Rows</th></tr>{% for k, v in m.class_counts.items() %}<tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>{% endfor %}</table>
+<table><tr><th>Split</th><th class="num">Rows</th></tr>{% for k, v in m.split_counts.items() %}<tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>{% endfor %}</table></div>
+<details><summary>File hashes</summary><table>{% for f, h in m.files.items() %}<tr><td>{{ f }}</td><td class="mono">{{ h }}</td></tr>{% endfor %}</table></details>
+{% for r in m.blocked_reasons %}<p class="error">{{ r }}</p>{% endfor %}
+{% else %}<p class="muted">Not checked yet.</p>{% endif %}</div>
+
+<div class="card"><h2>Protocol {% if protocol %}v{{ protocol.version }}{% endif %}</h2>
+{% if protocol %}{% set b = protocol.body %}
+<p class="mono">sha256 {{ protocol.sha256 }}</p>
+<h3>Research questions</h3><ul>{% for q in b.research_questions %}<li>{{ q }}</li>{% endfor %}</ul>
+<h3>Hypotheses</h3><ul>{% for h in b.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} <span class="muted">({{ h.comparison }}, {{ h.primary_metric }})</span></li>{% endfor %}</ul>
+<h3>Models</h3><table><tr><th>Name</th><th>Template</th><th>Role</th><th>Params</th></tr>{% for m in b.models %}<tr><td>{{ m.name }}</td><td>{{ m.template }}</td><td>{{ m.role }}</td><td class="mono">{{ m.params }}</td></tr>{% endfor %}</table>
+<p class="muted">Seeds {{ b.seeds }} · split {{ b.split.strategy }} (test {{ b.split.test_fraction }}) · tests {{ b.statistical_tests }} · GPU budget {{ b.gpu_budget_minutes }} min · risk {{ b.risk_tier }}</p>
+{% if protocol.rationale %}<p><b>Agent rationale</b> <span class="label Proposed">Proposed</span>: {{ protocol.rationale }}</p>{% endif %}
+{% else %}<p class="muted">Not drafted yet.</p>{% endif %}</div>
+
+<div class="card"><h2>Execution center</h2>
+{% if jobs %}<table><tr><th>Experiment</th><th>State</th><th>Scheduler ref</th><th>Cap</th><th>Detail</th><th></th></tr>
+{% for j in jobs %}{% set r = runs.get(j.id) %}<tr><td>{{ j.experiment_id }}{% if j.manifest.use_gpu %} <span class="muted">GPU</span>{% endif %}</td>
+<td><span class="label {{ {'queued':'Proposed','running':'Running','succeeded':'Measured','failed':'Blocked','canceled':'Blocked','blocked':'Blocked'}[j.state] }}">{{ j.state }}</span></td>
+<td class="mono">{{ j.external_ref or '' }}</td><td>{{ j.manifest.max_minutes }} min</td>
+<td>{% if r and r.metrics %}macro-F1 {{ '%.4f'|format(r.metrics.macro_f1) }}{% endif %}{% if j.failure_reason %}<span class="error">{{ j.failure_reason[:200] }}</span>{% endif %}</td>
+<td>{% if j.state in ['queued','running'] and role in ['pi','researcher'] %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Cancel</button></form>{% endif %}</td></tr>{% endfor %}</table>
+{% else %}<p class="muted">No jobs yet. Jobs are created only after protocol approval.</p>{% endif %}</div>
+
+<div class="card"><h2>Results and evidence</h2>
+{% if analysis %}
+<p><span class="label {{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}">{{ 'Verified' if analysis.metrics_recomputed_match else 'Measured' }}</span>
+ metrics recomputed from stored predictions · analysis <span class="mono">{{ analysis.artifact_sha256 or '' }}</span></p>
+<table><tr><th>Model</th><th class="num">Macro-F1 (mean ± sd)</th><th class="num">95% CI</th><th class="num">Accuracy</th><th class="num">MCC</th><th class="num">FPR</th></tr>
+{% for name, m in analysis.models.items() %}{% set a = m.aggregate %}<tr><td>{{ name }}</td>
+<td class="num">{{ '%.4f'|format(a.macro_f1.mean) }} ± {{ '%.4f'|format(a.macro_f1.sd) }}</td>
+<td class="num">[{{ '%.4f'|format(m.macro_f1_ci.low) }}, {{ '%.4f'|format(m.macro_f1_ci.high) }}]</td>
+<td class="num">{{ '%.4f'|format(a.accuracy.mean) }}</td><td class="num">{{ '%.4f'|format(a.mcc.mean) }}</td>
+<td class="num">{% if a.false_positive_rate %}{{ '%.4f'|format(a.false_positive_rate.mean) }}{% endif %}</td></tr>{% endfor %}</table>
+<h3>Hypotheses</h3><ul>{% for h in analysis.hypotheses %}<li><b>{{ h.id }}</b> {{ h.result }}{% if h.mcnemar %} <span class="muted">(McNemar p = {{ '%.3g'|format(h.mcnemar.p_value) }})</span>{% endif %}</li>{% endfor %}</ul>
+{% for f in analysis.qa_flags %}<p class="{{ 'error' if f.severity == 'blocker' else 'muted' }}">{{ f.severity }}: {{ f.message }}</p>{% endfor %}
+{% if notes.interpretation %}<h3>Statistician's interpretation <span class="label Proposed">Proposed</span></h3><p>{{ notes.interpretation.interpretation }}</p>{% endif %}
+{% else %}<p class="muted">No analysis yet.</p>{% endif %}</div>
+
+<div class="card"><h2>Manuscript studio</h2>
+{% if manuscripts %}{% for ms in manuscripts %}
+<details {% if loop.first %}open{% endif %}><summary>Version {{ ms.version }} · {{ ms.status }} · {% if ms.evidence_report.release_ready %}<span class="label Measured">evidence OK</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}</summary>
+{% for f in ms.evidence_report.flags %}<p class="{{ 'error' if f.severity == 'blocker' else 'muted' }}">{{ f.code }}: {{ f.message }}</p>{% endfor %}
+{% if ms.review %}<h3>Reviewer agent <span class="label Proposed">Proposed</span>: {{ ms.review.recommendation }}</h3>
+<p class="muted">{% for k, v in (ms.review.scores or {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>
+<ul>{% for i in ms.review.major_issues or [] %}<li>{{ i }}</li>{% endfor %}</ul>{% endif %}
+<p><a href="/manuscripts/{{ ms.id }}/download/md">Download Markdown</a> · <a href="/manuscripts/{{ ms.id }}/download/bib">Download BibTeX</a></p>
+<pre>{{ ms.markdown }}</pre></details>
+{% endfor %}{% else %}<p class="muted">No draft yet.</p>{% endif %}</div>
+
+<div class="card"><h2>Activity</h2><table>{% for e in events %}<tr><td class="muted">{{ e.ts.strftime('%m-%d %H:%M:%S') }}</td><td>{{ e.actor }}</td><td>{{ e.action }}</td></tr>{% endfor %}</table></div>
+{% endblock %}

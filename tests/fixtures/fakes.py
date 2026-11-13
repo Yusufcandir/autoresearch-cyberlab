@@ -55,9 +55,17 @@ def scholarly_handler(request: httpx.Request) -> httpx.Response:
     if "api.crossref.org/works/" in url:
         doi = url.split("/works/", 1)[1].split("?")[0]
         if doi in PAPERS:
-            return httpx.Response(200, json={"message": {
-                "title": [PAPERS[doi]], "author": [{"given": "A", "family": "Author"}],
-                "issued": {"date-parts": [[2021]]}, "container-title": ["Journal"]}})
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "title": [PAPERS[doi]],
+                        "author": [{"given": "A", "family": "Author"}],
+                        "issued": {"date-parts": [[2021]]},
+                        "container-title": ["Journal"],
+                    }
+                },
+            )
         return httpx.Response(404)
     if "api.openalex.org/works/doi:" in url:
         return httpx.Response(404)

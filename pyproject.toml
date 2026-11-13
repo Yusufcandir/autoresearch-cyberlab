@@ -65,18 +65,28 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "N"]
+# E501: the formatter owns line length; B008: FastAPI Depends idiom; S101: asserts as invariants.
+ignore = ["E501", "B008", "N818", "S101"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["cyberlab_*"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S108"]
+# Fixed, absolute-path subprocess calls (nvidia-smi, git, the runner module).
+"services/execution_broker/**" = ["S603", "S607"]
+"packages/common/cyberlab_common/doctor.py" = ["S603"]
+"packages/common/cyberlab_common/gpu_baseline.py" = ["S603"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["packages", "services"]
+files = ["packages", "services", "plugins"]
+
+[[tool.mypy.overrides]]
+module = ["sklearn.*", "scipy.*", "xgboost.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

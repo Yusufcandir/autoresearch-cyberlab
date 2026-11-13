@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% block title %}Admin{% endblock %}
+{% block content %}
+<h1>Admin console</h1>
+<div class="grid">
+<div class="card"><h2>Platform</h2>
+<table>
+<tr><td>LLM provider</td><td>{{ settings.llm_provider }} ({{ settings.gemini_model if settings.llm_provider == 'gemini' else settings.ollama_model }})</td></tr>
+<tr><td>Local model</td><td>{{ settings.ollama_model }} at {{ settings.ollama_host }}</td></tr>
+<tr><td>Scheduler</td><td>{{ settings.scheduler_backend.value }} · GPU jobs {{ 'on' if settings.use_gpu else 'off' }} · cap {{ settings.gpu_job_max_minutes }} min</td></tr>
+<tr><td>Restricted execution</td><td>{{ settings.allow_restricted_execution }} · sandbox {{ settings.sandbox_backend.value }}</td></tr>
+<tr><td>GPU lock</td><td class="mono">{{ lock or 'free' }}</td></tr>
+</table></div>
+<div class="card"><h2>Add user</h2>
+<form method="post" action="/admin/users"><input type="hidden" name="csrf" value="{{ csrf }}">
+<label for="u">Username</label><input id="u" name="username" required>
+<label for="p">Password (10+ characters)</label><input id="p" name="password" type="password" minlength="10" required>
+<label for="r">Role</label><select id="r" name="role"><option>researcher</option><option>pi</option><option>reviewer</option><option>admin</option></select>
+<p><button>Create user</button></p></form></div>
+</div>
+<div class="card"><h2>Users</h2><table><tr><th>User</th><th>Role</th><th>Active</th></tr>{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.role }}</td><td>{{ u.active }}</td></tr>{% endfor %}</table></div>
+<div class="card"><h2>Recent jobs (all studies)</h2><table><tr><th>Study</th><th>Experiment</th><th>State</th><th>Updated</th></tr>
+{% for j in jobs %}<tr><td>{{ projects.get(j.project_id, '?') }}</td><td>{{ j.experiment_id }}</td><td>{{ j.state }}</td><td class="muted">{{ j.updated_at.strftime('%m-%d %H:%M') }}</td></tr>{% endfor %}</table></div>
+<div class="card"><h2>Policy denials</h2>{% if denials %}<table>{% for d in denials %}<tr><td class="muted">{{ d.ts.strftime('%m-%d %H:%M') }}</td><td>{{ d.actor }}</td><td class="mono">{{ d.detail }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None.</p>{% endif %}</div>
+<div class="card"><h2>Recent LLM calls (this process)</h2>{% if llm_log %}<table><tr><th>Task</th><th>Provider</th><th class="num">Tokens</th><th class="num">Seconds</th></tr>
+{% for c in llm_log %}<tr><td>{{ c.task }}</td><td>{{ c.provider }} / {{ c.model }}</td><td class="num">{{ c.tokens }}</td><td class="num">{{ c.seconds }}</td></tr>{% endfor %}</table>{% else %}<p class="muted">None yet.</p>{% endif %}</div>
+{% endblock %}

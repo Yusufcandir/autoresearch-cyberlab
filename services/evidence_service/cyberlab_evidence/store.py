@@ -39,7 +39,12 @@ class ArtifactStore:
         root.mkdir(parents=True, exist_ok=True)
 
     def put(
-        self, s: Session, project_id: str, src: Path, name: str | None = None, run_id: str | None = None
+        self,
+        s: Session,
+        project_id: str,
+        src: Path,
+        name: str | None = None,
+        run_id: str | None = None,
     ) -> ArtifactRecord:
         name = name or src.name
         if "/" in name or "\\" in name or name.startswith("."):

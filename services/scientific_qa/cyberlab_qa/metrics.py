@@ -78,8 +78,12 @@ _METRIC_FN = {
 
 
 def bootstrap_ci(
-    preds: pd.DataFrame, metric: str = "macro_f1", n_boot: int = 1000, seed: int = 0, alpha: float = 0.05
-) -> dict[str, float]:
+    preds: pd.DataFrame,
+    metric: str = "macro_f1",
+    n_boot: int = 1000,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
     """Percentile bootstrap CI over test rows (stratified by true class)."""
     fn = _METRIC_FN[metric]
     y = preds["y_true"].astype(str).to_numpy()
@@ -91,7 +95,13 @@ def bootstrap_ci(
         idx = np.concatenate([rng.choice(g, size=len(g), replace=True) for g in groups])
         vals[b] = fn(y[idx], p[idx])
     lo, hi = np.quantile(vals, [alpha / 2, 1 - alpha / 2])
-    return {"metric": metric, "point": float(fn(y, p)), "low": float(lo), "high": float(hi), "n_boot": n_boot}
+    return {
+        "metric": metric,
+        "point": float(fn(y, p)),
+        "low": float(lo),
+        "high": float(hi),
+        "n_boot": n_boot,
+    }
 
 
 def mcnemar(preds_a: pd.DataFrame, preds_b: pd.DataFrame) -> dict[str, float]:
@@ -115,12 +125,16 @@ def recompute_matches(stored: dict[str, Any], preds: pd.DataFrame, tol: float = 
     return all(abs(float(stored[k]) - fresh[k]) <= tol for k in keys if k in stored)
 
 
-def leakage_audit(metrics_by_model: dict[str, dict[str, Any]], split_overlap_rows: int) -> list[QAFlag]:
+def leakage_audit(
+    metrics_by_model: dict[str, dict[str, Any]], split_overlap_rows: int
+) -> list[QAFlag]:
     """Flags that must be resolved before results are called Verified (spec 13.2)."""
     flags: list[QAFlag] = []
     if split_overlap_rows:
         flags.append(
-            QAFlag("blocker", "SPLIT_OVERLAP", f"{split_overlap_rows} test rows also appear in train")
+            QAFlag(
+                "blocker", "SPLIT_OVERLAP", f"{split_overlap_rows} test rows also appear in train"
+            )
         )
     for name, m in metrics_by_model.items():
         if m.get("macro_f1", 0) >= 0.995:
@@ -134,6 +148,10 @@ def leakage_audit(metrics_by_model: dict[str, dict[str, Any]], split_overlap_row
         for cls, pc in m.get("per_class", {}).items():
             if pc["support"] < 30:
                 flags.append(
-                    QAFlag("info", "SMALL_CLASS", f"{name}: class {cls} has only {pc['support']} test rows")
+                    QAFlag(
+                        "info",
+                        "SMALL_CLASS",
+                        f"{name}: class {cls} has only {pc['support']} test rows",
+                    )
                 )
     return flags

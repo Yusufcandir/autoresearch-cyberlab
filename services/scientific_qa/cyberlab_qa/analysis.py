@@ -24,10 +24,19 @@ from cyberlab_qa.metrics import (
 )
 from cyberlab_schemas import EvidenceClaim, Protocol, StatusLabel
 
-HEADLINE = ("macro_f1", "accuracy", "balanced_accuracy", "mcc", "false_positive_rate", "detection_rate")
+HEADLINE = (
+    "macro_f1",
+    "accuracy",
+    "balanced_accuracy",
+    "mcc",
+    "false_positive_rate",
+    "detection_rate",
+)
 
 
-def analyze_project(s: Session, store: ArtifactStore, project_id: str, protocol_version: int) -> dict[str, Any]:
+def analyze_project(
+    s: Session, store: ArtifactStore, project_id: str, protocol_version: int
+) -> dict[str, Any]:
     pv = s.scalar(
         select(ProtocolVersion).where(
             ProtocolVersion.project_id == project_id, ProtocolVersion.version == protocol_version
@@ -38,7 +47,9 @@ def analyze_project(s: Session, store: ArtifactStore, project_id: str, protocol_
     protocol = Protocol.model_validate(pv.body)
     runs = list(
         s.scalars(
-            select(RunRecord).where(RunRecord.project_id == project_id, RunRecord.status == "succeeded")
+            select(RunRecord).where(
+                RunRecord.project_id == project_id, RunRecord.status == "succeeded"
+            )
         )
     )
     runs = [r for r in runs if r.experiment_id.startswith(f"p{protocol_version}-")]
@@ -80,7 +91,7 @@ def analyze_project(s: Session, store: ArtifactStore, project_id: str, protocol_
             "confusion_matrix": first["confusion_matrix"],
         }
 
-    hypotheses = []
+    hypotheses: list[dict[str, Any]] = []
     for h in protocol.hypotheses:
         a, b = (x.strip() for x in h.comparison.split(">"))
         common = sorted({sd for (n, sd) in preds if n == a} & {sd for (n, sd) in preds if n == b})
@@ -118,7 +129,7 @@ def analyze_project(s: Session, store: ArtifactStore, project_id: str, protocol_
         flags.append(
             QAFlag("blocker", "RECOMPUTE_MISMATCH", "stored metrics differ from recomputation")
         )
-    analysis = {
+    analysis: dict[str, Any] = {
         "project_id": project_id,
         "protocol_version": protocol_version,
         "protocol_sha256": protocol.sha256,
@@ -135,8 +146,13 @@ def analyze_project(s: Session, store: ArtifactStore, project_id: str, protocol_
         rec = store.put(s, project_id, p, name="analysis.json")
     analysis["artifact_sha256"] = rec.sha256
     _publish_claims(s, project_id, analysis, rec.sha256)
-    audit(s, "scientific_qa", "evidence.published", project_id,
-          {"analysis_sha256": rec.sha256, "flags": len(flags), "recompute_ok": recompute_ok})
+    audit(
+        s,
+        "scientific_qa",
+        "evidence.published",
+        project_id,
+        {"analysis_sha256": rec.sha256, "flags": len(flags), "recompute_ok": recompute_ok},
+    )
     return analysis
 
 
@@ -158,8 +174,14 @@ def _publish_claims(s: Session, project_id: str, analysis: dict[str, Any], sha: 
                 artifact_sha256=sha,
                 status=status,
             )
-            s.add(ClaimRecord(id=f"{project_id[:8]}:{claim.claim_id}", project_id=project_id,
-                              body=claim.model_dump(mode="json"), status=claim.status.value))
+            s.add(
+                ClaimRecord(
+                    id=f"{project_id[:8]}:{claim.claim_id}",
+                    project_id=project_id,
+                    body=claim.model_dump(mode="json"),
+                    status=claim.status.value,
+                )
+            )
     for h in analysis["hypotheses"]:
         claim = EvidenceClaim(
             claim_id=f"hypothesis.{h['id']}",
@@ -169,5 +191,11 @@ def _publish_claims(s: Session, project_id: str, analysis: dict[str, Any], sha: 
             artifact_sha256=sha,
             status=status,
         )
-        s.add(ClaimRecord(id=f"{project_id[:8]}:{claim.claim_id}", project_id=project_id,
-                          body=claim.model_dump(mode="json"), status=claim.status.value))
+        s.add(
+            ClaimRecord(
+                id=f"{project_id[:8]}:{claim.claim_id}",
+                project_id=project_id,
+                body=claim.model_dump(mode="json"),
+                status=claim.status.value,
+            )
+        )

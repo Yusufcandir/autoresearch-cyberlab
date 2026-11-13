@@ -108,8 +108,7 @@ class ScholarlyClient:
             doi=normalize_doi(w.get("doi")),
             year=w.get("publication_year"),
             authors=[
-                a.get("author", {}).get("display_name", "")
-                for a in w.get("authorships", [])[:12]
+                a.get("author", {}).get("display_name", "") for a in w.get("authorships", [])[:12]
             ],
             venue=loc.get("display_name"),
             abstract=_abstract_from_index(w.get("abstract_inverted_index")),

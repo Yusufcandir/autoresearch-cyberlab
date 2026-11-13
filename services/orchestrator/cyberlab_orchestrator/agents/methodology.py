@@ -38,7 +38,12 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     )
     protocol, rationale, problems = _merge(base, proposal)
     with ctx.db.session() as s:
-        version = (s.scalar(select(func.max(ProtocolVersion.version)).where(ProtocolVersion.project_id == pid)) or 0) + 1
+        version = (
+            s.scalar(
+                select(func.max(ProtocolVersion.version)).where(ProtocolVersion.project_id == pid)
+            )
+            or 0
+        ) + 1
         protocol = protocol.model_copy(update={"version": version})
         s.add(
             ProtocolVersion(
@@ -50,9 +55,20 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 created_by="methodology_agent",
             )
         )
-        ctx.note(s, pid, "methodology", "protocol_proposal", {"version": version, "rationale": rationale,
-                                                              "validation_problems": problems})
-        audit(s, "methodology_agent", "protocol.drafted", pid, {"version": version, "sha256": protocol.sha256})
+        ctx.note(
+            s,
+            pid,
+            "methodology",
+            "protocol_proposal",
+            {"version": version, "rationale": rationale, "validation_problems": problems},
+        )
+        audit(
+            s,
+            "methodology_agent",
+            "protocol.drafted",
+            pid,
+            {"version": version, "sha256": protocol.sha256},
+        )
     ctx.set_stage(pid, "protocol_drafted", "Proposed")
     return {"protocol_version": version, "protocol_sha256": protocol.sha256}
 

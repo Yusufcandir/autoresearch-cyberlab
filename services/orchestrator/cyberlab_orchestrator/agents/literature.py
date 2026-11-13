@@ -21,7 +21,9 @@ SYSTEM = (
 )
 
 
-def literature_agent(ctx: LabContext, state: dict[str, Any], max_papers: int = 12) -> dict[str, Any]:
+def literature_agent(
+    ctx: LabContext, state: dict[str, Any], max_papers: int = 12
+) -> dict[str, Any]:
     pid = state["project_id"]
     ctx.authorize("literature", "literature_search", "T0", pid)
     found: dict[str, Paper] = {}
@@ -52,7 +54,11 @@ def literature_agent(ctx: LabContext, state: dict[str, Any], max_papers: int = 1
                 p.status, p.verification_note = "Unverified", str(exc)
                 v = p
             key = "Sharafaldin2018dataset" if p is dataset_paper else citation_key(v)
-            if s.scalar(select(CitationRecord).where(CitationRecord.project_id == pid, CitationRecord.key == key)):
+            if s.scalar(
+                select(CitationRecord).where(
+                    CitationRecord.project_id == pid, CitationRecord.key == key
+                )
+            ):
                 continue
             s.add(
                 CitationRecord(
@@ -79,7 +85,9 @@ def literature_agent(ctx: LabContext, state: dict[str, Any], max_papers: int = 1
         )
         for k, p in zip(keys, verified, strict=False)
     )
-    matrix = ctx.llm.complete_json("literature.matrix", SYSTEM, records or "No verified papers.", project_id=pid)
+    matrix = ctx.llm.complete_json(
+        "literature.matrix", SYSTEM, records or "No verified papers.", project_id=pid
+    )
     with ctx.db.session() as s:
         ctx.note(s, pid, "literature", "evidence_matrix", {**matrix, "search_errors": errors})
     ctx.set_stage(pid, "literature_reviewed", "Proposed")
