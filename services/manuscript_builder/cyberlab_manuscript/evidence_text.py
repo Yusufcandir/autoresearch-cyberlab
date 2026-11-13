@@ -70,10 +70,19 @@ def _p(p: float | None) -> str:
     return "p < 0.001" if p < 1e-3 else f"p = {p:.3f}"
 
 
-def _best(analysis: dict[str, Any]) -> str | None:
+def primary_metric(analysis: dict[str, Any]) -> str:
+    """The study's primary metric: the one its hypotheses are tested on (macro-F1 otherwise)."""
+    for h in analysis.get("hypotheses", []):
+        if h.get("metric"):
+            return str(h["metric"])
+    return "macro_f1"
+
+
+def _best(analysis: dict[str, Any], metric: str | None = None) -> str | None:
+    metric = metric or primary_metric(analysis)
     models = analysis.get("models", {})
-    scored = [n for n in models if "mean" in (models[n].get("aggregate", {}).get("macro_f1") or {})]
-    return max(scored, key=lambda n: models[n]["aggregate"]["macro_f1"]["mean"]) if scored else None
+    scored = [n for n in models if "mean" in (models[n].get("aggregate", {}).get(metric) or {})]
+    return max(scored, key=lambda n: models[n]["aggregate"][metric]["mean"]) if scored else None
 
 
 def _tested_hyps(analysis: dict[str, Any]) -> list[dict[str, Any]]:
@@ -122,12 +131,13 @@ def untested_pairs_sentence(analysis: dict[str, Any]) -> str:
 def findings_text(analysis: dict[str, Any]) -> str:
     """Main findings for the Abstract and Conclusion."""
     out = []
-    best = _best(analysis)
+    metric = primary_metric(analysis)
+    best = _best(analysis, metric)
     if best:
-        f1 = analysis["models"][best]["aggregate"]["macro_f1"]
+        v = analysis["models"][best]["aggregate"][metric]
         out.append(
-            f"On the de-duplicated test split, {pretty(best)} had the highest mean macro-F1 "
-            f"({f1['mean']:.4f} ± {f1.get('sd', 0):.4f} over the model seeds)."
+            f"On the de-duplicated test split, {pretty(best)} had the highest mean "
+            f"{_metric(metric)} ({v['mean']:.4f} ± {v.get('sd', 0):.4f} over the model seeds)."
         )
     out += hypothesis_sentences(analysis)
     return " ".join(out)
@@ -137,23 +147,37 @@ def results_text(analysis: dict[str, Any]) -> str:
     """The complete Results prose, from the stored aggregates and tests."""
     paras = []
     lines = []
+    metric = primary_metric(analysis)
+    order = [metric] + [
+        k for k in ("macro_f1", "balanced_accuracy", "accuracy", "mcc") if k != metric
+    ]
     for name, m in analysis.get("models", {}).items():
         agg = m.get("aggregate", {})
-        f1 = agg.get("macro_f1") or {}
-        if "mean" not in f1:
+        lead = agg.get(metric) or {}
+        if "mean" not in lead:
             continue
-        txt = f"{_cap(pretty(name))} reached a macro-F1 of {f1['mean']:.4f} ± {f1.get('sd', 0):.4f}"
-        ci = m.get("macro_f1_ci") or {}
+        txt = (
+            f"{_cap(pretty(name))} reached a {_metric(metric) if metric != 'mcc' else 'MCC'} of "
+            f"{lead['mean']:.4f} ± {lead.get('sd', 0):.4f}"
+        )
+        ci = m.get(f"{metric}_ci") or {}
         if "low" in ci and "high" in ci:
             seed = m.get("ci_seed")
             txt += f" (95% bootstrap CI [{ci['low']:.4f}, {ci['high']:.4f}]" + (
                 f", seed {seed})" if seed is not None else ")"
             )
         extra = []
-        for key in ("balanced_accuracy", "accuracy", "mcc"):
+        for key in order[1:]:
             v = agg.get(key) or {}
             if "mean" in v:
-                extra.append(f"{_metric(key) if key != 'mcc' else 'MCC'} {v['mean']:.4f}")
+                label = "MCC" if key == "mcc" else _metric(key)
+                ci2 = m.get(f"{key}_ci") or {}
+                ci_txt = (
+                    f" (95% CI [{ci2['low']:.4f}, {ci2['high']:.4f}])"
+                    if "low" in ci2 and "high" in ci2
+                    else ""
+                )
+                extra.append(f"{label} {v['mean']:.4f}{ci_txt}")
         if extra:
             txt += ", with " + ", ".join(extra)
         lines.append(txt + ".")
@@ -162,6 +186,9 @@ def results_text(analysis: dict[str, Any]) -> str:
             "Scores are means ± standard deviations over the model seeds on the test split.\n\n"
             + "\n".join(f"- {ln}" for ln in lines)
         )
+    minority = minority_recall_text(analysis)
+    if minority:
+        paras.append(minority)
     hyp = hypothesis_sentences(analysis)
     scope = untested_pairs_sentence(analysis)
     if hyp or scope:
@@ -179,6 +206,35 @@ def results_text(analysis: dict[str, Any]) -> str:
                 f"{small}, has only {support[small]:,} test rows."
             )
     return "\n\n".join(paras)
+
+
+def minority_recall_text(analysis: dict[str, Any], n: int = 3) -> str:
+    """Recall of every model on the smallest classes (first seed's predictions)."""
+    models = analysis.get("models", {})
+    support: dict[str, int] = {}
+    for m in models.values():
+        for c, v in (m.get("per_class") or {}).items():
+            support[c] = max(support.get(c, 0), int(v.get("support", 0)))
+    if len(support) < 3:
+        return ""
+    small = sorted(support, key=support.__getitem__)[:n]
+    parts = []
+    for name, m in models.items():
+        pc = m.get("per_class") or {}
+        vals = [f"{c} {pc[c]['recall']:.4f}" for c in small if c in pc and "recall" in pc[c]]
+        if vals:
+            parts.append(f"{pretty(name)}: " + ", ".join(vals))
+    if not parts:
+        return ""
+    return (
+        "Recall on the "
+        + _num(len(small))
+        + " smallest classes ("
+        + ", ".join(f"{c}, {support[c]:,} test rows" for c in small)
+        + "), first seed: "
+        + "; ".join(parts)
+        + "."
+    )
 
 
 def gap_text(analysis: dict[str, Any]) -> str:

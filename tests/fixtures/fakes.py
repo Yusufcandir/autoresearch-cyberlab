@@ -44,7 +44,7 @@ def scholarly_handler(request: httpx.Request) -> httpx.Response:
                 "cited_by_count": 20,
             },
             {
-                "display_name": "A paper that does not exist",
+                "display_name": "Intrusion detection results that do not exist",
                 "doi": f"https://doi.org/{FAKE_DOI}",
                 "publication_year": 2023,
                 "authorships": [],

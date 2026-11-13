@@ -170,3 +170,44 @@ def test_latex_export_keeps_structure_and_citations() -> None:
     assert r"\textbf{XGBoost}" in tex and r"\item one\_item" in tex
     assert r"\begin{tabular}{ll}" in tex and r"xgb & 0.9 \\" in tex
     assert "ignored" not in tex and r"\bibliography{manuscript-v1}" in tex
+
+
+def test_findings_and_results_lead_with_the_primary_metric() -> None:
+    from cyberlab_manuscript.evidence_text import findings_text, results_text
+
+    a = {
+        "models": {
+            "random_forest": {
+                **_m(0.96, 0.999, 0.95, 0.92, 0.98, "baseline"),
+                "balanced_accuracy_ci": {"low": 0.94, "high": 0.96},
+                "per_class": {
+                    "BENIGN": {"support": 800, "recall": 0.99},
+                    "Bot": {"support": 40, "recall": 0.7},
+                    "Rare": {"support": 9, "recall": 0.5},
+                },
+            },
+            "logistic_regression": {
+                **_m(0.68, 0.97, 0.69, 0.64, 0.71, "baseline"),
+                "per_class": {
+                    "BENIGN": {"support": 800, "recall": 0.98},
+                    "Bot": {"support": 40, "recall": 0.1},
+                    "Rare": {"support": 9, "recall": 0.0},
+                },
+            },
+        },
+        "hypotheses": [
+            {
+                "id": "H1",
+                "a": "random_forest",
+                "b": "logistic_regression",
+                "metric": "balanced_accuracy",
+                "result": "supported",
+                "mcnemar": {"p_value": 1e-6},
+            }
+        ],
+    }
+    assert "highest mean balanced accuracy (0.9500" in findings_text(a)
+    res = results_text(a)
+    assert "Random forest reached a balanced accuracy of 0.9500" in res
+    assert "95% bootstrap CI [0.9400, 0.9600]" in res
+    assert "Rare, 9 test rows" in res and "logistic regression: Rare 0.0000" in res

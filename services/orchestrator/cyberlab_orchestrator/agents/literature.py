@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -21,6 +22,21 @@ SYSTEM = (
 )
 
 
+SECURITY_TERMS = re.compile(
+    r"intrusion|\bids\b|\bnids\b|attack|malware|botnet|ddos|denial[- ]of[- ]service|"
+    r"phishing|cyber|network security|anomaly detection|network traffic|threat|exploit|"
+    r"cic-?ids|unsw-?nb15|nsl-?kdd|kdd ?cup|port ?scan|brute[- ]force|zero[- ]day",
+    re.I,
+)
+
+
+def relevance(p: Paper) -> int:
+    """Distinct security topics in the title (weighted double) and the abstract."""
+    title = {m.lower() for m in SECURITY_TERMS.findall(p.title or "")}
+    abstract = {m.lower() for m in SECURITY_TERMS.findall(p.abstract or "")}
+    return 2 * len(title) + len(abstract - title)
+
+
 def literature_agent(
     ctx: LabContext, state: dict[str, Any], max_papers: int = 12
 ) -> dict[str, Any]:
@@ -30,12 +46,18 @@ def literature_agent(
     errors: list[str] = []
     for q in state.get("search_queries", [])[:5]:
         try:
-            for p in ctx.scholar.search(q, limit=6):
+            for p in ctx.scholar.search(q, limit=10):
                 if p.doi and p.doi not in found:
                     found[p.doi] = p
         except httpx.HTTPError as exc:
             errors.append(f"search failed for {q!r}: {exc}")
-    ranked = sorted(found.values(), key=lambda p: -p.cited_by)[:max_papers]
+    relevant = [p for p in found.values() if relevance(p) > 0]
+    if len(found) != len(relevant):
+        errors.append(
+            f"{len(found) - len(relevant)} off-topic result(s) dropped (no security topic)"
+        )
+    # most on-topic first, then most cited
+    ranked = sorted(relevant, key=lambda p: (-relevance(p), -p.cited_by))[:max_papers]
     dataset_paper = Paper(
         title="Toward Generating a New Intrusion Detection Dataset and Intrusion Traffic Characterization",
         doi=CICIDS2017.citation_doi,

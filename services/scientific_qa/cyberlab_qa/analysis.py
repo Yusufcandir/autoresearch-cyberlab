@@ -90,6 +90,11 @@ def analyze_project(
             "per_class": first["per_class"],
             "confusion_matrix": first["confusion_matrix"],
         }
+        # CIs also for every metric a hypothesis is tested on (e.g. balanced accuracy)
+        for metric in {h.primary_metric for h in protocol.hypotheses} - {"macro_f1"}:
+            models[m.name][f"{metric}_ci"] = bootstrap_ci(
+                preds[(m.name, seeds[0])], metric, n_boot=500
+            )
 
     hypotheses: list[dict[str, Any]] = []
     for h in protocol.hypotheses:

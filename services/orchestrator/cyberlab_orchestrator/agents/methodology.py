@@ -3,24 +3,35 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
-from cyberlab_common.db import ProtocolVersion, audit
+from cyberlab_common.db import Project, ProtocolVersion, audit
 from cyberlab_data.cicids2017 import DATASET_ID
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_protocol import default_protocol
-from cyberlab_schemas import Hypothesis, ModelSpec, Protocol
+from cyberlab_protocol.intent import (
+    PRETTY,
+    hypothesis_statement,
+    research_intent,
+    testable_questions,
+)
+from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec
 
 SYSTEM = (
-    "You are a methodology design agent. Refine the baseline experimental protocol for the "
-    "study. You may only use model templates: logistic_regression, random_forest, xgboost, mlp. "
-    "Allowed params: logistic_regression{C,max_iter}, random_forest{n_estimators,max_depth,"
-    "min_samples_leaf}, xgboost{n_estimators,max_depth,learning_rate,subsample}, "
-    "mlp{hidden_layer_sizes,alpha,max_iter}. Hypotheses compare model names with '>'. "
-    "Output JSON: {'research_questions': [str], 'hypotheses': [{'id':'H1','statement','comparison'}], "
+    "You are a methodology design agent. Design the experimental protocol for THIS study's "
+    "research goal: its research questions and hypotheses must test what the goal asks, with "
+    "the goal's primary metric. You may only use model templates: logistic_regression, "
+    "random_forest, xgboost, mlp. Allowed params: logistic_regression{C,max_iter}, "
+    "random_forest{n_estimators,max_depth,min_samples_leaf}, xgboost{n_estimators,max_depth,"
+    "learning_rate,subsample}, mlp{hidden_layer_sizes,alpha,max_iter}. Hypotheses compare model "
+    "names with '>' and give primary_metric in macro_f1, accuracy, balanced_accuracy, mcc. "
+    "Only ask research questions these experiments can answer (no runtime, scalability, "
+    "deployment or other-dataset questions). Output JSON: {'research_questions': [str], "
+    "'hypotheses': [{'id':'H1','statement','comparison','primary_metric'}], "
     "'models': [{'name','template','params','role'}], 'rationale': str}."
 )
 
@@ -29,14 +40,28 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
     base = default_protocol(pid, DATASET_ID)
     feedback = state.get("protocol_feedback", "")
+    with ctx.db.session() as s:
+        project = s.get(Project, pid)
+        spec = ResearchSpec.model_validate(project.spec) if project else None
+    goal = spec.goal if spec else ""
+    constraints = spec.constraints if spec else []
+    intent = research_intent(goal, constraints)
     proposal = ctx.llm.complete_json(
         "methodology.protocol",
         SYSTEM,
-        f"Baseline protocol:\n{base.model_dump_json(indent=1)}\n\nProposed gaps: {state.get('gaps', [])}\n"
+        f"STUDY TITLE: {spec.title if spec else ''}\nRESEARCH GOAL (the protocol must test "
+        f"exactly this): {goal}\nCONSTRAINTS: {constraints}\n"
+        f"Hypotheses stated in the goal: {intent['hypotheses']}\n"
+        f"Primary metric stated in the goal: {intent['primary_metric']}\n\n"
+        f"Baseline protocol (a template only; replace its research questions and hypotheses "
+        f"with ones for this goal):\n{base.model_dump_json(indent=1)}\n\n"
+        f"Proposed gaps: {state.get('gaps', [])}\n"
         f"PI feedback on the previous version (if any): {feedback}",
         project_id=pid,
     )
     protocol, rationale, problems = _merge(base, proposal)
+    protocol, enforced = _enforce_intent(protocol, intent, goal)
+    problems += enforced
     with ctx.db.session() as s:
         version = (
             s.scalar(
@@ -71,6 +96,68 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         )
     ctx.set_stage(pid, "protocol_drafted", "Proposed")
     return {"protocol_version": version, "protocol_sha256": protocol.sha256}
+
+
+def _enforce_intent(
+    protocol: Protocol, intent: dict[str, Any], goal: str
+) -> tuple[Protocol, list[str]]:
+    """The researcher's own hypotheses and primary metric win over the agent's proposal, and
+    research questions no experiment can answer are removed."""
+    notes: list[str] = []
+    names = {m.name for m in protocol.models}
+    metric = intent.get("primary_metric")
+    stated = [h for h in intent.get("hypotheses", []) if h[0] in names and h[1] in names]
+    hyps = list(protocol.hypotheses)
+    if stated:
+        hyps = [
+            Hypothesis(
+                id=f"H{i}",
+                statement=hypothesis_statement(a, b, m),
+                comparison=f"{a} > {b}",
+                primary_metric=m,
+            )
+            for i, (a, b, m) in enumerate(stated, 1)
+        ]
+        notes.append(
+            "hypotheses taken from the research goal: "
+            + ", ".join(f"{a} > {b} ({m})" for a, b, m in stated)
+        )
+    elif metric:
+        hyps = [
+            h.model_copy(
+                update={
+                    "primary_metric": metric,
+                    "statement": hypothesis_statement(
+                        *[x.strip() for x in h.comparison.split(">")], metric
+                    ),
+                }
+            )
+            for h in hyps
+        ]
+        notes.append(f"primary metric set from the research goal: {metric}")
+    rqs, dropped = testable_questions(list(protocol.research_questions))
+    if dropped:
+        notes.append(f"research questions removed (no experiment measures them): {dropped}")
+    if stated and (not rqs or _is_default_rq(rqs)):
+        rqs = [goal_question(stated)]
+    elif not rqs:
+        first = re.split(r"(?<=[.?!])\s", goal.strip(), maxsplit=1)[0] if goal.strip() else ""
+        rqs = [first.rstrip(".") + "?"] if first else list(protocol.research_questions)
+    updated = protocol.model_copy(update={"hypotheses": hyps, "research_questions": rqs})
+    return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
+
+
+def _is_default_rq(rqs: list[str]) -> bool:
+    return any(q.startswith("How do classical and gradient-boosted models") for q in rqs)
+
+
+def goal_question(stated: list[tuple[str, str, str]]) -> str:
+    a, b, m = stated[0]
+    q = f"Does {PRETTY.get(a, a)} achieve higher {PRETTY.get(m, m)} than {PRETTY.get(b, b)}"
+    if len(stated) > 1:
+        a2, b2, m2 = stated[1]
+        q += f", and does {PRETTY.get(a2, a2)} achieve higher {PRETTY.get(m2, m2)} than {PRETTY.get(b2, b2)}"
+    return q + "?"
 
 
 def _merge(base: Protocol, proposal: dict[str, Any]) -> tuple[Protocol, str, list[str]]:
