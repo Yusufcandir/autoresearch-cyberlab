@@ -192,10 +192,14 @@ def _serve(args: argparse.Namespace) -> int:
 
 
 def _llm_check(args: argparse.Namespace) -> int:
-    from cyberlab_llm import build_gateway
+    from cyberlab_llm import LLMError, build_gateway
 
     gw = build_gateway(Settings())
-    res = gw.complete("health.check", "Answer in five words or fewer.", "Say hello to the lab.")
+    try:
+        res = gw.complete("health.check", "Answer in five words or fewer.", "Say hello to the lab.")
+    except LLMError as exc:
+        print(f"LLM check failed: {exc}")
+        return 1
     print(
         f"{res.provider}/{res.model}: {res.text.strip()!r} ({res.total_tokens} tokens, {res.seconds:.1f}s)"
     )

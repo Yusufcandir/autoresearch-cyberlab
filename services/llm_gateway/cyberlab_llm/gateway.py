@@ -243,9 +243,17 @@ class LLMGateway:
         full_system = f"TASK: {task}\n{system}"
         try:
             result = provider.generate(full_system, redact(prompt), json_mode, temperature)
-        except LLMError:
+        except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
-                result = self.local.generate(full_system, redact(prompt), json_mode, temperature)
+                try:
+                    result = self.local.generate(
+                        full_system, redact(prompt), json_mode, temperature
+                    )
+                except LLMError as local_error:
+                    raise LLMError(
+                        f"{provider.name} failed: {primary_error}; "
+                        f"fallback {self.local.name} failed: {local_error}"
+                    ) from local_error
             else:
                 raise
         if project_id and self.charge:
