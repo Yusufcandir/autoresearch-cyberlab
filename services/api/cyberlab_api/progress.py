@@ -144,6 +144,11 @@ def build_progress(
         steps.append(Step(key, label, state, detail))
     # Studies started before step events existed: everything before a waiting gate is done.
     gate_idx = max((i for i, st in enumerate(steps) if st.state == "waiting"), default=-1)
+    # Anything after PI approval being done means everything before approval is done too.
+    approval = next(i for i, st in enumerate(steps) if st.key == "gate_a")
+    last_done = max((i for i, st in enumerate(steps) if st.state == "done"), default=-1)
+    if last_done >= approval:
+        gate_idx = max(gate_idx, last_done)
     if stage == "released":
         gate_idx = len(steps)
     for st in steps[: max(gate_idx, 0)]:
