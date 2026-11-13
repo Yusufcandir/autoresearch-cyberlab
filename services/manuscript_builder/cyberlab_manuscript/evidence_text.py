@@ -316,13 +316,14 @@ _NUMBER = re.compile(r"\b\d+\.\d+\b")
 _STATS = re.compile(
     r"\bH\d+\b|hypothes\w*[^.]{0,80}\b(?:support|confirm|reject|refut|hold|true|false|valid)\w*|"
     r"\b(?:support|confirm|reject|refut|validat|contradict)\w*[^.]{0,40}\bhypothes|"
-    r"p[- ]?values?\b|McNemar|statistically|"
+    r"p[- ]?values?\b|McNemar|statistically|standard deviations?|\bvariance\b|variabilit|"
     r"\bsignificant(?:ly)? (?:\w+ )?(?:better|worse|higher|lower|differen|improv|advantage|"
     r"outperform|gain)\w*",
     re.I,
 )
 _EVAL = re.compile(
-    r"\b(?:more|less|most|least|highly) (?:effective|accurate|robust|reliable|consistent)\b|"
+    r"\b(?:more|less|most|least|highly) (?:effective|accurate|robust|reliable|consistent)(?:ly)?\b|"
+    r"\b(?:shown|show|shows|showed) promise\b|"
     r"\b(?:best|worst|strongest|weakest|top|leading)\b|"
     r"\bperform(?:s|ed|ing)? (?:better|worse|best|well|poorly|strongly|comparabl\w*|similarly)\b|"
     r"\b(?:achiev|obtain|reach|attain|deliver|yield)\w*\b|\b(?:benefit|excel)\w*\b|"
@@ -366,6 +367,31 @@ _CONNECTIVE = re.compile(
 _PRONOUN = re.compile(r"^(?:It|Its|They|Their|Them|This|These|Such)\b")
 
 
+_ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth"]
+_ORDINAL = re.compile(
+    r"^(?:First(?:ly)?|Second(?:ly)?|Third(?:ly)?|Fourth(?:ly)?|Fifth(?:ly)?|Sixth(?:ly)?|"
+    r"Finally|Lastly),\s+"
+)
+
+
+def _renumber(sentences: list[str]) -> list[str]:
+    """'First, ... Third, ...' after a removal becomes 'First, ... Second, ...'."""
+    ordinal_idx = [i for i, s in enumerate(sentences) if _ORDINAL.match(s)]
+    if len(ordinal_idx) < 2:
+        if len(ordinal_idx) == 1 and not sentences[ordinal_idx[0]].startswith(
+            ("First", "Finally", "Lastly")
+        ):
+            i = ordinal_idx[0]  # a lone 'Third,' reads as a gap: drop the ordinal
+            sentences[i] = _cap(_ORDINAL.sub("", sentences[i], count=1))
+        return sentences
+    for n, i in enumerate(ordinal_idx):
+        s = sentences[i]
+        if s.startswith(("Finally", "Lastly")) and n == len(ordinal_idx) - 1:
+            continue
+        sentences[i] = _ORDINAL.sub(f"{_ORDINALS[min(n, len(_ORDINALS) - 1)]}, ", s, count=1)
+    return sentences
+
+
 def _rebuild(body: str, drop: set[str]) -> str:
     """Rebuild a section without the dropped sentences, cleaning connectives and orphans."""
     out_lines = []
@@ -386,7 +412,7 @@ def _rebuild(body: str, drop: set[str]) -> str:
             kept.append(s)
             prev_dropped = False
         if kept:
-            out_lines.append(prefix + " ".join(kept))
+            out_lines.append(prefix + " ".join(_renumber(kept)))
     text = "\n".join(out_lines)
     text = re.sub(r"(?m)^\*\*[^*\n]{1,80}:?\*\*:?[ \t]*\n(?=\s*(?:\n|\*\*|$))", "", text)
     return re.sub(r"\n{3,}", "\n\n", text)

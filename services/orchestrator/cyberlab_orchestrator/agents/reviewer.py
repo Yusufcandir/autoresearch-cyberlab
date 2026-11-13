@@ -276,14 +276,16 @@ def backfill_related_work(markdown: str, papers: dict[str, dict[str, Any]]) -> t
     def name(k: str) -> str:
         authors = [a for a in papers[k].get("authors") or [] if a]
         if not authors:
-            return "Unknown"
+            return ""
         s1 = authors[0].split()[-1]
         if len(authors) == 1:
             return s1
         return f"{s1} and {authors[1].split()[-1]}" if len(authors) == 2 else f"{s1} et al."
 
     items = [
-        f"{name(k)}, “{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]" for k in missing
+        (f"{name(k)}, " if name(k) else "")
+        + f"“{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]"
+        for k in missing
     ]
     para = "Other work relevant to this study includes " + "; ".join(items) + "."
     return markdown.replace(body, body.rstrip() + "\n\n" + para + "\n\n", 1), len(missing)
