@@ -1,23 +1,28 @@
 {% extends "base.html" %}{% block title %}New study{% endblock %}
 {% block content %}
+{% set f = form or {} %}
 <h1>New research study</h1>
 <div class="card">
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <form method="post" action="/projects/new">
   <input type="hidden" name="csrf" value="{{ csrf }}">
   <label for="t">Title</label>
-  <input id="t" name="title" required minlength="5" value="Duplicate-aware evaluation of intrusion detection models on CIC-IDS2017">
+  <input id="t" name="title" required minlength="5" value="{{ f.title or '' }}"
+         placeholder="e.g. Comparing intrusion detection models on a de-duplicated dataset">
   <label for="g">Research goal</label>
-  <textarea id="g" name="goal" required minlength="20">Compare logistic regression, random forest, gradient boosting and a neural network for multiclass intrusion detection on CIC-IDS2017 after removing duplicate flows, and report per-class performance with confidence intervals.</textarea>
-  <label for="c">Constraints (one per line)</label>
-  <textarea id="c" name="constraints">Public dataset only (CIC-IDS2017)
-Report macro-F1 with 95% confidence intervals
-At most one GPU job at a time</textarea>
+  <textarea id="g" name="goal" required minlength="20"
+            placeholder="What should the study find out? Name the models, the dataset and what to report.">{{ f.goal or '' }}</textarea>
+  <label for="c">Constraints (one per line, optional)</label>
+  <textarea id="c" name="constraints"
+            placeholder="e.g. Public dataset only&#10;Report macro-F1 with 95% confidence intervals&#10;At most one GPU job at a time">{{ f.constraints or '' }}</textarea>
   <div class="grid">
     <div><label for="d">May study data be sent to the cloud LLM (Gemini)?</label>
-      <select id="d" name="data_may_leave_host"><option value="no">No, local model only</option><option value="yes">Yes (public data only)</option></select></div>
-    <div><label for="gb">GPU budget (minutes)</label><input id="gb" name="gpu_budget_minutes" type="number" value="480" min="1"></div>
-    <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="1000000" min="0" title="Gemini free tier and the local model cost nothing; this only stops runaway loops"></div>
+      <select id="d" name="data_may_leave_host">
+        <option value="no" {% if f.data_may_leave_host != 'yes' %}selected{% endif %}>No, local model only</option>
+        <option value="yes" {% if f.data_may_leave_host == 'yes' %}selected{% endif %}>Yes (public data only)</option>
+      </select></div>
+    <div><label for="gb">GPU budget (minutes)</label><input id="gb" name="gpu_budget_minutes" type="number" value="{{ f.gpu_budget_minutes or 480 }}" min="1"></div>
+    <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="{{ f.llm_token_budget or 1000000 }}" min="0" title="Gemini free tier and the local model cost nothing; this only stops runaway loops"></div>
   </div>
   <p class="muted">The agents will plan, review literature, propose a protocol and check the dataset. Nothing runs on the GPU until you approve the protocol.</p>
   <button type="submit">Start study</button>

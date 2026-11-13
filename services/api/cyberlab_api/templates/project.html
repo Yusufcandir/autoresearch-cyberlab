@@ -276,7 +276,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 {% if manuscripts %}{% set ms = manuscripts[0] %}
 <div class="chips" style="margin-bottom:14px"><span class="chip">Draft <b>v{{ ms.version }}</b></span><span class="chip">Status <b>{{ ms.status }}</b></span>
   {% if ms.evidence_report.release_ready %}<span class="pill good">✓ evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}
-  <a class="chip" href="/manuscripts/{{ ms.id }}/download/md">⬇ Markdown</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/bib">⬇ BibTeX</a>
+  <a class="chip" href="/manuscripts/{{ ms.id }}/download/md">⬇ Markdown</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/tex">⬇ LaTeX</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/bib">⬇ BibTeX</a><a class="chip" href="/manuscripts/{{ ms.id }}/print" target="_blank">⎙ PDF</a>
   {% if role in ['pi','researcher'] and ms.status != 'released' and pend and pend.gate == 'D' %}<form method="post" action="/projects/{{ project.id }}/redraft" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small" title="Write the paper again from the same results; experiments are not repeated">↻ Rewrite draft</button></form>{% endif %}</div>
 {% if ms.review %}<details style="margin-bottom:14px"><summary>Reviewer agent: {{ ms.review.recommendation|text }} <span class="label Proposed">Proposed</span></summary>
 <p class="muted">{% for k, v in (ms.review.scores if ms.review.scores is mapping else {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>

@@ -154,3 +154,19 @@ def test_framing_filter() -> None:
     assert not forbidden("We compare logistic regression and random forest.", "", known)
     assert not forbidden("Confidence intervals are reported for every model.", "", known)
     assert not forbidden("Class imbalance can significantly affect macro-F1.", "", known)
+
+
+def test_latex_export_keeps_structure_and_citations() -> None:
+    from cyberlab_manuscript.latex import markdown_to_latex
+
+    md = (
+        "# A & B study\n\n> DRAFT note\n\n## Results\n\nScores 0.95 ± 0.01 [@Smith2020x; @Lee2021y] "
+        "for **XGBoost** at 5% cost.\n\n- one_item\n\n| Model | F1 |\n|---|---|\n| xgb | 0.9 |\n\n"
+        "## References\n\n- [Smith2020x] ignored\n"
+    )
+    tex = markdown_to_latex(md, "manuscript-v1")
+    assert r"\title{A \& B study}" in tex and r"\section{Results}" in tex
+    assert r"\cite{Smith2020x,Lee2021y}" in tex and r"$\pm$" in tex and r"5\% cost" in tex
+    assert r"\textbf{XGBoost}" in tex and r"\item one\_item" in tex
+    assert r"\begin{tabular}{ll}" in tex and r"xgb & 0.9 \\" in tex
+    assert "ignored" not in tex and r"\bibliography{manuscript-v1}" in tex

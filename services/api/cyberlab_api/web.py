@@ -207,7 +207,16 @@ def new_project_post(
             llm_token_budget=llm_token_budget,
         )
     except ValueError as exc:
-        return render(request, lab, "new_project.html", me, error=str(exc))
+        # keep what the user typed so a validation error does not wipe the form
+        form = {
+            "title": title,
+            "goal": goal,
+            "constraints": constraints,
+            "data_may_leave_host": data_may_leave_host,
+            "gpu_budget_minutes": gpu_budget_minutes,
+            "llm_token_budget": llm_token_budget,
+        }
+        return render(request, lab, "new_project.html", me, error=str(exc), form=form)
     pid = lab.create_project(me, spec)
     bg.add_task(_safe, lab.start, pid)
     return RedirectResponse(f"/projects/{pid}", status_code=303)
@@ -503,13 +512,62 @@ def download(
         if m is None:
             raise NotFoundOrForbidden(mid)
         require_project_role(s, me, m.project_id)
-        body, ext = (m.markdown, "md") if kind == "md" else (m.bibtex, "bib")
+        if kind == "tex":
+            from cyberlab_manuscript.latex import markdown_to_latex
+
+            body, ext = markdown_to_latex(m.markdown, f"manuscript-v{m.version}"), "tex"
+        elif kind == "bib":
+            body, ext = m.bibtex, "bib"
+        else:
+            body, ext = m.markdown, "md"
         name = f"manuscript-v{m.version}.{ext}"
     return Response(
         body,
         media_type="text/plain; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{name}"'},
     )
+
+
+@router.get("/manuscripts/{mid}/print", response_class=HTMLResponse)
+def print_view(
+    mid: str, me: Principal | None = Depends(web_user), lab: Lab = Depends(lab_dep)
+) -> Response:
+    """Print-ready page: the browser's 'Save as PDF' produces the PDF rendering (FR-009)."""
+    if me is None:
+        return _login_redirect()
+    with lab.db.session() as s:
+        m = s.get(ManuscriptRecord, mid)
+        if m is None:
+            raise NotFoundOrForbidden(mid)
+        require_project_role(s, me, m.project_id)
+        keys = [
+            c.key
+            for c in s.scalars(
+                select(CitationRecord).where(
+                    CitationRecord.project_id == m.project_id, CitationRecord.status == "Verified"
+                )
+            )
+        ]
+        html, _ = render_manuscript(m.markdown, keys)
+        version = m.version
+    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Manuscript v{version}</title>
+<style>
+body{{font-family:Georgia,'Times New Roman',serif;max-width:46rem;margin:2rem auto;padding:0 1rem;
+line-height:1.5;color:#111;background:#fff}}
+h1{{font-size:1.6rem}} h2{{font-size:1.25rem;margin-top:1.6rem}} h3{{font-size:1.05rem}}
+table{{border-collapse:collapse;width:100%;font-size:.85rem;margin:.8rem 0}}
+th,td{{border-bottom:1px solid #bbb;padding:.25rem .4rem;text-align:left}}
+blockquote{{color:#555;border-left:3px solid #ccc;margin:0;padding-left:.8rem}}
+.bar{{font-family:system-ui,sans-serif;margin-bottom:1rem}}
+@media print{{.bar{{display:none}} body{{margin:0;max-width:none}} h2{{break-after:avoid}}
+table,tr{{break-inside:avoid}}}}
+</style></head><body>
+<div class="bar"><button onclick="window.print()">Save as PDF</button>
+<a href="javascript:history.back()">Back</a></div>
+{html}
+</body></html>"""
+    return HTMLResponse(page)
 
 
 @router.get("/admin", response_class=HTMLResponse)

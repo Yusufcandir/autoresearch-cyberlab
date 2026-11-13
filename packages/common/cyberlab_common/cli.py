@@ -101,9 +101,32 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("gemini-models", help="list Gemini models your API key can use")
     p.set_defaults(func=_gemini_models)
 
+    p = sub.add_parser(
+        "restore-test", help="restore a backup into a scratch folder and verify its evidence"
+    )
+    p.add_argument("backup", nargs="?", help="backup .tar.gz (default: the newest one)")
+    p.set_defaults(func=_restore_test)
+
     args = parser.parse_args(argv)
     result: int = args.func(args)
     return result
+
+
+def _restore_test(args: argparse.Namespace) -> int:
+    from cyberlab_common.restore import verify_backup
+
+    if args.backup:
+        tarball = Path(args.backup)
+    else:
+        backups = Settings().data_dir / "backups"
+        found = sorted(backups.glob("cyberlab-*.tar.gz"))
+        if not found:
+            print(f"no backups in {backups}; run scripts/backup.sh first")
+            return 1
+        tarball = found[-1]
+    report = verify_backup(tarball)
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
 
 
 def _db() -> Any:
