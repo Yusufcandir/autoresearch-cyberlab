@@ -115,6 +115,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.set_defaults(func=_plugin_selftest)
 
+    p = sub.add_parser(
+        "migrate-db", help="copy every table from DATABASE_URL into another (empty) database"
+    )
+    p.add_argument(
+        "target", help="target URL, e.g. postgresql+psycopg://cyberlab:PW@127.0.0.1:5433/cyberlab"
+    )
+    p.set_defaults(func=_migrate_db)
+
     args = parser.parse_args(argv)
     result: int = args.func(args)
     return result
@@ -192,6 +200,20 @@ def _plugin_selftest(args: argparse.Namespace) -> int:
     print(json.dumps(results, indent=2))
     ok = all(v for k, v in results.items() if isinstance(v, bool))
     return 0 if ok else 1
+
+
+def _migrate_db(args: argparse.Namespace) -> int:
+    from cyberlab_common.migrate import copy_database
+
+    url = Settings().database_url
+    source = url.get_secret_value() if url is not None else None
+    if not source:
+        print("DATABASE_URL is not set")
+        return 1
+    counts = copy_database(source, args.target)
+    print(json.dumps(counts, indent=2))
+    print("done: now set DATABASE_URL in .env to the target and restart serve and worker")
+    return 0
 
 
 def _restore_test(args: argparse.Namespace) -> int:
