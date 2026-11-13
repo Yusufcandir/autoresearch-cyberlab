@@ -57,6 +57,13 @@ NO_LEAK = re.compile(
 )
 SCORE = re.compile(r"\b\d\.\d{4}\b")
 UNRESOLVED = ("[not reported]", "[missing evidence]", "[number removed]", "[citation needed]")
+# Prompt or template text copied literally into the paper ('95% CI [low, high], seed N').
+TEMPLATE_LEAK = re.compile(
+    r"\[low, ?high\]|\bseed N\b|\{\{|\}\}|\bMODEL:METRIC\b|\bfacts?\.[a-z_]+\b|\bKEY\d?\b",
+)
+SAME_CI = re.compile(
+    r"\bsame (?:95% )?(?:CI|confidence interval)s?\b|\bidentical (?:CI|confidence interval)", re.I
+)
 NO_RESULTS_SECTIONS = {"Introduction", "Related Work", "Methodology"}
 SKIP_SECTIONS = {"Evidence", "References"}
 
@@ -89,7 +96,8 @@ def prose_items(body: str) -> list[tuple[str, str]]:
         ctx = intro if is_item else ""
         if not is_item:
             intro = para
-        out += [(s, ctx) for s in split_sentences(para.lstrip("-*+ "))]
+        text = re.sub(r"^\s*(?:[-*+]|\d+\.)\s+", "", para) if is_item else para
+        out += [(s, ctx) for s in split_sentences(text)]
     return out
 
 
@@ -297,6 +305,32 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "refers to a fact or number that does not exist in the stored evidence",
                 )
                 continue
+            if TEMPLATE_LEAK.search(sent):
+                add(
+                    name,
+                    sent,
+                    "TEMPLATE_TEXT",
+                    "contains instruction or template text copied literally (e.g. "
+                    "'[low, high], seed N') instead of a real value",
+                )
+                continue
+            if SAME_CI.search(sent):
+                named = list(dict.fromkeys(n for _, n in mentions(f"{ctx} {sent}", known)))
+                cis = {
+                    n: (analysis["models"][n].get("macro_f1_ci") or {})
+                    for n in named
+                    if n in analysis.get("models", {})
+                }
+                spans = {(c.get("low"), c.get("high")) for c in cis.values() if c}
+                if len(named) >= 2 and len(spans) > 1:
+                    add(
+                        name,
+                        sent,
+                        "CI_MISREAD",
+                        "says two models have the same confidence interval, but the stored "
+                        "intervals differ",
+                    )
+                    continue
             if name in NO_RESULTS_SECTIONS and SCORE.search(sent):
                 add(
                     name,
@@ -432,7 +466,9 @@ GAP_CLAIM = re.compile(
     re.I,
 )
 CI_ACROSS_SEEDS = re.compile(
-    r"\b(?:CI|confidence interval)s?\b.{0,160}?\b(across|over|between) (?:\w+ ){0,2}seeds\b", re.I
+    r"\b(?:CI|confidence interval)s?\b.{0,160}?\b(across|over|between) (?:\w+ ){0,2}"
+    r"(seeds|classes)\b",
+    re.I,
 )
 GAP_THRESHOLD = 0.05
 INTERNAL = re.compile(

@@ -300,3 +300,40 @@ def test_contradicts_and_group_comparisons_are_flagged() -> None:
 def test_general_advice_about_leakage_is_not_a_leakage_claim() -> None:
     md = "## Conclusion\n\nThese findings highlight the importance of considering data leakage when deploying models.\n"
     assert _codes(md) == []
+
+
+CI_ANALYSIS = {
+    **ANALYSIS_RESULTS,
+    "models": {
+        "logistic_regression": {"macro_f1_ci": {"low": 0.646, "high": 0.7116}},
+        "random_forest": {"macro_f1_ci": {"low": 0.9262, "high": 0.9874}},
+        "xgboost": {},
+        "mlp": {},
+    },
+}
+
+
+def test_template_text_and_false_same_ci_are_flagged() -> None:
+    md = "## Results\n\n- **Logistic Regression**: macro-F1 of 0.6815 with a 95% CI [low, high], seed N.\n"
+    assert [i["code"] for i in consistency_issues(md, CI_ANALYSIS)] == ["TEMPLATE_TEXT"]
+    md = (
+        "## Results\n\n- **Random Forest**: a macro-F1 of 0.9632, with the same confidence "
+        "interval as logistic regression.\n"
+    )
+    assert [i["code"] for i in consistency_issues(md, CI_ANALYSIS)] == ["CI_MISREAD"]
+    md = "## Abstract\n\nConfidence intervals highlight the variability across classes.\n"
+    assert [i["code"] for i in consistency_issues(md, CI_ANALYSIS)] == ["CI_MISREAD"]
+
+
+def test_removed_bullet_leaves_no_fragment() -> None:
+    from cyberlab_orchestrator.agents.reviewer import remove_sentences
+
+    md = "## Results\n\nSummary:\n\n- **LR**: bad text here with seed N.\n- **RF**: fine text.\n"
+    out, n = remove_sentences(md, ["**LR**: bad text here with seed N."])
+    assert n == 1 and "**LR**" not in out and "- **\n" not in out and "- **RF**: fine text." in out
+
+
+def test_double_bracket_citations_are_tidied() -> None:
+    assert tidy_prose("Alikhanov et al. [[@Alikhanov2022investigating]] found") == (
+        "Alikhanov et al. [@Alikhanov2022investigating] found"
+    )

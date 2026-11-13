@@ -224,7 +224,14 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
     if body is not None:
         prose, sep, rest = body.partition("\n### ")
         summary = results_text(analysis)
-        if summary and not re.search(r"\b\d\.\d{4}\b", prose):
+        from cyberlab_manuscript.consistency import mentions
+
+        known = list(analysis.get("models", {}))
+        reported = (
+            {n for _, n in mentions(prose, known)} if re.search(r"\d\.\d{4}", prose) else set()
+        )
+        # a model whose result line was removed (or never written) gets the evidence summary
+        if summary and not set(known) <= reported:
             new_prose = (prose.strip() + "\n\n" + summary).strip()
             markdown = markdown.replace(body, f"\n\n{new_prose}\n{sep}{rest}", 1)
             added.append("Results")

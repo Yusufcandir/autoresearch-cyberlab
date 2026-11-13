@@ -287,6 +287,8 @@ def tidy_prose(text: str) -> str:
     )
     # "([@Key])" -> "[@Key]"
     text = re.sub(r"\((\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\])\)", r"\1", text)
+    # "[[@Key]]" (writer wrapped the placeholder in brackets) -> "[@Key]"
+    text = re.sub(r"\[(\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\])\]", r"\1", text)
     # "we test H1 (supported)" should not reveal the result: drop it after test verbs.
     return re.sub(
         r"\b(test(?:s|ed|ing)?|evaluat(?:e|es|ed|ing)|examin(?:e|es|ed|ing))(\s+(?:whether\s+)?)"
