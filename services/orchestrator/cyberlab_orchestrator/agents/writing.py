@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, audit
+from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, ProtocolVersion, audit
 from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_orchestrator.context import LabContext
@@ -16,16 +16,87 @@ from cyberlab_schemas import ResearchSpec
 MAX_REVISIONS = 1
 
 SYSTEM = (
-    "You are a scientific writing agent drafting an intrusion-detection paper. NEVER write a "
-    "numeric result yourself. Use placeholders only: {{metric:MODEL:METRIC}} (METRIC in macro_f1, "
-    "accuracy, balanced_accuracy, mcc, false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}}, "
-    "{{hyp:H1}}, and {{cite:KEY}} with KEY from the allowed citation keys. Results tables are added "
-    "automatically. In related_work, discuss and cite EVERY allowed citation key at least once "
-    "using {{cite:KEY}} (cite only keys from the allowed list). Be precise and modest; mention "
-    "CIC-IDS2017 limitations. Output JSON with keys "
-    "abstract, introduction, related_work, methodology, results, discussion, limitations, "
-    "conclusion (markdown strings)."
+    "You are a scientific writing agent drafting an intrusion-detection paper. Rules, strictly:\n"
+    "1. NEVER type a number yourself (no percentages, counts, scores or sizes). Use only "
+    "placeholders: {{metric:MODEL:METRIC}} (METRIC in macro_f1, accuracy, balanced_accuracy, mcc, "
+    "false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}}, {{fact:NAME}} for any method "
+    "detail listed under 'facts', and {{hyp:H1}} which renders as e.g. 'H1 (supported)'. MODEL must "
+    "be a real model name from 'models'.\n"
+    "2. Describe the method ONLY with what is in 'method_facts' and 'facts'. Do not invent "
+    "procedures (cross-validation, per-seed splits, tuning) that are not listed.\n"
+    "3. Do not claim comparisons that were not run. There was NO experiment on non-deduplicated "
+    "data, so do not say that de-duplication changed or lowered the scores.\n"
+    "4. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'. Say about a "
+    "paper only what its title and abstract support. In related_work, cite every paper at least once.\n"
+    "5. Be precise and modest; mention CIC-IDS2017 limitations.\n"
+    "Output JSON with keys abstract, introduction, related_work, methodology, results, "
+    "discussion, limitations, conclusion (markdown strings)."
 )
+
+
+def method_facts(
+    ctx: LabContext, pid: str, analysis: dict[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Deterministic, true statements about how the study was run (no LLM involved)."""
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid,
+                ProtocolVersion.version == analysis["protocol_version"],
+            )
+        )
+        body: dict[str, Any] = pv.body if pv else {}
+    notes_path = ctx.settings.dataset_root / "cicids2017" / "prepared" / "preprocessing_notes.json"
+    notes = json.loads(notes_path.read_text()) if notes_path.exists() else {}
+    ds = analysis.get("dataset") or {}
+    split = body.get("split", {})
+    seeds = body.get("seeds", [])
+    first: dict[str, Any] = next(iter(analysis.get("models", {}).values()), {})
+    ci = first.get("macro_f1_ci", {})
+    facts: dict[str, Any] = {
+        "n_seeds": len(seeds),
+        "seeds": ", ".join(str(x) for x in seeds),
+        "split_seed": split.get("seed"),
+        "test_percent": f"{round(100 * float(split.get('test_fraction', 0)))}%",
+        "val_percent": f"{round(100 * float(split.get('val_fraction', 0)))}%",
+        "rows_raw": f"{ds.get('n_rows_raw', 0):,}",
+        "rows_clean": f"{ds.get('n_rows_clean', 0):,}",
+        "rows_removed_duplicates_or_conflicts": f"{ds.get('n_duplicates_removed', 0):,}",
+        "rows_dropped_inf_nan": f"{notes.get('rows_with_inf_or_nan_dropped', 0):,}",
+        "benign_cap": f"{notes.get('benign_cap') or 0:,}",
+        "n_features": len(ds.get("features", [])),
+        "n_classes": len(ds.get("class_counts", {})),
+        "test_rows": f"{ds.get('split_counts', {}).get('test', 0):,}",
+        "train_rows": f"{ds.get('split_counts', {}).get('train', 0):,}",
+        "bootstrap_resamples": ci.get("n_boot", 500),
+        "ci_seed": first.get("ci_seed"),
+        "ci_level": "95%",
+    }
+    prose = [
+        "Rows with infinite or missing feature values were removed.",
+        "Exact duplicate rows (same features and label) were removed, and feature vectors that "
+        "appeared with conflicting labels were removed entirely.",
+        "Constant features and the duplicated Fwd Header Length column were dropped.",
+        "Fine-grained labels were grouped into classes: BENIGN, DoS, DDoS, PortScan, BruteForce "
+        "(FTP/SSH-Patator), WebAttack, Bot, and Rare (Infiltration and Heartbleed).",
+        "BENIGN rows were randomly down-sampled to the cap given in facts.benign_cap.",
+        "One stratified train/validation/test split was made with a single fixed seed "
+        "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "
+        "No test row also appears in training.",
+        "The model seeds (facts.seeds) change only the randomness of model training, not the split.",
+        "Every model was trained on the training split and evaluated once on the test split; no "
+        "hyper-parameter tuning was performed (fixed, documented defaults).",
+        "Metrics are reported as mean and standard deviation over the model seeds.",
+        "Confidence intervals are percentile bootstrap intervals over test rows, stratified by "
+        "class, computed on the first seed's predictions (facts.ci_seed).",
+        "Hypotheses were tested with an exact McNemar test on per-row correctness of two models "
+        "over the same test rows (first seed).",
+        "All metrics were recomputed from stored per-row predictions; numbers in the paper are "
+        "inserted from these stored results.",
+    ]
+    for name, m in analysis.get("models", {}).items():
+        prose.append(f"Model '{name}' uses the '{m.get('template')}' template ({m.get('role')}).")
+    return facts, prose
 
 
 def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
@@ -44,10 +115,14 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 "authors": c.authors,
                 "year": c.year,
                 "venue": c.venue,
+                "abstract": c.abstract,
             }
             for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))
         }
     verified_keys = [k for k, c in cites.items() if c["status"] == "Verified"]
+    analysis["artifact_sha256"] = state["analysis_sha256"]
+    facts, prose = method_facts(ctx, pid, analysis)
+    analysis["facts"] = facts
     context = {
         "title": spec.title,
         "goal": spec.goal,
@@ -55,7 +130,16 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "hypotheses": [
             {"id": h["id"], "statement": h["statement"]} for h in analysis["hypotheses"]
         ],
-        "allowed_citation_keys": {k: cites[k]["title"] for k in verified_keys},
+        "papers": {
+            k: {
+                "title": cites[k]["title"],
+                "year": cites[k]["year"],
+                "abstract": (cites[k].get("abstract") or "")[:900],
+            }
+            for k in verified_keys
+        },
+        "facts": facts,
+        "method_facts": prose,
         "dataset": {k: analysis["dataset"].get(k) for k in ("name", "license")}
         if analysis.get("dataset")
         else {},

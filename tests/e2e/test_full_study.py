@@ -103,3 +103,30 @@ def outsider_as_member(lab: Lab, pid: str, outsider: Principal) -> Principal:
     with lab.db.session() as s:
         add_member(s, pid, outsider.id, "reviewer")
     return outsider
+
+
+def test_redraft_rewrites_from_stored_results(lab: Lab) -> None:
+    pi, _ = _users(lab)
+    pid = lab.create_project(pi, SPEC)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D"
+    with lab.db.session() as s:
+        before = len(
+            list(s.scalars(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid)))
+        )
+        runs = len(list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid))))
+    status = lab.redraft(pi, pid)
+    assert status["pending"]["gate"] == "D"
+    with lab.db.session() as s:
+        after = len(
+            list(s.scalars(select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid)))
+        )
+        assert len(list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))) == runs
+    assert after == before + 1

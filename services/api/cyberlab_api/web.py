@@ -417,6 +417,24 @@ def pause_post(
     return RedirectResponse(f"/projects/{pid}", status_code=303)
 
 
+@router.post("/projects/{pid}/redraft")
+def redraft_post(
+    pid: str,
+    request: Request,
+    bg: BackgroundTasks,
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    with lab.db.session() as s:
+        require_project_role(s, me, pid, "researcher")
+    bg.add_task(_safe, lab.redraft, me, pid)
+    return RedirectResponse(f"/projects/{pid}#manuscript", status_code=303)
+
+
 @router.post("/projects/{pid}/retry")
 def retry_post(
     pid: str,

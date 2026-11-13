@@ -19,9 +19,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-PLACEHOLDER = re.compile(r"\{\{(metric|ci|hyp|cite):([^}]+)\}\}")
+PLACEHOLDER = re.compile(r"\{\{(metric|ci|hyp|cite|fact):([^}]+)\}\}")
 NUMBER = re.compile(r"(?<![\w.\[{:])(\d+\.\d+|\d{2,}(?:\.\d+)?%?)(?![\w}])")
 ALLOWED_PLAIN_NUMBERS = {
+    "95%",  # confidence level of every interval reported by the platform
+    "95",
     "2017",
     "2018",
     "2019",
@@ -74,14 +76,36 @@ def render_text(
     def sub(m: re.Match[str]) -> str:
         kind, arg = m.group(1), m.group(2).strip()
         if kind == "cite":
-            c = citations.get(arg)
-            if c and c.get("status") == "Verified":
-                report.resolved.append(
-                    {"placeholder": m.group(0), "status": "Verified", "doi": c.get("doi")}
-                )
-                return f"[@{arg}]"
-            report.flag(sev, "UNVERIFIED_CITATION", f"{section}: citation {arg!r} is not verified")
+            # Writers often group citations: {{cite:A, B}} or {{cite:A; B}}.
+            keys = [k.strip() for k in re.split(r"[,;\s]+", arg) if k.strip()]
+            good: list[str] = []
+            for key in keys:
+                c = citations.get(key)
+                if c and c.get("status") == "Verified":
+                    good.append(key)
+                    report.resolved.append(
+                        {
+                            "placeholder": f"{{{{cite:{key}}}}}",
+                            "status": "Verified",
+                            "doi": c.get("doi"),
+                        }
+                    )
+                else:
+                    report.flag(
+                        sev, "UNVERIFIED_CITATION", f"{section}: citation {key!r} is not verified"
+                    )
+            if good:
+                return "[" + "; ".join(f"@{k}" for k in good) + "]"
             return "" if guardrail else "[citation needed]"
+        if kind == "fact":
+            facts = analysis.get("facts", {})
+            if arg not in facts:
+                report.flag(sev, "UNKNOWN_FACT", f"{section}: no recorded fact named {arg!r}")
+                return missing
+            report.resolved.append(
+                {"placeholder": m.group(0), "value": facts[arg], "status": "Verified"}
+            )
+            return str(facts[arg])
         if kind == "hyp":
             h = hyps.get(arg)
             if not h:
@@ -90,7 +114,7 @@ def render_text(
             report.resolved.append(
                 {"placeholder": m.group(0), "value": h["result"], "status": status}
             )
-            return str(h["result"])
+            return f"{h['id']} ({h['result']})"
         try:
             model, metric = (x.strip() for x in arg.split(":"))
         except ValueError:

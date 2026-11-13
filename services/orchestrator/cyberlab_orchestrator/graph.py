@@ -55,6 +55,7 @@ class LabState(TypedDict, total=False):
     interpretation: dict[str, Any]
     manuscript_version: int
     evidence_blockers: list[dict[str, str]]
+    needs_revision: bool
     review: dict[str, Any]
     review_feedback: list[str]
     revisions: int
@@ -232,7 +233,9 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     g.add_edge("writing", "reviewer")
 
     def after_review(s: LabState) -> str:
-        if s.get("evidence_blockers") and s.get("revisions", 0) < MAX_REVISIONS:
+        if (s.get("evidence_blockers") or s.get("needs_revision")) and s.get(
+            "revisions", 0
+        ) < MAX_REVISIONS:
             return "revise"
         return "gate_d"
 

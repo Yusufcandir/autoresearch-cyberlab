@@ -97,6 +97,8 @@ def offline_responder(task: str, system: str, prompt: str) -> str:
         models = ctx.get("models") or ["xgboost"]
         best = "xgboost" if "xgboost" in models else models[0]
         return json.dumps({k: v.replace("BEST", best) for k, v in _SECTIONS.items()})
+    if task == "reviewer.claim_check":
+        return json.dumps({"citations": [], "unsupported_claims": []})
     if task == "reviewer.review":
         return json.dumps(
             {

@@ -247,6 +247,26 @@ class Lab:
             )
         return self._invoke(project_id, Command(resume={"released": True}))
 
+    def redraft(self, principal: Principal, project_id: str) -> dict[str, Any]:
+        """Write the paper again from the stored analysis (e.g. after the writer improved).
+
+        Experiments and statistics are not repeated; the workflow jumps back to the writer.
+        """
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "researcher")
+            if p.stage == "released":
+                raise GateError("this manuscript was already released")
+            audit(s, principal.username, "manuscript.redraft_requested", project_id)
+        state = self.graph.get_state(self._config(project_id))
+        if not state.values.get("analysis_sha256"):
+            raise GateError("there are no analysed results to write about yet")
+        self.graph.update_state(
+            self._config(project_id),
+            {"revisions": 0, "review_feedback": [], "needs_revision": False},
+            as_node="statistics",
+        )
+        return self._invoke(project_id, None)
+
     def pause(self, principal: Principal, project_id: str, paused: bool) -> None:
         with self.db.session() as s:
             p = require_project_role(s, principal, project_id, "researcher")

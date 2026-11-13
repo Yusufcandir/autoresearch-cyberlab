@@ -227,3 +227,32 @@ def test_fast_bootstrap_macro_f1_matches_sklearn() -> None:
     p = np.where(rng.random(2000) < 0.2, rng.integers(0, 5, 2000), y)
     cm = np.bincount(y * 5 + p, minlength=25).reshape(5, 5)
     assert abs(_macro_f1_cm(cm) - f1_score(y, p, average="macro")) < 1e-12
+
+
+def test_grouped_citations_facts_and_hypothesis_rendering() -> None:
+    analysis = {
+        "models": {},
+        "hypotheses": [{"id": "H1", "result": "supported"}],
+        "metrics_recomputed_match": True,
+        "facts": {"n_seeds": 3, "test_percent": "20%"},
+    }
+    cites = {"A": {"status": "Verified"}, "B": {"status": "Verified"}}
+    rep = EvidenceReport()
+    out = render_text(
+        "We used {{fact:n_seeds}} seeds and a {{fact:test_percent}} test split with 95% CIs "
+        "{{cite:A, B}}; {{hyp:H1}}.",
+        analysis,
+        cites,
+        rep,
+        "methodology",
+    )
+    assert out == "We used 3 seeds and a 20% test split with 95% CIs [@A; @B]; H1 (supported)."
+    assert not rep.flags
+
+
+def test_reviewer_extracts_citing_sentences() -> None:
+    from cyberlab_orchestrator.agents.reviewer import citing_sentences
+
+    md = "## Intro\n\nFirst claim [@A]. No cite here. Second [@A; @B].\n\n## References\n\n- [A] x"
+    got = citing_sentences(md)
+    assert [g["keys"] for g in got] == [["A"], ["A", "B"]]

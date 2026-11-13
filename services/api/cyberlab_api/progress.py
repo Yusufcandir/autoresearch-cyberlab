@@ -228,7 +228,7 @@ def render_manuscript(markdown: str, keys_in_order: list[str]) -> tuple[str, dic
     for line in markdown.splitlines():
         if line.startswith("## "):
             section = line[3:].strip()
-        for key in re.findall(r"\[@([A-Za-z0-9_]+)\]", line):
+        for key in re.findall(r"@([A-Za-z0-9_]+)", " ".join(re.findall(r"\[@[^\]]+\]", line))):
             if section not in cited_in.setdefault(key, []):
                 cited_in[key].append(section)
     numbers = {k: i + 1 for i, k in enumerate(keys_in_order)}
@@ -239,7 +239,14 @@ def render_manuscript(markdown: str, keys_in_order: list[str]) -> tuple[str, dic
         n = numbers.get(key, "?")
         return f'<a class="cite" href="#ref-{key}" title="{key}">[{n}]</a>'
 
-    html = re.sub(r"\[@([A-Za-z0-9_]+)\]", cite, html)
+    def cite_group(m: re.Match[str]) -> str:
+        keys = re.findall(r"@([A-Za-z0-9_]+)", m.group(0))
+        links = ", ".join(
+            f'<a class="cite" href="#ref-{k}" title="{k}">{numbers.get(k, "?")}</a>' for k in keys
+        )
+        return f"<sup>[{links}]</sup>"
+
+    html = re.sub(r"\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\]", cite_group, html)
     for token, cls in (
         ("[number removed]", "flag"),
         ("[citation needed]", "flag"),
