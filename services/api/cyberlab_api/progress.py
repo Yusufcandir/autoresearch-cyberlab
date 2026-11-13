@@ -64,6 +64,7 @@ STEPS: list[tuple[str, str, str]] = [
 ]
 LABEL = {k: v for k, v, _ in STEPS}
 LABEL.update({"experiment": "Experiments", "wait_jobs": "Experiments", "check_runs": "Experiments"})
+_ORDER = [k for k, _, _ in STEPS]
 _ALIAS = {"experiment": "experiments", "wait_jobs": "experiments", "check_runs": "experiments"}
 
 
@@ -92,12 +93,24 @@ def build_progress(
     """Return the step list and a one-line 'what is happening now' message."""
     finished: set[str] = set()
     open_steps: dict[str, datetime] = {}
+    drafts = 0
+    rewriting = False
     failed: dict[str, str] = {}
     for e in sorted(events, key=lambda e: e.id):
         step = _ALIAS.get(str(e.detail.get("step", "")), str(e.detail.get("step", "")))
         if e.action == "agent.started":
             open_steps[step] = e.ts
             failed.pop(step, None)
+            # A step running again (revision, rewrite) rolls back it and everything after it.
+            if step in _ORDER:
+                for later in _ORDER[_ORDER.index(step) :]:
+                    finished.discard(later)
+                if step in ("writing", "reviewer"):
+                    drafts += 1
+        elif e.action == "manuscript.redraft_requested":
+            rewriting = True
+            for later in _ORDER[_ORDER.index("writing") :]:
+                finished.discard(later)
         elif e.action == "agent.finished":
             if step != "experiments":  # experiments are done when all jobs are, not when submitted
                 finished.add(step)
@@ -140,6 +153,19 @@ def build_progress(
             since = (
                 open_steps[key] if open_steps[key].tzinfo else open_steps[key].replace(tzinfo=UTC)
             )
+            if key == "writing" and (rewriting or drafts > 2):
+                label, desc = (
+                    "Rewriting the draft",
+                    (
+                        "The writer is producing a new version from the same results, using the "
+                        "reviewer's and fact-checker's feedback. Experiments are not repeated."
+                    ),
+                )
+            elif key == "reviewer" and (rewriting or drafts > 2):
+                label, desc = (
+                    "Re-checking the new draft",
+                    ("The reviewer is fact-checking the rewritten draft against the evidence."),
+                )
             msg = (
                 f'{label} (<span class="elapsed" data-since="{since.isoformat()}">'
                 f"{_ago(open_steps[key])}</span> so far): {desc}"
@@ -190,6 +216,7 @@ _FRIENDLY = {
     "budget.threshold_reached": "Compute budget reached",
     "project.paused": "Study paused",
     "project.resumed": "Study resumed",
+    "manuscript.redraft_requested": "Rewrite of the draft requested",
 }
 
 

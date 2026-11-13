@@ -267,6 +267,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 <!-- ============================== MANUSCRIPT -->
 <section class="panel" id="tab-manuscript"><div class="card">
 <h2>Manuscript</h2>
+{% if stmap.get('writing') == 'running' or stmap.get('reviewer') == 'running' %}<div class="titem" style="margin-bottom:14px;border-color:color-mix(in srgb,var(--running) 40%,var(--line))"><span class="spinner"></span><div><b>{% if stmap.get('writing') == 'running' %}A new draft is being written{% else %}The new draft is being fact-checked{% endif %}</b><div class="muted">You are looking at the previous version below. The page will switch to the new draft by itself when it is ready.</div></div></div>{% endif %}
 {% if manuscripts %}{% set ms = manuscripts[0] %}
 <div class="chips" style="margin-bottom:14px"><span class="chip">Draft <b>v{{ ms.version }}</b></span><span class="chip">Status <b>{{ ms.status }}</b></span>
   {% if ms.evidence_report.release_ready %}<span class="pill good">✓ evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}

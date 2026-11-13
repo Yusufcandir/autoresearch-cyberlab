@@ -256,3 +256,30 @@ def test_reviewer_extracts_citing_sentences() -> None:
     md = "## Intro\n\nFirst claim [@A]. No cite here. Second [@A; @B].\n\n## References\n\n- [A] x"
     got = citing_sentences(md)
     assert [g["keys"] for g in got] == [["A"], ["A", "B"]]
+
+
+def test_tracker_rolls_back_when_writing_restarts() -> None:
+    from datetime import UTC, datetime
+
+    from cyberlab_api.progress import build_progress
+    from cyberlab_common.db import AuditEvent
+
+    def ev(i: int, action: str, step: str = "") -> AuditEvent:
+        return AuditEvent(
+            id=i,
+            ts=datetime.now(UTC),
+            actor="x",
+            action=action,
+            detail={"step": step} if step else {},
+        )
+
+    events = [ev(1, "protocol.approved")]
+    for i, st in enumerate(["statistics", "writing", "reviewer"], start=2):
+        events += [ev(i * 10, "agent.started", st), ev(i * 10 + 1, "agent.finished", st)]
+    events += [ev(100, "manuscript.redraft_requested"), ev(101, "agent.started", "writing")]
+    steps, now = build_progress(events, "drafted", None, [])
+    state = {s.key: s.state for s in steps}
+    assert state["statistics"] == "done"
+    assert state["writing"] == "running"
+    assert state["reviewer"] == "todo"
+    assert "Rewriting the draft" in now
