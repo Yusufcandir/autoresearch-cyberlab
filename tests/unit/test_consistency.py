@@ -272,3 +272,15 @@ def test_empty_results_prose_gets_an_evidence_summary() -> None:
     out, added = ensure_findings(md, GAP_ANALYSIS)
     assert "Results" in added and "logistic regression reached a macro-F1 of 0.6800" in out
     assert out.index("reached a macro-F1") < out.index("### Main results")
+
+
+def test_verdict_contradicted_after_the_rendered_result() -> None:
+    assert _codes("## Discussion\n\nHowever, H2 (supported) is not supported.\n") == [
+        "HYP_CONTRADICTION"
+    ]
+    assert _codes(
+        "## Conclusion\n\nThe test of random forest (H2, supported) is not supported.\n"
+    ) == ["HYP_CONTRADICTION"]
+    md = "## Discussion\n\nThere is no significant difference between random forest and logistic regression.\n"
+    assert _codes(md) == ["HYP_CONTRADICTION"]
+    assert _codes("## Discussion\n\nH2 (supported) is supported by the data.\n") == []

@@ -200,7 +200,15 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
     added = []
     for name in ("Abstract", "Conclusion"):
         body = bodies.get(name)
-        if body is None or re.search(r"\bH\d+\b|\b\d\.\d{4}\b", body):
+        if body is None:
+            continue
+        hyp_ids = [h["id"] for h in analysis.get("hypotheses", []) if h.get("id")]
+        complete = (
+            all(re.search(rf"\b{h}\b", body) for h in hyp_ids)
+            if hyp_ids
+            else bool(re.search(r"\b\d\.\d{4}\b", body))
+        )
+        if complete:  # every hypothesis is already reported here
             continue
         sents = split_sentences(" ".join(body.split()))
         # findings go before a closing 'Future work ...' sentence, otherwise at the end

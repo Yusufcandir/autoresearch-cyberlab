@@ -32,7 +32,7 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
 COMPARE = re.compile(
     r"\b(outperform\w*|better than|worse than|superior|inferior|surpass\w*|exceed\w*|"
     r"beat\w*|comparabl\w*|on par|similar(?:ly)? to|(?:higher|lower|greater) (?:\S+ ){0,2}than|"
-    r"advantage over|edge over)\b",
+    r"advantage over|edge over|improvement over|gain over)\b",
     re.I,
 )
 SUPERIORITY = re.compile(
@@ -200,21 +200,58 @@ def claimed_verdicts(sentence: str) -> list[tuple[str, bool]]:
     return out
 
 
+RENDERED_HYP = re.compile(
+    r"\b(?P<id>H\d+) \((?P<r>supported|not supported)\)|\((?P<id2>H\d+), (?P<r2>supported|not supported)\)"
+)
+_AFTER_NEG = re.compile(
+    r"\s*\)?\s*(?:is|was|were|has been|remains?)\s+(?:also\s+)?"
+    r"(?:not\b|rejected|unsupported|refuted|not confirmed)",
+    re.I,
+)
+_AFTER_POS = re.compile(
+    r"\s*\)?\s*(?:is|was|were|has been)\s+(?:also\s+)?(?:supported|confirmed)", re.I
+)
+
+
 def _hyp_contradiction(sentence: str) -> bool:
-    for m in re.finditer(r"(H\d+) \((supported|not supported)\)", sentence):
+    """A rendered verdict ('H2 (supported)' or '(H2, supported)') that the surrounding words
+    contradict: 'but not H2 (supported)', 'H2 (supported) is not supported'."""
+    for m in RENDERED_HYP.finditer(sentence):
+        result = m.group("r") or m.group("r2")
         before = sentence[max(0, m.start() - 40) : m.start()]
+        after = sentence[m.end() : m.end() + 40]
         # look only at the clause right before the hypothesis
         clause = re.split(r"[,;]|\b(?:but|and|while|whereas)\b", before)[-1]
         negated = bool(NEGATION.search(clause))
-        if m.group(2) == "supported" and negated:
+        if result == "supported" and (negated or _AFTER_NEG.match(after)):
             return True
-        if (
-            m.group(2) == "not supported"
-            and re.search(r"\bsupport\w*\b", clause, re.I)
-            and not negated
+        if result == "not supported" and (
+            (re.search(r"\bsupport\w*\b", clause, re.I) and not negated) or _AFTER_POS.match(after)
         ):
             return True
     return False
+
+
+NO_DIFF = re.compile(
+    r"\bno (?:statistically )?(?:significant |meaningful |clear )?"
+    r"(?:difference|improvement|advantage|gain)s?\b",
+    re.I,
+)
+
+
+def no_difference_contradiction(
+    sentence: str, known: list[str], hyps: list[dict[str, Any]]
+) -> str | None:
+    """'no significant difference between random forest and logistic regression' when the test
+    of that pair was supported."""
+    m = NO_DIFF.search(sentence)
+    if not m:
+        return None
+    named = {n for _, n in mentions(sentence, known)}
+    for h in hyps:
+        if h.get("result") == "supported" and {h.get("a"), h.get("b")} <= named:
+            return f"claims no difference, but {h['id']} found {h['a']} > {h['b']} (supported)"
+    return None
 
 
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
@@ -321,7 +358,9 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
             if name == "Related Work" or "[@" in sent:
                 continue  # statements about other papers are checked against their abstracts
             mentioned = [n for _, n in mentions(f"{ctx} {sent}", known)]
-            contradiction = comparison_contradiction(sent, known, hyps)
+            contradiction = comparison_contradiction(
+                sent, known, hyps
+            ) or no_difference_contradiction(sent, known, hyps)
             if contradiction:
                 add(name, sent, "HYP_CONTRADICTION", contradiction)
                 continue
