@@ -59,6 +59,9 @@ packages = [
     "services/manuscript_builder/cyberlab_manuscript",
     "services/orchestrator/cyberlab_orchestrator",
     "plugins/text_tabular/cyberlab_tabular",
+    "plugins/audio_multimodal/cyberlab_audio",
+    "plugins/graph_policy/cyberlab_graph",
+    "plugins/code_artifact/cyberlab_code",
 ]
 
 [tool.ruff]

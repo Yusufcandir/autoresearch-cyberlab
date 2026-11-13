@@ -107,9 +107,91 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("backup", nargs="?", help="backup .tar.gz (default: the newest one)")
     p.set_defaults(func=_restore_test)
 
+    p = sub.add_parser(
+        "plugin-selftest", help="run every capability plugin on its synthetic fixture (AT-16..19)"
+    )
+    p.add_argument(
+        "--docker", action="store_true", help="also run the amended code's tests in Docker"
+    )
+    p.set_defaults(func=_plugin_selftest)
+
     args = parser.parse_args(argv)
     result: int = args.func(args)
     return result
+
+
+def _plugin_selftest(args: argparse.Namespace) -> int:
+    import tempfile
+
+    from cyberlab_schemas.plugins import PluginError, list_capabilities
+
+    results: dict[str, Any] = {"plugins": [c.name for c in list_capabilities()]}
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        from cyberlab_tabular.text import TextAdapter
+        from cyberlab_tabular.text import fixture as text_fixture
+
+        results["text"] = TextAdapter().validate_dataset(text_fixture())["ok"]
+        from cyberlab_audio import AudioAdapter
+        from cyberlab_audio import write_fixture as audio_fixture
+
+        results["audio"] = AudioAdapter().validate_dataset(audio_fixture(root / "audio"))["ok"]
+        from cyberlab_graph import GraphAdapter, decide
+        from cyberlab_graph import fixture as graph_fixture
+
+        results["graph"] = GraphAdapter().validate_dataset(graph_fixture())["ok"]
+        policy = {
+            "version": "1",
+            "statements": [
+                {
+                    "sid": "deny-all",
+                    "effect": "deny",
+                    "principals": ["*"],
+                    "actions": ["*"],
+                    "resources": ["*"],
+                }
+            ],
+        }
+        d = decide(
+            policy,
+            {"principal": "user:alice", "action": "read", "resource": "x"},
+            graph_fixture(),
+            model_score=0.0,
+        )
+        results["policy_deny_kept_despite_safe_score"] = d.effect == "deny"
+        from cyberlab_code import amend, extract_metadata
+        from cyberlab_code import write_fixture as code_fixture
+        from cyberlab_code.metadata import make_sdist_fixture
+
+        canary = root / "EXECUTED"
+        meta = extract_metadata(make_sdist_fixture(root / "demo.tar.gz", canary=canary))
+        results["metadata_read_without_execution"] = meta["name"] == "demo" and not canary.exists()
+        diff = (
+            "--- a/src/calc.py\n+++ b/src/calc.py\n@@ -1,2 +1,2 @@\n def mean(values):\n"
+            "-    return sum(values) / (len(values) + 1)\n+    return sum(values) / len(values)\n"
+        )
+        runner = None
+        if args.docker:
+            if not Settings().allow_restricted_execution:
+                print("--docker needs ALLOW_RESTRICTED_EXECUTION=true in .env (spec 11.3)")
+                return 1
+            from cyberlab_code import docker_test_runner
+
+            runner = docker_test_runner()
+        try:
+            receipt = amend(
+                code_fixture(root / "snap"), diff, ["src/*.py"], root, test_runner=runner
+            )
+            results["amendment"] = {
+                "status": receipt["status"],
+                "functional_tests": receipt["functional_tests"].get("status"),
+                "tests_passed": receipt["functional_tests"].get("passed"),
+            }
+        except (PluginError, OSError) as exc:
+            results["amendment"] = {"error": str(exc)}
+    print(json.dumps(results, indent=2))
+    ok = all(v for k, v in results.items() if isinstance(v, bool))
+    return 0 if ok else 1
 
 
 def _restore_test(args: argparse.Namespace) -> int:
