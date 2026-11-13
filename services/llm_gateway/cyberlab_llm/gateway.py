@@ -68,6 +68,17 @@ class LLMResult:
         return parse_json(self.text)
 
 
+def as_list(value: Any) -> list[Any]:
+    """Normalise an LLM field that should be a list (models sometimes return a string)."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return list(value.values())
+    return [value]
+
+
 def parse_json(text: str) -> Any:
     """Parse JSON from a model reply, tolerating ```json fences and leading prose."""
     t = text.strip()

@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import select
 
 from cyberlab_common.db import ManuscriptRecord, audit
+from cyberlab_llm.gateway import as_list
 from cyberlab_orchestrator.context import LabContext
 
 DIMENSIONS = [
@@ -56,8 +57,8 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             pid,
             {"version": version, "blockers": len(blockers)},
         )
-    feedback = [f["message"] for f in blockers] + [str(x) for x in review.get("major_issues", [])][
-        :5
-    ]
+    feedback = [f["message"] for f in blockers] + [
+        str(x) for x in as_list(review.get("major_issues"))
+    ][:5]
     ctx.set_stage(pid, "reviewed", "Unverified" if blockers else "Measured")
     return {"review": review, "review_feedback": feedback, "revisions": state.get("revisions", 0)}

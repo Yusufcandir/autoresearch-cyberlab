@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from cyberlab_llm.gateway import as_list
 from cyberlab_orchestrator.context import LabContext
 
 SYSTEM = (
@@ -23,6 +24,8 @@ def gap_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         f"Literature summary:\n{state.get('literature_summary', '')}\n\nPlan: {state.get('plan', {})}",
         project_id=pid,
     )
+    for key in ("gaps", "novelty_caveats"):
+        result[key] = as_list(result.get(key))
     with ctx.db.session() as s:
         ctx.note(s, pid, "research_gap", "gaps", {**result, "label": "Proposed"})
     ctx.set_stage(pid, "gaps_proposed", "Proposed")

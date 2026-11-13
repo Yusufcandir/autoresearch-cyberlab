@@ -51,6 +51,27 @@ from cyberlab_schemas import ResearchSpec
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+def _aslist(value: Any) -> list[Any]:
+    """LLMs sometimes return a string or dict where a list was asked for; never iterate characters."""
+    if value is None or value == "":
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return list(value.values())
+    return [value]
+
+
+def _text(value: Any) -> str:
+    if isinstance(value, dict):
+        return "; ".join(f"{k}: {v}" for k, v in value.items())
+    return str(value)
+
+
+templates.env.filters["aslist"] = _aslist
+templates.env.filters["text"] = _text
 COOKIE = "cyberlab_session"
 
 

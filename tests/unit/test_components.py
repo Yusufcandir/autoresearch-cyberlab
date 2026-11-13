@@ -207,3 +207,10 @@ def test_broker_idempotent_submission_at10(tmp_path: Path) -> None:
     with db.session() as s:
         job = s.get(JobRecord, first)
         assert job is not None and job.state == "queued"
+
+
+def test_dashboard_list_filter_never_iterates_characters() -> None:
+    from cyberlab_api.web import _aslist
+
+    assert _aslist("CIC-IDS2017 is widely studied.") == ["CIC-IDS2017 is widely studied."]
+    assert _aslist(["a", "b"]) == ["a", "b"] and _aslist(None) == []

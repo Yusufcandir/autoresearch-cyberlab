@@ -55,12 +55,12 @@
 
 <div class="grid" id="overview">
   <div class="card"><h2>Plan <span class="label Proposed">Proposed</span></h2>
-    {% if notes.plan %}<p>{{ notes.plan.objective }}</p><h3>Search queries</h3><ul>{% for q in notes.plan.search_queries %}<li>{{ q }}</li>{% endfor %}</ul>
-    {% if notes.plan.risks %}<h3>Risks</h3><ul>{% for r in notes.plan.risks %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+    {% if notes.plan %}<p>{{ notes.plan.objective }}</p><h3>Search queries</h3><ul>{% for q in notes.plan.search_queries|aslist %}<li>{{ q|text }}</li>{% endfor %}</ul>
+    {% if notes.plan.risks %}<h3>Risks</h3><ul>{% for r in notes.plan.risks|aslist %}<li>{{ r|text }}</li>{% endfor %}</ul>{% endif %}
     {% else %}<p class="muted">The orchestrator is planning…</p>{% endif %}</div>
   <div class="card"><h2>Research gaps <span class="label Proposed">Proposed</span></h2>
-    {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps %}<li><b>{{ g.gap }}</b> {{ g.why_it_matters }}{% if g.testable_with %} <span class="muted">Testable with: {{ g.testable_with }}</span>{% endif %}</li>{% endfor %}</ul>
-    {% for c in notes.gaps.novelty_caveats or [] %}<p class="muted">Caveat: {{ c }}</p>{% endfor %}{% else %}<p class="muted">Not yet.</p>{% endif %}</div>
+    {% if notes.gaps %}<ul>{% for g in notes.gaps.gaps|aslist %}<li>{% if g is mapping %}<b>{{ g.gap|text }}</b> {{ g.why_it_matters|text }}{% if g.testable_with %} <span class="muted">Testable with: {{ g.testable_with|text }}</span>{% endif %}{% else %}{{ g|text }}{% endif %}</li>{% endfor %}</ul>
+    {% for c in notes.gaps.novelty_caveats|aslist %}<p class="muted">Caveat: {{ c|text }}</p>{% endfor %}{% else %}<p class="muted">Not yet.</p>{% endif %}</div>
 </div>
 
 <div class="card" id="literature"><h2>Literature</h2>
@@ -82,7 +82,7 @@
 {% if notes.evidence_matrix %}<h3>What the papers say <span class="label Proposed">Proposed</span></h3>
   {% if notes.evidence_matrix.summary %}<p>{{ notes.evidence_matrix.summary }}</p>{% endif %}
   {% if notes.evidence_matrix.matrix %}<table><tr><th>Paper</th><th>Method</th><th>Finding</th><th>Limitation</th></tr>
-  {% for r in notes.evidence_matrix.matrix %}<tr><td><a href="#ref-{{ r.key }}">{{ r.key }}</a></td><td>{{ r.method }}</td><td>{{ r.finding }}</td><td>{{ r.limitation }}</td></tr>{% endfor %}</table>{% endif %}
+  {% for r in notes.evidence_matrix.matrix|aslist if r is mapping %}<tr><td><a href="#ref-{{ r.key }}">{{ r.key }}</a></td><td>{{ r.method }}</td><td>{{ r.finding }}</td><td>{{ r.limitation }}</td></tr>{% endfor %}</table>{% endif %}
 {% endif %}
 {% else %}<p class="muted">The literature agent has not run yet.</p>{% endif %}</div>
 
@@ -134,7 +134,7 @@
 <td class="num">{% if a.false_positive_rate %}{{ '%.4f'|format(a.false_positive_rate.mean) }}{% endif %}</td></tr>{% endfor %}</table>
 <h3>Hypotheses</h3><ul>{% for h in analysis.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} → <b>{{ h.result }}</b>{% if h.mcnemar %} <span class="muted">(McNemar p = {{ '%.3g'|format(h.mcnemar.p_value) }})</span>{% endif %}</li>{% endfor %}</ul>
 {% if notes.interpretation %}<h3>Statistician's reading <span class="label Proposed">Proposed</span></h3><p>{{ notes.interpretation.interpretation }}</p>
-{% if notes.interpretation.caveats %}<ul>{% for c in notes.interpretation.caveats %}<li class="muted">{{ c }}</li>{% endfor %}</ul>{% endif %}{% endif %}
+{% if notes.interpretation.caveats %}<ul>{% for c in notes.interpretation.caveats|aslist %}<li class="muted">{{ c|text }}</li>{% endfor %}</ul>{% endif %}{% endif %}
 {% else %}<p class="muted">No results yet.</p>{% endif %}</div>
 
 <div class="card" id="manuscript"><h2>Manuscript</h2>
@@ -143,8 +143,8 @@
   {% if ms.evidence_report.release_ready %}<span class="label Measured">evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}
   · <a href="/manuscripts/{{ ms.id }}/download/md">Download Markdown</a> · <a href="/manuscripts/{{ ms.id }}/download/bib">Download BibTeX</a></p>
 {% if ms.review %}<details><summary>Reviewer agent: {{ ms.review.recommendation }} <span class="label Proposed">Proposed</span></summary>
-<p class="muted">{% for k, v in (ms.review.scores or {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>
-<ul>{% for i in ms.review.major_issues or [] %}<li>{{ i }}</li>{% endfor %}{% for i in ms.review.minor_issues or [] %}<li class="muted">{{ i }}</li>{% endfor %}</ul></details>{% endif %}
+<p class="muted">{% for k, v in (ms.review.scores if ms.review.scores is mapping else {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>
+<ul>{% for i in ms.review.major_issues|aslist %}<li>{{ i|text }}</li>{% endfor %}{% for i in ms.review.minor_issues|aslist %}<li class="muted">{{ i|text }}</li>{% endfor %}</ul></details>{% endif %}
 <article class="paper">{{ rendered|safe }}</article>
 {% if manuscripts|length > 1 %}<p class="muted">Earlier drafts: {% for o in manuscripts[1:] %}v{{ o.version }} ({{ o.status }}) {% endfor %}</p>{% endif %}
 {% else %}<p class="muted">No draft yet.</p>{% endif %}</div>
