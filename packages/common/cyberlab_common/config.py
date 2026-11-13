@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     llm_provider: str | None = None  # "gemini", "ollama" or "fake"
     llm_token_budget: int = Field(default=0, ge=0)
     gemini_api_key: SecretStr | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b-instruct"
     llm_timeout_seconds: float = Field(default=120, gt=0)

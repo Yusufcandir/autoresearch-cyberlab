@@ -25,11 +25,11 @@ def test_gemini_request_and_parse() -> None:
         )
 
     p = GeminiProvider(
-        "test-key", "gemini-2.5-flash", client=httpx.Client(transport=httpx.MockTransport(handler))
+        "test-key", "gemini-3.8-flash", client=httpx.Client(transport=httpx.MockTransport(handler))
     )
     res = p.generate("sys", "hello", json_mode=True, temperature=0.1)
     assert res.json() == {"ok": True} and res.total_tokens == 15
-    assert str(seen["url"]).endswith("/models/gemini-2.5-flash:generateContent")
+    assert str(seen["url"]).endswith("/models/gemini-3.8-flash:generateContent")
     assert seen["key"] == "test-key"
     body = seen["body"]
     assert isinstance(body, dict)
