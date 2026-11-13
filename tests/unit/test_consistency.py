@@ -284,3 +284,19 @@ def test_verdict_contradicted_after_the_rendered_result() -> None:
     md = "## Discussion\n\nThere is no significant difference between random forest and logistic regression.\n"
     assert _codes(md) == ["HYP_CONTRADICTION"]
     assert _codes("## Discussion\n\nH2 (supported) is supported by the data.\n") == []
+
+
+def test_contradicts_and_group_comparisons_are_flagged() -> None:
+    assert _codes("## Discussion\n\nThis supports the hypothesis H1 but contradicts H2.\n") == [
+        "HYP_CONTRADICTION"
+    ]
+    md = (
+        "## Discussion\n\nTree-based models perform better on this dataset compared to "
+        "logistic regression and neural networks.\n"
+    )
+    assert _codes(md) == ["UNTESTED_COMPARISON"]  # random forest / XGBoost vs MLP never tested
+
+
+def test_general_advice_about_leakage_is_not_a_leakage_claim() -> None:
+    md = "## Conclusion\n\nThese findings highlight the importance of considering data leakage when deploying models.\n"
+    assert _codes(md) == []

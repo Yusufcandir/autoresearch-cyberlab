@@ -286,6 +286,7 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
     def cleanup(md: str) -> str:
         md = re.sub(r"[ \t]{2,}", " ", md)
         md = re.sub(r"(?m)^ (?=\S)", "", md)  # no stray space where a sentence was cut
+        md = re.sub(r"(?m)^[ \t]+$", "", md)  # paragraph emptied by the removal
         md = re.sub(r"(?m)^[ \t]*(?:[-*+]|\d+\.)[ \t]*$\n?", "", md)  # list item left empty
         # a '**Model:**' label whose list items were all removed
         md = re.sub(r"(?m)^\*\*[^*\n]{1,80}:?\*\*:?[ \t]*\n(?=\s*(?:\n|\*\*|##|$))", "", md)
@@ -488,6 +489,9 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     )
                 )
             }
+        # Add evidence findings first, so removing a bad sentence never has to empty a
+        # required section (e.g. a Conclusion made of one wrong sentence).
+        markdown, _ = ensure_findings(markdown, analysis)
         # Removing sentences can leave new problems (an orphaned 'It ...'); repeat until clean.
         for _ in range(3):
             left = consistency_issues(markdown, analysis) if analysis else []

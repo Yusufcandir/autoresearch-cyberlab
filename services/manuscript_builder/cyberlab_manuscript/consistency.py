@@ -28,11 +28,16 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "xgboost": ("xgboost", "gradient boosting", "gradient-boosting", r"\bGBM\b", r"\bGBDT\b"),
     "mlp": (r"\bmlp\b", "neural network", "multi-layer perceptron", "multilayer perceptron"),
 }
+# Group words that stand for several models at once ('tree-based models' = RF and XGBoost).
+MODEL_GROUPS: dict[str, tuple[str, ...]] = {
+    r"\btree[- ]based (?:models?|methods?|ensembles?|classifiers?)\b": ("random_forest", "xgboost"),
+}
 
 COMPARE = re.compile(
     r"\b(outperform\w*|better than|worse than|superior|inferior|surpass\w*|exceed\w*|"
     r"beat\w*|comparabl\w*|on par|similar(?:ly)? to|(?:higher|lower|greater) (?:\S+ ){0,2}than|"
-    r"advantage over|edge over|improvement over|gain over)\b",
+    r"advantage over|edge over|improvement over|gain over|"
+    r"(?:better|worse|higher|lower)\b[^.,;]{0,40}?\bcompared (?:to|with))\b",
     re.I,
 )
 SUPERIORITY = re.compile(
@@ -45,7 +50,8 @@ NEGATION = re.compile(
 )
 LEAK = re.compile(r"\bleak\w*", re.I)
 NO_LEAK = re.compile(
-    r"\b(no|without|zero|prevent\w*|avoid\w*|free of|ensur\w*)\b[^.]{0,40}\bleak\w*|"
+    r"\b(no|without|zero|prevent\w*|avoid\w*|free of|ensur\w*|consider\w*|check\w*|audit\w*|"
+    r"guard\w* against|detect\w*|importance of)\b[^.]{0,60}\bleak\w*|"
     r"\bleak\w*[^.]{0,30}\b(was|were) (not|ruled out|excluded)",
     re.I,
 )
@@ -98,6 +104,9 @@ def mentions(sentence: str, known: list[str]) -> list[tuple[int, str]]:
         pats = MODEL_ALIASES.get(name, (re.escape(name), re.escape(name.replace("_", " "))))
         for pat in pats:
             found += [(m.start(), name) for m in re.finditer(pat, sentence, re.I)]
+    for pat, members in MODEL_GROUPS.items():
+        for m in re.finditer(pat, sentence, re.I):
+            found += [(m.start(), n) for n in members if n in known]
     return sorted(set(found))
 
 
@@ -118,11 +127,12 @@ def comparisons(sentence: str, known: list[str]) -> list[tuple[str, str, str]]:
             right = right[:-1]  # subject of the next comparison
         if not left:
             continue
-        subj_pos, subject = left[-1]
+        subj_pos = left[-1][0]
+        subjects = [n for p, n in left if p == subj_pos]  # a group word names several models
         # 'random forest does not provide an advantage over ...' negates the comparison
         negated = bool(CMP_NEG.search(sentence[subj_pos : c.start()]))
         word = ("not " if negated else "") + c.group(0)
-        out += [(subject, o, word) for o in dict.fromkeys(right) if o != subject]
+        out += [(s, o, word) for s in subjects for o in dict.fromkeys(right) if o not in subjects]
     return out
 
 
@@ -175,7 +185,11 @@ def comparison_contradiction(
     return None
 
 
-_VERDICT_NEG = re.compile(r"\b(not|no|fail\w*|reject\w*|refut\w*|unsupported|neither|nor)\b", re.I)
+_VERDICT_NEG = re.compile(
+    r"\b(not|no|fail\w*|reject\w*|refut\w*|unsupported|neither|nor|contradict\w*|disprov\w*|"
+    r"undermin\w*)\b",
+    re.I,
+)
 _VERDICT_POS = re.compile(r"\b(support\w*|confirm\w*|validat\w*|corroborat\w*|hold\w*)\b", re.I)
 
 
