@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.8-flash"
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b-instruct"
-    llm_timeout_seconds: float = Field(default=120, gt=0)
+    llm_timeout_seconds: float = Field(default=300, gt=0)
 
     # Literature services (polite pool contact is optional and never required)
     literature_contact_email: str | None = None

@@ -115,16 +115,27 @@ class GeminiProvider:
         if json_mode:
             body["generationConfig"]["responseMimeType"] = "application/json"
         t0 = time.monotonic()
+        r: httpx.Response | None = None
+        last_exc: Exception | None = None
         for attempt in range(3):
-            r = self.client.post(
-                self.URL.format(model=self.model),
-                headers={"x-goog-api-key": self.api_key},
-                json=body,
-            )
-            if r.status_code == 429 and attempt < 2:  # free-tier rate limit
+            try:
+                r = self.client.post(
+                    self.URL.format(model=self.model),
+                    headers={"x-goog-api-key": self.api_key},
+                    json=body,
+                )
+            except httpx.HTTPError as exc:  # timeouts and dropped connections: retry
+                last_exc, r = exc, None
                 time.sleep(5 * (attempt + 1))
                 continue
+            if r.status_code in (429, 500, 503) and attempt < 2:  # rate limit / overload
+                time.sleep(10 * (attempt + 1))
+                continue
             break
+        if r is None:
+            raise LLMError(
+                f"gemini unreachable after 3 attempts: {type(last_exc).__name__}: {last_exc}"
+            )
         if r.status_code != 200:
             raise LLMError(f"gemini HTTP {r.status_code}: {redact(r.text[:300])}")
         data = r.json()
