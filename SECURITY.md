@@ -5,4 +5,4 @@
 - Untrusted code, datasets with executable content and hostile fixtures never run on the
   shared GPU workstation. Without an isolated host they are `BLOCKED: ISOLATION_REQUIRED`.
 - LLM agents never hold admin/root privileges and cannot grant themselves permissions.
-- See `docs/threat_model.md` for the full threat model (Step 03).
+
