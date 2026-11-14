@@ -247,3 +247,16 @@ def test_figures_are_generated_embedded_and_exportable() -> None:
     assert all(f.startswith(b"\x89PNG") for f in files.values())
     tex = markdown_to_latex(text)
     assert tex.count(r"\includegraphics") == 3 and r"\caption{" in tex
+
+
+def test_untested_mechanism_explanations_are_dropped() -> None:
+    from cyberlab_manuscript.evidence_text import forbidden
+
+    known = ["random_forest", "xgboost", "logistic_regression", "mlp"]
+    for s in (
+        "The superior performance of tree ensembles can be attributed to their ability to "
+        "capture complex interactions within the data.",
+        "Logistic regression and MLP models tend to have simplistic decision boundaries.",
+    ):
+        assert forbidden(s, "", known), s
+    assert forbidden("Tree ensembles are widely used in intrusion detection.", "", known) is None

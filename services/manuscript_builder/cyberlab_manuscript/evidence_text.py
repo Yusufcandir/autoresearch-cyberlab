@@ -404,7 +404,8 @@ _RESULT_CLAIM = re.compile(
     re.I,
 )
 _GROUP = re.compile(
-    r"\b(?:tree[- ]based|complex|simpler|deep|ensemble|linear) (?:models?|methods?)\b|"
+    r"\b(?:tree[- ]based|complex|simpler|deep|ensemble|linear|neural) (?:models?|methods?)\b|"
+    r"\btree ensembles?\b|\bneural networks?\b|"
     r"\b(?:all|every|each|both|most) (?:of )?(?:the )?(?:\w+ )?(?:models?|classifiers?)\b",
     re.I,
 )
@@ -426,7 +427,18 @@ def forbidden(sentence: str, context: str, known: list[str]) -> str | None:
         return "makes an evaluative claim about a model"
     if _RESULT_CLAIM.search(sentence) and (COMPARE.search(sentence) or _EVAL.search(sentence)):
         return "states a result"
+    if named and _MECHANISM.search(sentence):
+        return "explains a result with a model mechanism the study did not test"
     return None
+
+
+# 'X does better because of its decision boundaries': the experiments measure scores, not why.
+_MECHANISM = re.compile(
+    r"\b(?:be )?attributed to\b|\battributable to\b|"
+    r"\bdecision boundar(?:y|ies)\b|\bability to (?:capture|model|learn|handle)\b|"
+    r"\b(?:due to|because of|owing to|thanks to) (?:their|its)\b",
+    re.I,
+)
 
 
 _CONNECTIVE = re.compile(
