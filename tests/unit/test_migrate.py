@@ -20,3 +20,11 @@ def test_copy_database_copies_every_row_and_refuses_a_non_empty_target(tmp_path:
     assert counts["users"] == 1
     with pytest.raises(RuntimeError, match="not empty"):
         copy_database(src_url, dst_url)
+
+
+def test_every_stored_id_fits_its_column_on_postgresql(tmp_path: Path) -> None:
+    """SQLite ignores VARCHAR lengths; PostgreSQL does not. Claim ids are '<p8>:<model>.<metric>'."""
+    from cyberlab_common.db import ClaimRecord
+
+    longest = "6bc046c9:logistic_regression.false_positive_rate"
+    assert len(longest) <= ClaimRecord.__table__.c.id.type.length  # type: ignore[attr-defined]

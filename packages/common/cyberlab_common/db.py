@@ -183,7 +183,8 @@ class CitationRecord(Base):
 
 class ClaimRecord(Base):
     __tablename__ = "claims"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # "<project8>:<model>.<metric>" ids are longer than a UUID
+    id: Mapped[str] = mapped_column(String(128), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
     body: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(16))

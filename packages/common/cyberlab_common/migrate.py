@@ -6,7 +6,7 @@ row counts are verified afterwards, so a failed copy leaves the target unchanged
 
 from __future__ import annotations
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import String, func, insert, select
 
 from cyberlab_common.db import Base, Database
 
@@ -22,9 +22,23 @@ def copy_database(source_url: str, target_url: str, batch: int = 1000) -> dict[s
     if any(used.values()):
         raise RuntimeError(f"target database is not empty: {[k for k, v in used.items() if v]}")
     counts: dict[str, int] = {}
-    with src.engine.connect() as s, dst.engine.begin() as d:
+    with src.engine.connect() as s:
+        data = {t.name: [dict(r._mapping) for r in s.execute(select(t))] for t in tables}
+    # SQLite does not enforce VARCHAR lengths, PostgreSQL does: check everything first.
+    too_long = [
+        f"{t.name}.{c.name}: {max(len(str(r[c.name])) for r in data[t.name] if r[c.name] is not None)}"
+        f" > {c.type.length}"
+        for t in tables
+        for c in t.columns
+        if isinstance(c.type, String)
+        and c.type.length
+        and any(r[c.name] is not None and len(str(r[c.name])) > c.type.length for r in data[t.name])
+    ]
+    if too_long:
+        raise RuntimeError(f"values longer than the target columns allow: {too_long}")
+    with dst.engine.begin() as d:
         for t in tables:
-            rows = [dict(r._mapping) for r in s.execute(select(t))]
+            rows = data[t.name]
             for i in range(0, len(rows), batch):
                 d.execute(insert(t), rows[i : i + batch])
             counts[t.name] = len(rows)
