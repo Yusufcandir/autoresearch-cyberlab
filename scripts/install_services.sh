@@ -17,9 +17,19 @@ mkdir -p "$UNITS"
 install_unit() { cp "infra/systemd/$1" "$UNITS/$1"; }
 for u in cyberlab-serve.service cyberlab-worker.service cyberlab-health.service \
          cyberlab-health.timer cyberlab-backup.service cyberlab-backup.timer; do install_unit "$u"; done
+# Ollama: use whichever binary this user runs (PATH, ~/.local/bin or ~/ollama/bin).
 OLLAMA=""
-if [ -x "$HOME/.local/bin/ollama" ]; then install_unit ollama.service; OLLAMA=ollama.service
-else echo "note: ~/.local/bin/ollama not found; ollama.service skipped (keep running it as before)"; fi
+OLLAMA_BIN="$(command -v ollama || true)"
+for c in "$HOME/.local/bin/ollama" "$HOME/ollama/bin/ollama"; do
+  [ -z "$OLLAMA_BIN" ] && [ -x "$c" ] && OLLAMA_BIN="$c"
+done
+if [ -n "$OLLAMA_BIN" ]; then
+  sed "s|%h/.local/bin/ollama|$OLLAMA_BIN|" infra/systemd/ollama.service > "$UNITS/ollama.service"
+  OLLAMA=ollama.service
+  tmux kill-session -t ollama 2>/dev/null || true  # the service replaces a tmux copy
+else
+  echo "WARNING: ollama binary not found; no local fallback model until it is installed"
+fi
 systemctl --user daemon-reload
 echo "Stop the tmux copies first (tmux kill-session -t lab), otherwise port 8000 is taken."
 systemctl --user enable --now cyberlab-serve.service cyberlab-worker.service \
