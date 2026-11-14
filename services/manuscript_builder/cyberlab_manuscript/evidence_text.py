@@ -324,6 +324,7 @@ _STATS = re.compile(
 _EVAL = re.compile(
     r"\b(?:more|less|most|least|highly) (?:effective|accurate|robust|reliable|consistent)(?:ly)?\b|"
     r"\b(?:shown|show|shows|showed) promise\b|"
+    r"\bstruggl\w*|\bfail\w* to (?:detect|identify|recogni[sz]e)\b|\bpoorly\b|"
     r"\b(?:best|worst|strongest|weakest|top|leading)\b|"
     r"\bperform(?:s|ed|ing)? (?:better|worse|best|well|poorly|strongly|comparabl\w*|similarly)\b|"
     r"\b(?:achiev|obtain|reach|attain|deliver|yield)\w*\b|\b(?:benefit|excel)\w*\b|"
@@ -337,7 +338,9 @@ _RESULT_CLAIM = re.compile(
     re.I,
 )
 _GROUP = re.compile(
-    r"\b(?:tree[- ]based|complex|simpler|deep|ensemble|linear) (?:models?|methods?)\b", re.I
+    r"\b(?:tree[- ]based|complex|simpler|deep|ensemble|linear) (?:models?|methods?)\b|"
+    r"\b(?:all|every|each|both|most) (?:of )?(?:the )?(?:\w+ )?(?:models?|classifiers?)\b",
+    re.I,
 )
 
 

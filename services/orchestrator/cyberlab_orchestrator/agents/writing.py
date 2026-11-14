@@ -93,7 +93,9 @@ def method_facts(
         "rows_removed_duplicates_or_conflicts": f"{ds.get('n_duplicates_removed', 0):,} rows",
         "rows_dropped_inf_nan": f"{notes.get('rows_with_inf_or_nan_dropped', 0):,} rows",
         "benign_cap": f"{notes.get('benign_cap') or 0:,} rows",
-        "smallest_class_test_rows": smallest,
+        # separate facts, so a writer cannot put the class name where a number belongs
+        "smallest_class": smallest.split(" (")[0] if smallest else "",
+        "smallest_class_test_rows": smallest.split("(")[1].split(" ")[0] if "(" in smallest else "",
         "n_features": len(ds.get("features", [])),
         "n_classes": len(ds.get("class_counts", {})),
         "test_rows": f"{ds.get('split_counts', {}).get('test', 0):,}",

@@ -211,3 +211,12 @@ def test_findings_and_results_lead_with_the_primary_metric() -> None:
     assert "Random forest reached a balanced accuracy of 0.9500" in res
     assert "95% bootstrap CI [0.9400, 0.9600]" in res
     assert "Rare, 9 test rows" in res and "logistic regression: Rare 0.0000" in res
+
+
+def test_group_claims_and_fact_doubling_are_cleaned() -> None:
+    from cyberlab_manuscript.builder import tidy_prose
+
+    known = list(ANALYSIS["models"])
+    assert forbidden("All models struggle with detecting the Rare class.", "", known)
+    assert not forbidden("Class imbalance can make rare attacks hard to detect.", "", known)
+    assert tidy_prose("Rare has only Rare (9 test rows) test rows.") == "Rare has only 9 test rows."

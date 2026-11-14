@@ -285,6 +285,8 @@ def tidy_prose(text: str) -> str:
         r"\1",
         text,
     )
+    # "only Rare (9 test rows) test rows" -> "only 9 test rows" (a fact used as a number)
+    text = re.sub(r"\b[A-Z][\w-]* \(([\d,]+) test rows\) test rows\b", r"\1 test rows", text)
     # "([@Key])" -> "[@Key]"
     text = re.sub(r"\((\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\])\)", r"\1", text)
     # "[[@Key]]" (writer wrapped the placeholder in brackets) -> "[@Key]"
