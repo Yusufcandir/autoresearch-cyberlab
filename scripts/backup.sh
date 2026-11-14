@@ -14,7 +14,7 @@ TMP=$(mktemp -d)
 
 case "${DATABASE_URL:-}" in
   postgresql*)
-    docker compose -f infra/compose.server.yaml exec -T postgres pg_dump -U cyberlab cyberlab > "$TMP/db.sql"
+    docker compose -f infra/compose.server.yaml --env-file .env exec -T postgres pg_dump -U cyberlab cyberlab > "$TMP/db.sql"
     ;;
   sqlite*)
     DB="${DATABASE_URL#sqlite:///}"
