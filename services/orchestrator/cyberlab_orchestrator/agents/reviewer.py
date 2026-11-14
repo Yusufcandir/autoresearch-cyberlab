@@ -306,10 +306,10 @@ def backfill_related_work(
         authors = [a for a in papers[k].get("authors") or [] if a]
         if not authors:
             return ""
-        s1 = authors[0].split()[-1]
+        s1 = str(authors[0]).split()[-1]
         if len(authors) == 1:
             return s1
-        return f"{s1} and {authors[1].split()[-1]}" if len(authors) == 2 else f"{s1} et al."
+        return f"{s1} and {str(authors[1]).split()[-1]}" if len(authors) == 2 else f"{s1} et al."
 
     sentences = []
     listed = []

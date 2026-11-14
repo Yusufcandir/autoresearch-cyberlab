@@ -130,10 +130,12 @@ def analyze_project(
             }
         )
     # Holm-Bonferroni correction across all tested hypotheses of the protocol
-    tested = [h for h in hypotheses if "mcnemar" in h]
-    for h, p_adj in zip(tested, holm([h["mcnemar"]["p_value"] for h in tested]), strict=True):
-        h["p_holm"] = p_adj
-        h["result"] = "supported" if h["a_mean"] > h["b_mean"] and p_adj < 0.05 else "not supported"
+    tested = [hr for hr in hypotheses if "mcnemar" in hr]
+    for hr, p_adj in zip(tested, holm([hr["mcnemar"]["p_value"] for hr in tested]), strict=True):
+        hr["p_holm"] = p_adj
+        hr["result"] = (
+            "supported" if hr["a_mean"] > hr["b_mean"] and p_adj < 0.05 else "not supported"
+        )
 
     ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
     overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0

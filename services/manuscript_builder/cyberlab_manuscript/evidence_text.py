@@ -271,11 +271,11 @@ def operational_text(analysis: dict[str, Any]) -> str:
     rate, and classes that no model detected at all."""
     out = []
     models = analysis.get("models", {})
-    fprs = {
-        n: (m.get("aggregate", {}).get("false_positive_rate") or {}).get("mean")
-        for n, m in models.items()
-    }
-    fprs = {n: v for n, v in fprs.items() if isinstance(v, (int, float))}
+    fprs: dict[str, float] = {}
+    for n, m in models.items():
+        v = (m.get("aggregate", {}).get("false_positive_rate") or {}).get("mean")
+        if isinstance(v, (int, float)):
+            fprs[n] = float(v)
     if fprs and min(fprs.values()) >= FPR_NOTABLE:
         # every value is named with its model, so the consistency checks can trace it
         parts = _and(

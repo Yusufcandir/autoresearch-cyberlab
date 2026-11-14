@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -113,7 +114,7 @@ def backup_age(settings: Settings, max_hours: int = 30) -> dict[str, Any]:
 
 
 def run_all(settings: Settings) -> list[dict[str, Any]]:
-    checks = [
+    checks: list[Callable[[], dict[str, Any]]] = [
         lambda: disk(settings.data_dir),
         gpu,
         lambda: database(settings),

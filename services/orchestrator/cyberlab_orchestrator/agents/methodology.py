@@ -173,7 +173,9 @@ def _enforce_intent(
                 update={
                     "primary_metric": metric,
                     "statement": hypothesis_statement(
-                        *[x.strip() for x in h.comparison.split(">")], metric
+                        h.comparison.split(">")[0].strip(),
+                        h.comparison.split(">")[-1].strip(),
+                        metric,
                     ),
                 }
             )
