@@ -20,7 +20,7 @@ for u in cyberlab-serve.service cyberlab-worker.service cyberlab-health.service 
 # Ollama: use whichever binary this user runs (PATH, ~/.local/bin or ~/ollama/bin).
 OLLAMA=""
 OLLAMA_BIN="$(command -v ollama || true)"
-for c in "$HOME/.local/bin/ollama" "$HOME/ollama/bin/ollama"; do
+for c in "$HOME/bin/ollama" "$HOME/.local/bin/ollama" "$HOME/ollama/bin/ollama"; do
   [ -z "$OLLAMA_BIN" ] && [ -x "$c" ] && OLLAMA_BIN="$c"
 done
 if [ -n "$OLLAMA_BIN" ]; then
