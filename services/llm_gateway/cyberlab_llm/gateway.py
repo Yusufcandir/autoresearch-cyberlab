@@ -163,10 +163,17 @@ class GeminiProvider:
             r: httpx.Response | None = None
             for attempt in range(2):
                 try:
+                    # With a local model waiting, never let one slow Gemini request outlast
+                    # the handover deadline (the client's own timeout can be minutes).
+                    deadline = getattr(_status, "deadline", None)
+                    extra: dict[str, Any] = {}
+                    if deadline is not None:
+                        extra["timeout"] = max(3.0, deadline - time.monotonic())
                     r = self.client.post(
                         self.URL.format(model=model),
                         headers={"x-goog-api-key": self.api_key},
                         json=body,
+                        **extra,
                     )
                 except httpx.HTTPError as exc:  # timeout or dropped connection
                     problems.append(f"{model}: {type(exc).__name__}")

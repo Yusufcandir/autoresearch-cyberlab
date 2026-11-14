@@ -180,3 +180,32 @@ def test_gemini_breaker_keeps_later_calls_on_local_model(monkeypatch) -> None:  
     now["t"] += 10_000  # cooldown over: Gemini is tried again
     gate.complete("t", "s", "p", project_id="x")
     assert gemini_calls["n"] > first
+
+
+def test_slow_gemini_request_is_capped_by_the_handover_deadline(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A hanging Gemini request must time out at the handover deadline, not after minutes."""
+    import cyberlab_llm.gateway as gw
+    from cyberlab_llm import LLMGateway
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+    seen: list[float | None] = []
+
+    class HangingClient:
+        def post(self, *a, **kw):  # type: ignore[no-untyped-def]
+            seen.append(kw.get("timeout"))
+            raise httpx.ReadTimeout("hung")
+
+    def ollama(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen2.5:14b-instruct"}]})
+        return httpx.Response(200, json={"message": {"content": "local ok"}})
+
+    g = GeminiProvider("k", "m1", client=HangingClient())  # type: ignore[arg-type]
+    o = OllamaProvider(
+        "http://x",
+        "qwen2.5:14b-instruct",
+        client=httpx.Client(transport=httpx.MockTransport(ollama)),
+    )
+    res = LLMGateway(g, o, handover_seconds=20).complete("t", "s", "p")
+    assert res.provider == "ollama"
+    assert seen and seen[0] is not None and seen[0] <= 20.5
