@@ -59,6 +59,9 @@ def report_status(message: str) -> None:
     """Providers call this when they wait or switch model; the gateway forwards it."""
     fn = getattr(_status, "fn", None)
     if fn is not None:
+        suffix = getattr(_status, "suffix", "")
+        if suffix and "Gemini" in message and "local model" not in message:
+            message = f"{message}. {suffix}"
         try:
             fn(message)
         except Exception:  # noqa: BLE001 - status reporting must never break a call
@@ -359,6 +362,7 @@ class LLMGateway:
                 hook = self.on_status
                 _status.fn = lambda msg: hook(project_id, task, msg)
             _status.deadline = None
+            _status.suffix = ""
             if provider is self.primary and not provider.local and self.local is not None:
                 left = self.gemini_cooling_down()
                 if left > 0 and self._local_ready():
@@ -371,6 +375,12 @@ class LLMGateway:
                     )
                 elif self.handover_seconds > 0 and self._local_ready():
                     _status.deadline = time.monotonic() + self.handover_seconds
+                elif isinstance(self.local, OllamaProvider):
+                    # Say why there is no fallback, instead of silently retrying Gemini.
+                    _status.suffix = (
+                        f"No local fallback: Ollama is not reachable at {self.local.host} "
+                        f"or model {self.local.model} is not pulled"
+                    )
             result = provider.generate(full_system, redact(prompt), json_mode, temperature)
         except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
@@ -391,6 +401,7 @@ class LLMGateway:
                 raise
         _status.fn = None
         _status.deadline = None
+        _status.suffix = ""
         if project_id and self.charge:
             self.charge(project_id, result.total_tokens)
         self.log.append(
