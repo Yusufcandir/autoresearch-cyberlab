@@ -138,10 +138,12 @@ def method_facts(
         "hyper-parameter tuning was performed (fixed, documented defaults).",
         "Metrics are reported as mean and standard deviation over the model seeds.",
         "Confidence intervals are percentile bootstrap intervals (facts.bootstrap_resamples "
-        "resamples) over test rows, stratified by class, computed on the first seed's "
-        "predictions (seed facts.ci_seed).",
-        "Hypotheses were tested with an exact McNemar test on per-row correctness of two models "
-        "over the same test rows (first seed).",
+        "resamples) over test rows, stratified by class; each resample is scored on every "
+        "model seed's predictions and averaged, so the interval belongs to the reported mean.",
+        "Hypotheses were tested with an exact McNemar test on per-row correctness of the two "
+        "models on each seed; the largest p-value over seeds is used and corrected across "
+        "hypotheses with the Holm-Bonferroni method (supported only if the adjusted p is "
+        "below 0.05 and the mean favours the stated model).",
         "All metrics were recomputed from stored per-row predictions; numbers in the paper are "
         "inserted from these stored results.",
     ]

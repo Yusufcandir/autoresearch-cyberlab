@@ -497,9 +497,11 @@ GAP_CLAIM = re.compile(
     r"high (?:overall )?accuracy[^.]{0,80}\b(?:raise|rais\w+|indicat\w*) (?:concern|issue|problem)\w*",
     re.I,
 )
+# A CI read as variability/robustness across seeds, classes or runs ("mean over seeds" is fine)
 CI_ACROSS_SEEDS = re.compile(
-    r"\b(?:CI|confidence interval)s?\b.{0,160}?\b(across|over|between) (?:\w+ ){0,2}"
-    r"(seeds|classes)\b",
+    r"\b(?:CI|confidence interval)s?\b.{0,160}?"
+    r"\b(?:variab\w*|robust\w*|consisten\w*|stabl\w*|stabilit\w*|spread|fluctuat\w*)\b"
+    r".{0,60}?\b(?:across|over|between) (?:\w+ ){0,2}(?:seeds|classes|runs|experiments)\b",
     re.I,
 )
 GAP_THRESHOLD = 0.05

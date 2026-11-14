@@ -104,7 +104,12 @@ def hypothesis_sentences(analysis: dict[str, Any]) -> list[str]:
             f"; {a_mean:.4f} vs {b_mean:.4f}" if a_mean is not None and b_mean is not None else ""
         )
         ptxt = _p((h.get("mcnemar") or {}).get("p_value"))
-        test = f" (exact McNemar test, {ptxt})" if ptxt else ""
+        n_seeds = len(h.get("mcnemar_seeds") or [])
+        if ptxt and "p_holm" in h:
+            where = f"on each of the {_num(n_seeds)} seeds, largest " if n_seeds > 1 else ""
+            test = f" (exact McNemar test {where}{ptxt}; Holm-adjusted {_p(h['p_holm'])})"
+        else:
+            test = f" (exact McNemar test, {ptxt})" if ptxt else ""
         out.append(
             f"{h['id']} ({pretty(h['a'])} scores higher than {pretty(h['b'])} on "
             f"{_metric(metric)}{means}) was {h['result']}{test}."
@@ -162,9 +167,11 @@ def results_text(analysis: dict[str, Any]) -> str:
         )
         ci = m.get(f"{metric}_ci") or {}
         if "low" in ci and "high" in ci:
-            seed = m.get("ci_seed")
+            label = m.get("ci_label") or (
+                f"seed {m['ci_seed']}" if m.get("ci_seed") is not None else ""
+            )
             txt += f" (95% bootstrap CI [{ci['low']:.4f}, {ci['high']:.4f}]" + (
-                f", seed {seed})" if seed is not None else ")"
+                f", {label})" if label else ")"
             )
         extra = []
         for key in order[1:]:

@@ -158,9 +158,7 @@ def render_text(
         report.resolved.append(
             {"placeholder": m.group(0), "value": [ci["low"], ci["high"]], "status": status}
         )
-        seed = (mdl or {}).get("ci_seed")
-        label = f", seed {seed}" if seed is not None else ""
-        return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}]{label}"
+        return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}], {_ci_label(mdl or {})}"
 
     def check_numbers(segment: str) -> str:
         def num(m: re.Match[str]) -> str:
@@ -325,20 +323,29 @@ def small_class_note(analysis: dict[str, Any]) -> str:
     listed = ", ".join(f"{c} ({n:,} test rows)" for c, n in sorted(small.items()))
     return (
         f"Some classes have very few test rows: {listed}. Their per-class scores, and the "
-        "macro-averaged metrics they feed into, are therefore highly uncertain."
+        "macro-averaged metrics they feed into, are therefore highly uncertain. A bootstrap "
+        "interval understates this: when a model detects all (or none) of a tiny class, every "
+        "resample does too, so the interval can look narrow although a few more rows could "
+        "change the score a lot."
     )
+
+
+def _ci_label(m: dict[str, Any]) -> str:
+    if m.get("ci_label"):
+        return str(m["ci_label"])
+    return f"seed {m['ci_seed']}" if m.get("ci_seed") is not None else "bootstrap"
 
 
 def results_table(analysis: dict[str, Any]) -> str:
     rows = [
-        "| Model | Role | Macro-F1 (mean ± sd) | 95% CI (seed {seed}) | Accuracy | MCC | FPR | Detection rate |",
+        "| Model | Role | Macro-F1 (mean ± sd) | 95% CI ({seed}) | Accuracy | MCC | FPR | Detection rate |",
         "|---|---|---|---|---|---|---|---|",
     ]
     seed = "?"
     for name, m in analysis["models"].items():
         a = m["aggregate"]
         ci = m["macro_f1_ci"]
-        seed = str(m["ci_seed"])
+        seed = _ci_label(m)
 
         def g(k: str, a: dict[str, Any] = a) -> str:
             return _fmt(a[k]["mean"]) if k in a else "n/a"
@@ -363,14 +370,18 @@ def per_class_table(analysis: dict[str, Any], model: str) -> str:
 
 
 def hypotheses_table(analysis: dict[str, Any]) -> str:
-    rows = ["| Hypothesis | Comparison | Means | McNemar p | Result |", "|---|---|---|---|---|"]
+    rows = [
+        "| Hypothesis | Comparison | Means | McNemar p (largest over seeds) | Holm-adjusted p | Result |",
+        "|---|---|---|---|---|---|",
+    ]
     for h in analysis["hypotheses"]:
         if "mcnemar" not in h:
-            rows.append(f"| {h['id']} | - | - | - | {h['result']} |")
+            rows.append(f"| {h['id']} | - | - | - | - | {h['result']} |")
             continue
+        holm_p = _fmt_p(h["p_holm"]) if "p_holm" in h else "-"
         rows.append(
             f"| {h['id']} | {h['a']} > {h['b']} ({h['metric']}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
-            f"{_fmt_p(h['mcnemar']['p_value'])} | {h['result']} |"
+            f"{_fmt_p(h['mcnemar']['p_value'])} | {holm_p} | {h['result']} |"
         )
     return "\n".join(rows)
 

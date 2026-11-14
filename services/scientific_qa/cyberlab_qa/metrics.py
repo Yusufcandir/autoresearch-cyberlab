@@ -149,6 +149,65 @@ def bootstrap_ci(
     }
 
 
+def bootstrap_ci_seeds(
+    preds_by_seed: list[pd.DataFrame],
+    metric: str = "macro_f1",
+    n_boot: int = 500,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """CI for the metric averaged over model seeds: every resample of test rows (stratified by
+    class) is scored on each seed's predictions and averaged, so the interval belongs to the
+    reported mean and reflects both test-row and seed variation of that mean."""
+    if len(preds_by_seed) == 1:
+        return bootstrap_ci(preds_by_seed[0], metric, n_boot, seed, alpha)
+    fn = _METRIC_FN[metric]
+    frames = [p.sort_values("row").reset_index(drop=True) for p in preds_by_seed]
+    y = frames[0]["y_true"].astype(str).to_numpy()
+    if any(not (f["y_true"].astype(str).to_numpy() == y).all() for f in frames):
+        raise ValueError("seed predictions are not over the same test rows")
+    preds = [f["y_pred"].astype(str).to_numpy() for f in frames]
+    labels, codes = np.unique(np.concatenate([y, *preds]), return_inverse=True)
+    n, k = len(y), len(labels)
+    yc = codes[:n]
+    pcs = [codes[n * (i + 1) : n * (i + 2)] for i in range(len(preds))]
+    groups = [np.flatnonzero(yc == c) for c in np.unique(yc)]
+    fast = _fast_metric(metric)
+    rng = np.random.default_rng(seed)
+    vals = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = np.concatenate([g[rng.integers(0, len(g), size=len(g))] for g in groups])
+        scores = []
+        for pc in pcs:
+            if fast is not None:
+                cm = np.bincount(yc[idx] * k + pc[idx], minlength=k * k).reshape(k, k)
+                scores.append(fast(cm))
+            else:
+                scores.append(fn(labels[yc[idx]], labels[pc[idx]]))
+        vals[b] = float(np.mean(scores))
+    lo, hi = np.quantile(vals, [alpha / 2, 1 - alpha / 2])
+    return {
+        "metric": metric,
+        "point": float(np.mean([fn(y, p) for p in preds])),
+        "low": float(lo),
+        "high": float(hi),
+        "n_boot": n_boot,
+        "n_seeds": len(preds),
+    }
+
+
+def holm(p_values: list[float]) -> list[float]:
+    """Holm-Bonferroni adjusted p-values (same order as the input)."""
+    m = len(p_values)
+    order = sorted(range(m), key=lambda i: p_values[i])
+    adjusted = [0.0] * m
+    running = 0.0
+    for rank, i in enumerate(order):
+        running = max(running, min(1.0, (m - rank) * p_values[i]))
+        adjusted[i] = running
+    return adjusted
+
+
 def mcnemar(preds_a: pd.DataFrame, preds_b: pd.DataFrame) -> dict[str, float]:
     """Exact McNemar test on per-row correctness of two models over the same test rows."""
     a = preds_a.sort_values("row").reset_index(drop=True)

@@ -136,3 +136,19 @@ def test_protocol_split_gets_its_own_prepared_copy(tmp_path: Path) -> None:
         "ds@"
     )
     assert split_from_goal("Compare four models on CIC-IDS2017.") is None
+
+
+def test_holm_and_seed_averaged_bootstrap() -> None:
+    import numpy as np
+
+    from cyberlab_qa.metrics import bootstrap_ci_seeds, holm
+
+    assert holm([0.01, 0.04, 0.03]) == [0.03, 0.06, 0.06]  # textbook Holm example
+    rng = np.random.default_rng(1)
+    y = rng.choice(list("ABC"), size=3000, p=[0.8, 0.15, 0.05])
+    seeds = []
+    for k in range(3):
+        p = np.where(rng.random(3000) < 0.9 - 0.05 * k, y, "A")
+        seeds.append(pd.DataFrame({"row": range(3000), "y_true": y, "y_pred": p}))
+    ci = bootstrap_ci_seeds(seeds, "balanced_accuracy", n_boot=200)
+    assert ci["low"] <= ci["point"] <= ci["high"] and ci["n_seeds"] == 3  # mean lies inside

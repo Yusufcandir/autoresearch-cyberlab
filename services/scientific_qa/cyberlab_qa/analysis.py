@@ -17,8 +17,9 @@ from cyberlab_data import dataset_record_id
 from cyberlab_evidence import ArtifactStore
 from cyberlab_qa.metrics import (
     QAFlag,
-    bootstrap_ci,
+    bootstrap_ci_seeds,
     compute_metrics,
+    holm,
     leakage_audit,
     mcnemar,
     recompute_matches,
@@ -81,6 +82,7 @@ def analyze_project(
                     "n_seeds": len(vals),
                 }
         first = per_seed[seeds[0]]
+        seed_preds = [preds[(m.name, sd)] for sd in seeds]
         models[m.name] = {
             "role": m.role,
             "template": m.template,
@@ -88,15 +90,19 @@ def analyze_project(
             "seeds": seeds,
             "aggregate": agg,
             "ci_seed": seeds[0],
-            "macro_f1_ci": bootstrap_ci(preds[(m.name, seeds[0])], "macro_f1", n_boot=500),
+            "ci_seeds": seeds,
+            "ci_label": (
+                f"mean over seeds {', '.join(str(x) for x in seeds)}"
+                if len(seeds) > 1
+                else f"seed {seeds[0]}"
+            ),
+            "macro_f1_ci": bootstrap_ci_seeds(seed_preds, "macro_f1", n_boot=500),
             "per_class": first["per_class"],
             "confusion_matrix": first["confusion_matrix"],
         }
         # CIs also for every metric a hypothesis is tested on (e.g. balanced accuracy)
         for metric in {h.primary_metric for h in protocol.hypotheses} - {"macro_f1"}:
-            models[m.name][f"{metric}_ci"] = bootstrap_ci(
-                preds[(m.name, seeds[0])], metric, n_boot=500
-            )
+            models[m.name][f"{metric}_ci"] = bootstrap_ci_seeds(seed_preds, metric, n_boot=500)
 
     hypotheses: list[dict[str, Any]] = []
     for h in protocol.hypotheses:
@@ -105,11 +111,9 @@ def analyze_project(
         if not common:
             hypotheses.append({"id": h.id, "statement": h.statement, "result": "not tested"})
             continue
-        sd0 = common[0]
-        test = mcnemar(preds[(a, sd0)], preds[(b, sd0)])
-        ma = models[a]["aggregate"][h.primary_metric]["mean"]
-        mb = models[b]["aggregate"][h.primary_metric]["mean"]
-        supported = ma > mb and test["p_value"] < 0.05
+        # McNemar on every seed both models share; the largest (least favourable) p is used
+        by_seed = {sd: mcnemar(preds[(a, sd)], preds[(b, sd)]) for sd in common}
+        worst = max(by_seed, key=lambda sd: by_seed[sd]["p_value"])
         hypotheses.append(
             {
                 "id": h.id,
@@ -117,13 +121,19 @@ def analyze_project(
                 "metric": h.primary_metric,
                 "a": a,
                 "b": b,
-                "a_mean": ma,
-                "b_mean": mb,
-                "mcnemar_seed": sd0,
-                "mcnemar": test,
-                "result": "supported" if supported else "not supported",
+                "a_mean": models[a]["aggregate"][h.primary_metric]["mean"],
+                "b_mean": models[b]["aggregate"][h.primary_metric]["mean"],
+                "mcnemar_seed": worst,
+                "mcnemar_seeds": common,
+                "mcnemar_p_by_seed": {str(sd): t["p_value"] for sd, t in by_seed.items()},
+                "mcnemar": by_seed[worst],
             }
         )
+    # Holm-Bonferroni correction across all tested hypotheses of the protocol
+    tested = [h for h in hypotheses if "mcnemar" in h]
+    for h, p_adj in zip(tested, holm([h["mcnemar"]["p_value"] for h in tested]), strict=True):
+        h["p_holm"] = p_adj
+        h["result"] = "supported" if h["a_mean"] > h["b_mean"] and p_adj < 0.05 else "not supported"
 
     ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
     overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
