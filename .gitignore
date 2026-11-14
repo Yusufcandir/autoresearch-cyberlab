@@ -47,3 +47,8 @@ outputs/
 
 # Runtime data: database, artifacts, datasets, checkpoints, logs, backups
 var/
+
+# Private: internal docs (server addresses, runbooks, meeting notes) stay off GitHub
+docs/
+*.html
+!services/api/cyberlab_api/templates/*.html

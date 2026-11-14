@@ -12,13 +12,12 @@ and nothing is released without the PI.
 
 ## Status (14 Nov 2026)
 
-- Running on the lab server (lab-server, RTX 6000 Ada): PostgreSQL 16 in Docker, dashboard and
+- Running on the lab's GPU server (RTX 6000 Ada): PostgreSQL 16 in Docker, dashboard and
   worker as systemd user services, Ollama local model.
 - Studies run end to end on real data: two on CIC-IDS2017 (one released) and one on UNSW-NB15
   with the official train/test split.
 - 133 automated tests pass (`bash scripts/check.sh`); 21 of the 22 acceptance tests are done.
-  AT-13 needs an isolated VM, which the pilot scope excludes. Details:
-  [docs/requirements_status.md](docs/requirements_status.md).
+  AT-13 needs an isolated VM, which the pilot scope excludes.
 
 ## Core rules (enforced in code, not in prompts)
 
@@ -83,9 +82,9 @@ view for PDF.
 | `plugins/` | model templates (tabular) and capability plugins: text, audio, graph policy, code artifact |
 | `packages/` | schemas, auth, roles and security policy, config, CLI, health check, migration, restore |
 | `infra/` | Docker Compose (PostgreSQL), systemd units, env example |
-| `docs/RUN_ON_SERVER.md` | **step-by-step: running a study on the lab server** |
-| `docs/operator_runbook.md` | installation, services, backups, alerts, datasets |
-| `docs/requirements_status.md` | every requirement and acceptance test, with evidence |
+
+Internal documentation (server runbook, step-by-step guide, requirements status, governance
+and threat model) is kept in `docs/` locally and is not published.
 
 ## Quick start (any machine, offline)
 

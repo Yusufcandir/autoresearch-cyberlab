@@ -1,4 +1,4 @@
-# Lab server deployment (lab-server). Run from the repo root:
+# Lab server deployment. Run from the repo root:
 #   docker compose -f infra/compose.server.yaml --env-file .env up -d --build
 # Every port binds to 127.0.0.1 only; reach the dashboard through an SSH tunnel.
 # GPU inside Docker needs the NVIDIA Container Toolkit (admin installs it once). Without it,
