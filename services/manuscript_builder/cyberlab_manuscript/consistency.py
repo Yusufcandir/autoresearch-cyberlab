@@ -418,6 +418,16 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "was used for the wrong quantity)",
                 )
                 continue
+            claimed = _claimed_primary(sent)
+            if claimed and claimed != _study_primary(analysis):
+                add(
+                    name,
+                    sent,
+                    "WRONG_PRIMARY_METRIC",
+                    f"calls {claimed.replace('_', ' ')} the primary metric, but the study's "
+                    f"primary metric is {_study_primary(analysis).replace('_', ' ')}",
+                )
+                continue
             if overlap == 0 and LEAK.search(sent) and not NO_LEAK.search(sent):
                 add(
                     name,
@@ -535,3 +545,33 @@ def accuracy_gap_models(analysis: dict[str, Any]) -> list[str]:
         if acc is not None and bal is not None and acc - bal > GAP_THRESHOLD:
             out.append(name)
     return out
+
+
+_METRIC_WORDS = {
+    "balanced_accuracy": r"balanced accuracy",
+    "macro_f1": r"macro[- ]?f1|macro[- ]averaged f1",
+    "mcc": r"mcc|matthews",
+    "accuracy": r"(?<!balanced )accuracy",
+}
+_PRIMARY = re.compile(
+    r"(?i)\b(?P<m>balanced accuracy|macro[- ]?f1|macro[- ]averaged f1|mcc|matthews[\w ]*?|accuracy)"
+    r"\s+(?:as|is|was|being)\s+(?:the|a|our)\s+(?:sole\s+|main\s+)?primary\s+(?:evaluation\s+)?metric"
+)
+
+
+def _claimed_primary(sentence: str) -> str | None:
+    m = _PRIMARY.search(sentence)
+    if not m:
+        return None
+    word = m.group("m").lower()
+    for key, pat in _METRIC_WORDS.items():
+        if re.fullmatch(pat, word) or (key == "mcc" and word.startswith("matthews")):
+            return key
+    return None
+
+
+def _study_primary(analysis: dict[str, Any]) -> str:
+    for h in analysis.get("hypotheses", []):
+        if h.get("metric"):
+            return str(h["metric"])
+    return "macro_f1"

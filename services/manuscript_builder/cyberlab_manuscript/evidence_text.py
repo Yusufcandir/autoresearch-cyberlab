@@ -277,12 +277,13 @@ def operational_text(analysis: dict[str, Any]) -> str:
     }
     fprs = {n: v for n, v in fprs.items() if isinstance(v, (int, float))}
     if fprs and min(fprs.values()) >= FPR_NOTABLE:
-        lo, hi = min(fprs.values()), max(fprs.values())
-        rng = f"{lo:.4f}" if abs(hi - lo) < 5e-5 else f"between {lo:.4f} and {hi:.4f}"
+        # every value is named with its model, so the consistency checks can trace it
+        parts = _and(
+            [f"{v:.4f} for {pretty(n)}" for n, v in sorted(fprs.items(), key=lambda x: x[1])]
+        )
         out.append(
-            f"The false-positive rate was {rng} for every model, i.e. that share of BENIGN test "
-            "rows was flagged as an attack; at this rate the models would need further work "
-            "before operational use."
+            "The false-positive rate (the share of BENIGN test rows flagged as an attack) was "
+            f"{parts}; at these rates the models would need further work before operational use."
         )
     per_class = [m.get("per_class") or {} for m in models.values()]
     if per_class:
@@ -525,7 +526,14 @@ def lock_evidence(
     # sentences this module generates are removed silently and re-added below (idempotent)
     generated = set(
         split_sentences(
-            " ".join([findings_text(analysis), discussion_lead(analysis), gap_text(analysis)])
+            " ".join(
+                [
+                    findings_text(analysis),
+                    discussion_lead(analysis),
+                    gap_text(analysis),
+                    operational_text(analysis),
+                ]
+            )
         )
     )
     for name, body in sections(markdown):

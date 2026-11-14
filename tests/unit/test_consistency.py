@@ -388,8 +388,20 @@ def test_operational_text_reports_fpr_and_missed_classes() -> None:
         }
 
     text = operational_text({"models": {"a": model(0.22, 0.4), "b": model(0.36, 0.0)}})
-    assert "between 0.2200 and 0.3600" in text
+    assert "0.2200 for a and 0.3600 for b" in text
     assert "No model detected any Analysis test row" in text and "Worms" not in text
     assert operational_text({"models": {"a": model(0.01, 0.4)}}) == (
         "No model detected any Analysis test row (recall 0 for every model, first seed)."
     )
+
+
+def test_wrong_primary_metric_is_flagged() -> None:
+    from cyberlab_manuscript.consistency import _claimed_primary
+
+    assert (
+        _claimed_primary("The reliance on accuracy as a primary metric can obscure weaknesses.")
+        == "accuracy"
+    )
+    assert _claimed_primary("We used macro-F1 as the primary metric.") == "macro_f1"
+    assert _claimed_primary("Balanced accuracy is the primary metric here.") == "balanced_accuracy"
+    assert _claimed_primary("Accuracy can be misleading.") is None
