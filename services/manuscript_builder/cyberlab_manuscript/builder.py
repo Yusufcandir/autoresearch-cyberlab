@@ -459,11 +459,23 @@ def build_manuscript(
                 hypotheses_table(analysis),
                 "",
             ]
+            from cyberlab_manuscript.figures import _primary_metric, figures_markdown
+
+            metric = _primary_metric(analysis)
             best = max(
                 analysis["models"],
-                key=lambda n: analysis["models"][n]["aggregate"]["macro_f1"]["mean"],
+                key=lambda n: (analysis["models"][n]["aggregate"].get(metric) or {}).get(
+                    "mean", float("-inf")
+                ),
             )
             out += [f"### Per-class results ({best})", "", per_class_table(analysis, best), ""]
+            try:
+                figs = figures_markdown(analysis, best)
+            except Exception as exc:  # noqa: BLE001 - a figure failure must not block the draft
+                report.flag("warning", "FIGURES_FAILED", f"figures could not be drawn: {exc}")
+                figs = ""
+            if figs:
+                out += ["### Figures", "", figs, ""]
     for required in ("abstract", "introduction", "methodology", "results", "conclusion"):
         if not str(sections.get(required, "")).strip():
             report.flag("blocker", "EMPTY_SECTION", f"the {required} section is empty")

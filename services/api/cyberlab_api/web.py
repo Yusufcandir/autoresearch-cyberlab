@@ -524,10 +524,27 @@ def download(
             raise NotFoundOrForbidden(mid)
         require_project_role(s, me, m.project_id)
         if kind == "tex":
+            # LaTeX bundle: .tex + .bib + the figure PNGs, ready to compile
+            import io
+            import zipfile
+
+            from cyberlab_manuscript.figures import extract_figures
             from cyberlab_manuscript.latex import markdown_to_latex
 
-            body, ext = markdown_to_latex(m.markdown, f"manuscript-v{m.version}"), "tex"
-        elif kind == "bib":
+            stem = f"manuscript-v{m.version}"
+            md_files, figs = extract_figures(m.markdown)
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+                z.writestr(f"{stem}.tex", markdown_to_latex(md_files, stem))
+                z.writestr(f"{stem}.bib", m.bibtex or "")
+                for fname, data in figs.items():
+                    z.writestr(fname, data)
+            return Response(
+                buf.getvalue(),
+                media_type="application/zip",
+                headers={"Content-Disposition": f'attachment; filename="{stem}-latex.zip"'},
+            )
+        if kind == "bib":
             body, ext = m.bibtex, "bib"
         else:
             body, ext = m.markdown, "md"

@@ -82,6 +82,27 @@ def markdown_to_latex(markdown: str, bib_name: str = "references") -> str:
         elif ln.startswith("### "):
             close_list()
             body.append(r"\subsection{" + _inline(ln[4:].strip()) + "}")
+        elif (img := re.match(r"^!\[[^\]]*\]\(([^)\s]+)\)", ln)) is not None:
+            close_list()
+            path = img.group(1)
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            caption = ""
+            cap = (
+                re.match(r"^\*Figure \d+\.\s*(.*)\*$", lines[j].strip()) if j < len(lines) else None
+            )
+            if cap:
+                caption, i = cap.group(1), j
+            if path.startswith("data:"):
+                body.append("% figure omitted: export the LaTeX bundle to get the image files")
+            else:
+                body += [
+                    r"\begin{figure}[h]\centering",
+                    r"\includegraphics[width=0.85\linewidth]{" + path + "}",
+                    *([r"\caption{" + _inline(caption) + "}"] if caption else []),
+                    r"\end{figure}",
+                ]
         elif ln.startswith("|"):
             close_list()
             rows = []
@@ -131,6 +152,7 @@ def markdown_to_latex(markdown: str, bib_name: str = "references") -> str:
             r"\usepackage[utf8]{inputenc}",
             r"\usepackage[T1]{fontenc}",
             r"\usepackage[margin=2.5cm]{geometry}",
+            r"\usepackage{graphicx}",
             r"\usepackage{hyperref}",
             r"\title{" + _escape(title) + "}",
             r"\date{}",

@@ -90,7 +90,7 @@ def prose_items(body: str) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     intro = ""
     for para in body.split("\n"):
-        if not para.strip() or para.startswith(("|", "#", ">")):
+        if not para.strip() or para.startswith(("|", "#", ">", "![", "*Figure")):
             continue
         is_item = bool(re.match(r"\s*(?:[-*+]|\d+\.)\s", para))
         ctx = intro if is_item else ""

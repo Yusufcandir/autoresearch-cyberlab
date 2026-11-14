@@ -220,3 +220,30 @@ def test_group_claims_and_fact_doubling_are_cleaned() -> None:
     assert forbidden("All models struggle with detecting the Rare class.", "", known)
     assert not forbidden("Class imbalance can make rare attacks hard to detect.", "", known)
     assert tidy_prose("Rare has only Rare (9 test rows) test rows.") == "Rare has only 9 test rows."
+
+
+def test_figures_are_generated_embedded_and_exportable() -> None:
+    from cyberlab_manuscript.figures import extract_figures, figures_markdown
+    from cyberlab_manuscript.latex import markdown_to_latex
+
+    a = {
+        **ANALYSIS,
+        "models": {
+            n: {
+                **m,
+                "per_class": {
+                    "BENIGN": {"support": 800, "recall": 0.99},
+                    "Rare": {"support": 9, "recall": 0.5},
+                },
+                "confusion_matrix": {"labels": ["BENIGN", "Rare"], "matrix": [[790, 10], [4, 5]]},
+            }
+            for n, m in ANALYSIS["models"].items()
+        },
+    }
+    md = figures_markdown(a, "xgboost")
+    assert md.count("data:image/png;base64,") == 3 and "*Figure 3." in md
+    text, files = extract_figures("# T\n\n## Results\n\n" + md + "\n")
+    assert sorted(files) == ["figure1.png", "figure2.png", "figure3.png"]
+    assert all(f.startswith(b"\x89PNG") for f in files.values())
+    tex = markdown_to_latex(text)
+    assert tex.count(r"\includegraphics") == 3 and r"\caption{" in tex

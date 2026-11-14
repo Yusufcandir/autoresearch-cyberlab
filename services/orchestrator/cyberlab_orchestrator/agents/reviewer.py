@@ -319,7 +319,11 @@ def claim_check(
     prompt = (
         wrap_untrusted("CHECK INPUT", json.dumps(payload), limit=40_000)
         + "\n\n"
-        + (wrap_untrusted("DRAFT", markdown, limit=25_000))
+        + wrap_untrusted(
+            "DRAFT",
+            re.sub(r"!\[[^\]]*\]\(data:image/[^)]+\)", "[figure]", markdown),
+            limit=25_000,
+        )
     )
     result = ctx.llm.complete_json("reviewer.claim_check", CLAIM_SYSTEM, prompt, project_id=pid)
     bad_cites = []
@@ -377,7 +381,9 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         )
         assert ms is not None
         markdown, evidence = ms.markdown, dict(ms.evidence_report)
-    review = ctx.llm.complete_json("reviewer.review", SYSTEM, markdown[:30000], project_id=pid)
+    # embedded figures are images, not text: keep them out of the LLM's context window
+    text_only = re.sub(r"!\[[^\]]*\]\(data:image/[^)]+\)", "[figure]", markdown)
+    review = ctx.llm.complete_json("reviewer.review", SYSTEM, text_only[:30000], project_id=pid)
     analysis = None
     if state.get("analysis_sha256"):
         try:
