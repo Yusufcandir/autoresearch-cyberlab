@@ -337,3 +337,30 @@ def test_double_bracket_citations_are_tidied() -> None:
     assert tidy_prose("Alikhanov et al. [[@Alikhanov2022investigating]] found") == (
         "Alikhanov et al. [@Alikhanov2022investigating] found"
     )
+
+
+def test_related_work_uses_the_evidence_matrix_and_drops_numeric_findings() -> None:
+    from cyberlab_orchestrator.agents.reviewer import backfill_related_work
+
+    papers = {
+        "A": {"title": "Paper A", "authors": ["Ann Smith", "Bo Lee", "Cy Wu"]},
+        "B": {"title": "Paper B", "authors": ["Dee Kim"]},
+        "C": {"title": "Paper C", "authors": []},
+    }
+    matrix = {
+        "A": {
+            "method": "Federated transfer learning",
+            "dataset": "CIC-IDS2017",
+            "finding": "Rare attacks are detected better than with local training",
+        },
+        "B": {"method": "Adaptive SMOTE", "dataset": "n/a", "finding": "Accuracy rose to 99.1%"},
+    }
+    md = "## Related Work\n\nIntro.\n\n## Methodology\n\nM.\n"
+    out, n = backfill_related_work(md, papers, matrix)
+    assert n == 3
+    assert (
+        "Smith et al. [@A] studied federated transfer learning (CIC-IDS2017); they report that rare attacks"
+        in out
+    )
+    assert "Kim [@B] studied adaptive SMOTE." in out and "99.1" not in out
+    assert "“Paper C” [@C]" in out

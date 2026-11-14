@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import select
 
 from cyberlab_common.db import (
+    AgentNote,
     CitationRecord,
     ManuscriptRecord,
     ProtocolVersion,
@@ -260,18 +261,40 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
     return markdown, removed
 
 
-def backfill_related_work(markdown: str, papers: dict[str, dict[str, Any]]) -> tuple[str, int]:
-    """If removals left Related Work citing fewer than half of the verified papers, list the
-    others neutrally from their metadata (authors and title only, nothing a paper must
-    support)."""
+def _matrix_sentence(name: str, key: str, row: dict[str, Any]) -> str | None:
+    """One sentence about a paper from its evidence-matrix row (method/dataset/finding).
+    Findings with numbers are left out: a figure quoted from an abstract is not verified here."""
+    method = str(row.get("method") or "").strip().rstrip(".")
+    dataset = str(row.get("dataset") or "").strip().rstrip(".")
+    finding = str(row.get("finding") or "").strip().rstrip(".")
+    if not method:
+        return None
+    lead = name or "One study"
+    text = f"{lead} [@{key}] studied {method[0].lower() + method[1:]}"
+    if dataset and dataset.lower() not in {"n/a", "none", "not specified", "unknown", "-"}:
+        text += f" ({dataset})"
+    if finding and not re.search(r"\d", finding):
+        text += f"; they report that {finding[0].lower() + finding[1:]}"
+    return text + "."
+
+
+def backfill_related_work(
+    markdown: str,
+    papers: dict[str, dict[str, Any]],
+    matrix: dict[str, dict[str, Any]] | None = None,
+) -> tuple[str, int]:
+    """Make Related Work cover every verified paper. Papers the text does not cite get one
+    sentence from the literature evidence matrix (method, dataset, finding without numbers);
+    a paper with no usable matrix row is listed by author and title only."""
     bodies = _section_bodies(markdown)
     if "Related Work" not in bodies or not papers:
         return markdown, 0
     body = bodies["Related Work"]
     cited = set(re.findall(r"@([A-Za-z0-9_]+)", " ".join(CITE.findall(body))))
     missing = [k for k in papers if k not in cited]
-    if len(cited) * 2 >= len(papers) or not missing:
+    if not missing:
         return markdown, 0
+    matrix = matrix or {}
 
     def name(k: str) -> str:
         authors = [a for a in papers[k].get("authors") or [] if a]
@@ -282,13 +305,24 @@ def backfill_related_work(markdown: str, papers: dict[str, dict[str, Any]]) -> t
             return s1
         return f"{s1} and {authors[1].split()[-1]}" if len(authors) == 2 else f"{s1} et al."
 
-    items = [
-        (f"{name(k)}, " if name(k) else "")
-        + f"“{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]"
-        for k in missing
-    ]
-    para = "Other work relevant to this study includes " + "; ".join(items) + "."
-    return markdown.replace(body, body.rstrip() + "\n\n" + para + "\n\n", 1), len(missing)
+    sentences = []
+    listed = []
+    for k in missing:
+        s = _matrix_sentence(name(k), k, matrix.get(k) or {})
+        if s:
+            sentences.append(s)
+        else:
+            listed.append(
+                (f"{name(k)}, " if name(k) else "")
+                + f"“{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]"
+            )
+    paras = []
+    if sentences:
+        paras.append(" ".join(sentences))
+    if listed:
+        paras.append("Other work relevant to this study includes " + "; ".join(listed) + ".")
+    new_body = body.rstrip() + "\n\n" + "\n\n".join(paras) + "\n\n"
+    return markdown.replace(body, new_body, 1), len(missing)
 
 
 def claim_check(
@@ -490,15 +524,23 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                     + " (the drafted text there did not state them).",
                 }
             )
-        markdown, n_added = backfill_related_work(markdown, verified)
+        with ctx.db.session() as s:
+            note = s.scalar(
+                select(AgentNote)
+                .where(AgentNote.project_id == pid, AgentNote.kind == "evidence_matrix")
+                .order_by(AgentNote.id.desc())
+            )
+            rows = (note.content.get("matrix") if note else None) or []
+        matrix = {r["key"]: r for r in rows if isinstance(r, dict) and r.get("key")}
+        markdown, n_added = backfill_related_work(markdown, verified, matrix)
         if n_added:
             flags.append(
                 {
                     "severity": "warning",
                     "code": "RELATED_WORK_BACKFILLED",
-                    "message": f"Related Work cited too few papers after unsupported sentences "
-                    f"were removed; {n_added} verified paper(s) were listed by author and title. "
-                    "Authors should expand this section.",
+                    "message": f"{n_added} verified paper(s) were not cited in Related Work; "
+                    "they were added from the literature evidence matrix (method, data and "
+                    "number-free findings, Proposed) or by author and title. Check them.",
                 }
             )
     evidence["flags"] = flags
