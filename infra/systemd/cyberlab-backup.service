@@ -1,0 +1,8 @@
+[Unit]
+Description=AutoResearch-CyberLab nightly backup (+ off-site copy if BACKUP_REMOTE is set)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/autoresearch-cyberlab
+EnvironmentFile=%h/autoresearch-cyberlab/.env
+ExecStart=/bin/bash %h/autoresearch-cyberlab/scripts/backup.sh

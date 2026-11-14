@@ -1,0 +1,14 @@
+[Unit]
+Description=AutoResearch-CyberLab serve
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/autoresearch-cyberlab
+EnvironmentFile=%h/autoresearch-cyberlab/.env
+ExecStart=%h/.local/bin/uv run --locked cyberlab serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

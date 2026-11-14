@@ -116,6 +116,12 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_plugin_selftest)
 
     p = sub.add_parser(
+        "health-check", help="disk, GPU, database, failed jobs, local model, backup age"
+    )
+    p.add_argument("--alert", action="store_true", help="post problems to ALERT_WEBHOOK")
+    p.set_defaults(func=_health_check)
+
+    p = sub.add_parser(
         "migrate-db", help="copy every table from DATABASE_URL into another (empty) database"
     )
     p.add_argument(
@@ -200,6 +206,22 @@ def _plugin_selftest(args: argparse.Namespace) -> int:
     print(json.dumps(results, indent=2))
     ok = all(v for k, v in results.items() if isinstance(v, bool))
     return 0 if ok else 1
+
+
+def _health_check(args: argparse.Namespace) -> int:
+    import socket
+
+    from cyberlab_common.health import alert, run_all
+
+    settings = Settings()
+    results = run_all(settings)
+    for r in results:
+        mark = "OK  " if r["ok"] else ("WARN" if r["level"] == "warning" else "FAIL")
+        print(f"{mark} {r['check']:<12} {r['detail']}")
+    problems = [r for r in results if not r["ok"]]
+    if problems and args.alert and settings.alert_webhook:
+        alert(settings.alert_webhook, problems, socket.gethostname())
+    return 1 if any(r["level"] == "error" for r in problems) else 0
 
 
 def _migrate_db(args: argparse.Namespace) -> int:

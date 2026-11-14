@@ -1,0 +1,8 @@
+[Unit]
+Description=AutoResearch-CyberLab health check (alerts to ALERT_WEBHOOK)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/autoresearch-cyberlab
+EnvironmentFile=%h/autoresearch-cyberlab/.env
+ExecStart=%h/.local/bin/uv run --locked cyberlab health-check --alert

@@ -72,6 +72,8 @@ class Settings(BaseSettings):
 
     approval_policy_version: str = "1"
     audit_log_destination: str | None = None
+    # Where health-check problems are posted (ntfy topic URL, Slack or Discord webhook).
+    alert_webhook: str | None = None
 
     @property
     def artifact_root(self) -> Path:
