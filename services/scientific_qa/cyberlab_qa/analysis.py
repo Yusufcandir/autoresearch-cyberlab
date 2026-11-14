@@ -84,6 +84,7 @@ def analyze_project(
         models[m.name] = {
             "role": m.role,
             "template": m.template,
+            "params": dict(m.params),
             "seeds": seeds,
             "aggregate": agg,
             "ci_seed": seeds[0],

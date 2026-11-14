@@ -39,6 +39,16 @@ ALLOWED_PARAMS: dict[str, set[str]] = {
 }
 
 
+# Reviewed, documented settings used for every study (spec 7.4: no silent tuning). The protocol
+# agent cannot change them; the PI can, explicitly, through a protocol revision comment.
+DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
+    "logistic_regression": {"C": 1.0, "max_iter": 400},
+    "random_forest": {"n_estimators": 200, "max_depth": None, "min_samples_leaf": 1},
+    "xgboost": {"n_estimators": 300, "max_depth": 8, "learning_rate": 0.1, "subsample": 0.9},
+    "mlp": {"hidden_layer_sizes": [128, 64], "alpha": 0.0001, "max_iter": 60},
+}
+
+
 def _check_params(template: str, params: dict[str, Any]) -> None:
     extra = set(params) - ALLOWED_PARAMS[template]
     if extra:

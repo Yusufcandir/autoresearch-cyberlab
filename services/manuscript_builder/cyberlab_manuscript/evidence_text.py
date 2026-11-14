@@ -278,6 +278,14 @@ def discussion_lead(analysis: dict[str, Any]) -> str:
     return " ".join(sents)
 
 
+def _setting(v: Any) -> str:
+    """Model settings in text: tiny floats in scientific notation so they never look like a
+    measured score (e.g. alpha=1e-04, not 0.0001)."""
+    if isinstance(v, float) and 0 < abs(v) < 0.01:
+        return f"{v:.0e}"
+    return str(v)
+
+
 def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str, Any]) -> str:
     """Methodology from the deterministic method facts ('facts.x' references filled in)."""
 
@@ -292,6 +300,17 @@ def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str
             + _and([f"{pretty(n)} ({m.get('role', 'model')})" for n, m in models.items()])
             + "."
         )
+        settings = [
+            f"{pretty(n)}: " + ", ".join(f"{k}={_setting(v)}" for k, v in m["params"].items())
+            for n, m in models.items()
+            if m.get("params")
+        ]
+        if settings:
+            statements.append(
+                "All models used fixed, reviewed settings (no tuning on the test split): "
+                + "; ".join(settings)
+                + "."
+            )
     # paragraphs: data preparation / split and training / statistics
     cut1 = next((i for i, s in enumerate(statements) if "split" in s.lower()), len(statements))
     cut2 = next(

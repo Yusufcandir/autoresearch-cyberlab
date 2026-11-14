@@ -84,3 +84,26 @@ def test_off_topic_papers_score_zero() -> None:
         )
         > 0
     )
+
+
+def test_model_settings_are_reviewed_defaults_unless_the_pi_asks() -> None:
+    from cyberlab_orchestrator.agents.methodology import _fixed_params
+    from cyberlab_tabular.templates import DEFAULT_PARAMS
+
+    base = default_protocol("p", "cicids2017-mlcsv-v1")
+    agent_choice = base.model_copy(
+        update={
+            "models": [
+                m.model_copy(update={"params": {"max_depth": 5}})
+                if m.template == "random_forest"
+                else m
+                for m in base.models
+            ]
+        }
+    )
+    proto, _ = _fixed_params(agent_choice, "")
+    rf = next(m for m in proto.models if m.template == "random_forest")
+    assert rf.params == DEFAULT_PARAMS["random_forest"]  # the agent's max_depth=5 is ignored
+    proto, notes = _fixed_params(agent_choice, "use random_forest max_depth 20")
+    rf = next(m for m in proto.models if m.template == "random_forest")
+    assert rf.params["max_depth"] == 20 and any("PI-requested" in n for n in notes)

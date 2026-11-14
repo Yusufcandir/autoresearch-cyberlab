@@ -61,6 +61,8 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         project_id=pid,
     )
     protocol, rationale, problems = _merge(base, proposal)
+    protocol, fixed = _fixed_params(protocol, feedback)
+    problems += fixed
     protocol, enforced = _enforce_intent(protocol, intent, goal)
     problems += enforced
     with ctx.db.session() as s:
@@ -97,6 +99,44 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         )
     ctx.set_stage(pid, "protocol_drafted", "Proposed")
     return {"protocol_version": version, "protocol_sha256": protocol.sha256}
+
+
+def pi_param_overrides(feedback: str) -> dict[str, dict[str, Any]]:
+    """Settings the PI asked for in a 'Request changes' comment, e.g.
+    'random_forest max_depth 20' or 'mlp hidden_layer_sizes [128, 64]'."""
+    import ast
+
+    from cyberlab_tabular.templates import ALLOWED_PARAMS
+
+    out: dict[str, dict[str, Any]] = {}
+    for tmpl, allowed in ALLOWED_PARAMS.items():
+        for p in allowed:
+            m = re.search(
+                rf"{tmpl}\W+(?:[\w ]*?\b)?{p}\s*[=:]?\s*(\[[^\]]*\]|[\d.]+|None)", feedback, re.I
+            )
+            if m:
+                try:
+                    out.setdefault(tmpl, {})[p] = ast.literal_eval(m.group(1))
+                except (ValueError, SyntaxError):
+                    continue
+    return out
+
+
+def _fixed_params(protocol: Protocol, feedback: str) -> tuple[Protocol, list[str]]:
+    """Every model gets the reviewed default settings; only the PI's explicit comment changes
+    them. The agent's own parameter choices are ignored (they can decide a hypothesis)."""
+    from cyberlab_tabular.templates import DEFAULT_PARAMS
+
+    overrides = pi_param_overrides(feedback or "")
+    models = []
+    for mdl in protocol.models:
+        params = {**DEFAULT_PARAMS[mdl.template], **overrides.get(mdl.template, {})}
+        models.append(mdl.model_copy(update={"params": params}))
+    notes = ["model settings: reviewed defaults"]
+    if overrides:
+        notes.append(f"PI-requested settings applied: {overrides}")
+    updated = protocol.model_copy(update={"models": models})
+    return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
 
 
 def _enforce_intent(
