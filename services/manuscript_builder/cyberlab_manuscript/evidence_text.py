@@ -263,6 +263,45 @@ def gap_text(analysis: dict[str, Any]) -> str:
     )
 
 
+FPR_NOTABLE = 0.05
+
+
+def operational_text(analysis: dict[str, Any]) -> str:
+    """Facts a reader of an IDS paper needs that aggregate scores hide: a high false-positive
+    rate, and classes that no model detected at all."""
+    out = []
+    models = analysis.get("models", {})
+    fprs = {
+        n: (m.get("aggregate", {}).get("false_positive_rate") or {}).get("mean")
+        for n, m in models.items()
+    }
+    fprs = {n: v for n, v in fprs.items() if isinstance(v, (int, float))}
+    if fprs and min(fprs.values()) >= FPR_NOTABLE:
+        lo, hi = min(fprs.values()), max(fprs.values())
+        rng = f"{lo:.4f}" if abs(hi - lo) < 5e-5 else f"between {lo:.4f} and {hi:.4f}"
+        out.append(
+            f"The false-positive rate was {rng} for every model, i.e. that share of BENIGN test "
+            "rows was flagged as an attack; at this rate the models would need further work "
+            "before operational use."
+        )
+    per_class = [m.get("per_class") or {} for m in models.values()]
+    if per_class:
+        classes = set.intersection(*(set(pc) for pc in per_class))
+        missed = sorted(
+            c
+            for c in classes
+            if c != "BENIGN"
+            and all((pc.get(c) or {}).get("recall", 1) == 0 for pc in per_class)
+            and all((pc.get(c) or {}).get("support", 0) > 0 for pc in per_class)
+        )
+        if missed:
+            out.append(
+                f"No model detected any {_and(missed)} test row (recall 0 for every model, "
+                "first seed)."
+            )
+    return " ".join(out)
+
+
 def discussion_lead(analysis: dict[str, Any]) -> str:
     sents = []
     supported = [h for h in _tested_hyps(analysis) if h.get("result") == "supported"]
@@ -524,7 +563,11 @@ def lock_evidence(
             at = next((i for i, s in enumerate(sents) if future.match(s)), len(sents))
             kept = " ".join(sents[:at] + [findings_text(analysis)] + sents[at:])
         elif name == "Discussion":
-            lead = [p for p in (discussion_lead(analysis), gap_text(analysis)) if p]
+            lead = [
+                p
+                for p in (discussion_lead(analysis), gap_text(analysis), operational_text(analysis))
+                if p
+            ]
             kept = "\n\n".join(lead + ([kept] if kept else []))
         if not kept.strip() and name in ("Introduction", "Limitations"):
             # every model-written sentence was a result claim: state the scope factually

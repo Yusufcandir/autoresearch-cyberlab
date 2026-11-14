@@ -359,8 +359,37 @@ def test_related_work_uses_the_evidence_matrix_and_drops_numeric_findings() -> N
     out, n = backfill_related_work(md, papers, matrix)
     assert n == 3
     assert (
-        "Smith et al. [@A] studied federated transfer learning (CIC-IDS2017); they report that rare attacks"
-        in out
+        "Smith et al. [@A] studied federated transfer learning (CIC-IDS2017). Main finding "
+        "reported: Rare attacks" in out
     )
     assert "Kim [@B] studied adaptive SMOTE." in out and "99.1" not in out
     assert "“Paper C” [@C]" in out
+
+
+def test_matrix_sentence_skips_placeholders_and_keeps_acronyms() -> None:
+    from cyberlab_orchestrator.agents.reviewer import _matrix_sentence
+
+    assert _matrix_sentence("Moustafa and Slay", "K", {"method": "not stated"}) is None
+    s = _matrix_sentence("M", "K", {"method": "SMOTE oversampling", "dataset": "Not specified"})
+    assert s == "M [@K] studied SMOTE oversampling."
+
+
+def test_operational_text_reports_fpr_and_missed_classes() -> None:
+    from cyberlab_manuscript.evidence_text import operational_text
+
+    def model(fpr: float, rec: float) -> dict:
+        return {
+            "aggregate": {"false_positive_rate": {"mean": fpr}},
+            "per_class": {
+                "BENIGN": {"recall": 0.8, "support": 100},
+                "Analysis": {"recall": 0.0, "support": 58},
+                "Worms": {"recall": rec, "support": 43},
+            },
+        }
+
+    text = operational_text({"models": {"a": model(0.22, 0.4), "b": model(0.36, 0.0)}})
+    assert "between 0.2200 and 0.3600" in text
+    assert "No model detected any Analysis test row" in text and "Worms" not in text
+    assert operational_text({"models": {"a": model(0.01, 0.4)}}) == (
+        "No model detected any Analysis test row (recall 0 for every model, first seed)."
+    )

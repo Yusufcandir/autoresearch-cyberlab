@@ -248,18 +248,40 @@ def remove_sentences(markdown: str, sentences: list[str]) -> tuple[str, int]:
 def _matrix_sentence(name: str, key: str, row: dict[str, Any]) -> str | None:
     """One sentence about a paper from its evidence-matrix row (method/dataset/finding).
     Findings with numbers are left out: a figure quoted from an abstract is not verified here."""
-    method = str(row.get("method") or "").strip().rstrip(".")
-    dataset = str(row.get("dataset") or "").strip().rstrip(".")
-    finding = str(row.get("finding") or "").strip().rstrip(".")
+
+    def clean(v: Any) -> str:
+        s = str(v or "").strip().rstrip(".")
+        return "" if EMPTY.fullmatch(s) else s
+
+    method, dataset, finding = (
+        clean(row.get("method")),
+        clean(row.get("dataset")),
+        clean(row.get("finding")),
+    )
     if not method:
         return None
     lead = name or "One study"
-    text = f"{lead} [@{key}] studied {method[0].lower() + method[1:]}"
-    if dataset and dataset.lower() not in {"n/a", "none", "not specified", "unknown", "-"}:
+    text = f"{lead} [@{key}] studied {_lower_first(method)}"
+    if dataset:
         text += f" ({dataset})"
     if finding and not re.search(r"\d", finding):
-        text += f"; they report that {finding[0].lower() + finding[1:]}"
+        text += f". Main finding reported: {_upper_first(finding)}"
     return text + "."
+
+
+EMPTY = re.compile(r"(?i)|n/?a|none|-|unknown|not (?:stated|specified|reported|given|available)")
+
+
+def _lower_first(s: str) -> str:
+    """Lower-case a leading ordinary word, never an acronym or name (SMOTE, XGBoost, Pegasos-QSVC)."""
+    w = s.split(" ", 1)[0]
+    if len(w) > 1 and w[0].isupper() and w[1:].islower() and w.isalpha():
+        return s[0].lower() + s[1:]
+    return s
+
+
+def _upper_first(s: str) -> str:
+    return s[:1].upper() + s[1:]
 
 
 def backfill_related_work(

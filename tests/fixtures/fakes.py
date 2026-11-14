@@ -59,7 +59,9 @@ def scholarly_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": results})
     if "api.crossref.org/works/" in url:
         doi = url.split("/works/", 1)[1].split("?")[0]
-        doi = next((d for d in PAPERS if d.lower() == doi.lower()), doi)  # DOIs are case-insensitive
+        doi = next(
+            (d for d in PAPERS if d.lower() == doi.lower()), doi
+        )  # DOIs are case-insensitive
         if doi in PAPERS:
             return httpx.Response(
                 200,
