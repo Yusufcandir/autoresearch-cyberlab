@@ -120,9 +120,18 @@ _TEMPORAL = re.compile(
 )
 
 
+_OFFICIAL = re.compile(
+    r"official (?:train(?:ing)?[/ -]?(?:and )?test(?:ing)? )?(?:split|partition|sets?)|"
+    r"(?:provided|predefined|standard) train(?:ing)?[/ -]?(?:and )?test(?:ing)? (?:split|sets?)",
+    re.I,
+)
+
+
 def split_from_goal(goal: str) -> dict[str, Any] | None:
-    """A by-day split when the goal asks for one, with the test days it names
-    ('train on Monday to Wednesday and test on Thursday and Friday')."""
+    """The official partition when the goal asks for it (UNSW-NB15), or a by-day split with
+    the test days it names ('train on Monday to Wednesday and test on Thursday and Friday')."""
+    if _OFFICIAL.search(goal):
+        return {"strategy": "official"}
     if not _TEMPORAL.search(goal) and not re.search(r"\btest(?:ed|ing)? on (?:\w+day)", goal, re.I):
         return None
     m = re.search(r"\btest(?:ed|ing)?\b(.{0,80})", goal, re.I | re.S)

@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 
 from cyberlab_common.db import ApprovalRecord, DatasetRecord, ProtocolVersion, audit
-from cyberlab_data import DatasetBlocked, dataset_record_id, is_default_split, prepare
+from cyberlab_data import DatasetBlocked, dataset_record_id, get_adapter, is_default_split
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_protocol import CompileError, compile_protocol
 from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol
@@ -28,8 +28,9 @@ def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str 
         if rec is not None and rec.status == "verified":
             return None
     try:
-        prepared = prepare(
-            ctx.settings.dataset_root / "cicids2017",
+        adapter = get_adapter(protocol.dataset_id)
+        prepared = adapter.prepare(
+            adapter.root(ctx.settings.dataset_root),
             protocol.split,
             benign_cap=ctx.extra.get("benign_cap", 400_000),
         )

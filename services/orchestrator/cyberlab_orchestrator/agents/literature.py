@@ -9,10 +9,10 @@ import httpx
 from sqlalchemy import select
 
 from cyberlab_common.db import CitationRecord
-from cyberlab_data import CICIDS2017
 from cyberlab_literature import Paper, citation_key
 from cyberlab_llm.gateway import wrap_untrusted
 from cyberlab_orchestrator.context import LabContext
+from cyberlab_orchestrator.datasets import project_adapter
 
 SYSTEM = (
     "You are a literature review agent. Build an evidence matrix ONLY from the verified paper "
@@ -58,12 +58,13 @@ def literature_agent(
         )
     # most on-topic first, then most cited
     ranked = sorted(relevant, key=lambda p: (-relevance(p), -p.cited_by))[:max_papers]
+    adapter = project_adapter(ctx, pid)
     dataset_paper = Paper(
-        title="Toward Generating a New Intrusion Detection Dataset and Intrusion Traffic Characterization",
-        doi=CICIDS2017.citation_doi,
-        year=2018,
-        authors=["Iman Sharafaldin", "Arash Habibi Lashkari", "Ali A. Ghorbani"],
-        venue="ICISSP 2018",
+        title=adapter.paper["title"],
+        doi=adapter.info.citation_doi,
+        year=adapter.paper["year"],
+        authors=list(adapter.paper["authors"]),
+        venue=adapter.paper["venue"],
     )
     ctx.authorize("literature", "citation_verify", "T0", pid)
     verified: list[Paper] = []
@@ -75,7 +76,7 @@ def literature_agent(
             except httpx.HTTPError as exc:
                 p.status, p.verification_note = "Unverified", str(exc)
                 v = p
-            key = "Sharafaldin2018dataset" if p is dataset_paper else citation_key(v)
+            key = adapter.paper["key"] if p is dataset_paper else citation_key(v)
             if s.scalar(
                 select(CitationRecord).where(
                     CitationRecord.project_id == pid, CitationRecord.key == key

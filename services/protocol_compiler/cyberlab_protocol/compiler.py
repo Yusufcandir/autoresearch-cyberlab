@@ -28,14 +28,16 @@ class CompileError(ValueError):
         self.reasons = reasons
 
 
-def default_protocol(project_id: str, dataset_id: str, version: int = 1) -> Protocol:
-    """A sound baseline protocol for CIC-IDS2017 that agents refine and the PI approves."""
+def default_protocol(
+    project_id: str, dataset_id: str, version: int = 1, dataset_name: str = "CIC-IDS2017"
+) -> Protocol:
+    """A sound baseline protocol that agents refine and the PI approves."""
     return Protocol(
         project_id=project_id,
         version=version,
         research_questions=[
             "How do classical and gradient-boosted models compare for multiclass intrusion "
-            "detection on de-duplicated CIC-IDS2017?",
+            f"detection on de-duplicated {dataset_name}?",
         ],
         hypotheses=[
             Hypothesis(

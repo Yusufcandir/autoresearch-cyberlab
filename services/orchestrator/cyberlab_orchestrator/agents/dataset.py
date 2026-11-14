@@ -5,18 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 from cyberlab_common.db import DatasetRecord, audit
-from cyberlab_data import DatasetBlocked, prepare
-from cyberlab_data.cicids2017 import DATASET_ID
+from cyberlab_data import DatasetBlocked
 from cyberlab_orchestrator.context import LabContext
+from cyberlab_orchestrator.datasets import project_adapter
 from cyberlab_schemas import DatasetManifest, SplitSpec
 
 
 def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
     ctx.authorize("dataset", "dataset_register", "T1", pid)
-    root = ctx.settings.dataset_root / "cicids2017"
+    adapter = project_adapter(ctx, pid)
+    root = adapter.root(ctx.settings.dataset_root)
     with ctx.db.session() as s:
-        existing = s.get(DatasetRecord, DATASET_ID)
+        existing = s.get(DatasetRecord, adapter.dataset_id)
         if (
             existing is not None
             and existing.status == "verified"
@@ -25,7 +26,9 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             m = DatasetManifest.model_validate(existing.manifest)
             return {"dataset_status": "verified", "dataset_summary": _summary(m)}
     try:
-        prepared = prepare(root, SplitSpec(), benign_cap=ctx.extra.get("benign_cap", 400_000))
+        prepared = adapter.prepare(
+            root, SplitSpec(), benign_cap=ctx.extra.get("benign_cap", 400_000)
+        )
         manifest = prepared.manifest
     except DatasetBlocked as exc:
         ctx.set_stage(pid, "dataset_blocked", "Blocked", "; ".join(exc.reasons))
@@ -33,11 +36,11 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             audit(s, "dataset_agent", "dataset.blocked", pid, {"reasons": exc.reasons})
         return {"dataset_status": "blocked", "blocked_reason": "; ".join(exc.reasons)}
     with ctx.db.session() as s:
-        rec = s.get(DatasetRecord, DATASET_ID)
+        rec = s.get(DatasetRecord, adapter.dataset_id)
         if rec is None:
             s.add(
                 DatasetRecord(
-                    id=DATASET_ID,
+                    id=adapter.dataset_id,
                     name=manifest.name,
                     manifest=manifest.model_dump(mode="json"),
                     status=manifest.status,

@@ -14,42 +14,46 @@ Known data issues handled here (documented in the manifest so they appear in the
 
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 import zipfile
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from cyberlab_schemas import DatasetManifest, SplitSpec
+from cyberlab_data.common import (  # noqa: F401 - re-exported for existing imports
+    DatasetBlocked,
+    DatasetInfo,
+    PreparedDataset,
+    dataset_record_id,
+    finalize,
+    is_default_split,
+    load_split,
+    manifest_summary,
+    prepared_dir_for,
+    sha256_file,
+    split_key,
+)
+from cyberlab_schemas import SplitSpec
 
 DATASET_ID = "cicids2017-mlcsv-v1"
 
 
-@dataclass(frozen=True)
-class _Info:
-    name: str = "CIC-IDS2017 (MachineLearningCSV)"
-    source_url: str = "https://www.unb.ca/cic/datasets/ids-2017.html"
-    download_url: str = (
-        "http://205.174.165.80/CICDataset/CIC-IDS-2017/Dataset/MachineLearningCSV.zip"
-    )
-    license: str = (
+CICIDS2017 = DatasetInfo(
+    name="CIC-IDS2017 (MachineLearningCSV)",
+    source_url="https://www.unb.ca/cic/datasets/ids-2017.html",
+    download_url="http://205.174.165.80/CICDataset/CIC-IDS-2017/Dataset/MachineLearningCSV.zip",
+    license=(
         "Canadian Institute for Cybersecurity dataset licence: free for research use; "
         "redistribution not permitted; cite Sharafaldin et al. (2018)."
-    )
-    citation: str = (
+    ),
+    citation=(
         "I. Sharafaldin, A. H. Lashkari, A. A. Ghorbani. Toward Generating a New Intrusion "
         "Detection Dataset and Intrusion Traffic Characterization. ICISSP 2018. "
         "doi:10.5220/0006639801080116"
-    )
-    citation_doi: str = "10.5220/0006639801080116"
-
-
-CICIDS2017 = _Info()
+    ),
+    citation_doi="10.5220/0006639801080116",
+)
 
 LABEL_GROUPS = {
     "BENIGN": "BENIGN",
@@ -70,30 +74,6 @@ LABEL_GROUPS = {
 }
 
 DAY_PATTERN = re.compile(r"(monday|tuesday|wednesday|thursday|friday)", re.I)
-
-
-class DatasetBlocked(RuntimeError):
-    def __init__(self, reasons: list[str]):
-        super().__init__("; ".join(reasons))
-        self.reasons = reasons
-
-
-@dataclass
-class PreparedDataset:
-    manifest: DatasetManifest
-    root: Path
-
-    @property
-    def clean_path(self) -> Path:
-        return self.root / "clean.parquet"
-
-
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def normalize_label(raw: str) -> str:
@@ -165,25 +145,6 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return df
 
 
-def is_default_split(split: SplitSpec | None) -> bool:
-    return split is None or split.model_dump() == SplitSpec().model_dump()
-
-
-def split_key(split: SplitSpec) -> str:
-    """Short stable id of a split definition (part of the prepared directory name)."""
-    return hashlib.sha256(split.model_dump_json().encode()).hexdigest()[:12]
-
-
-def prepared_dir_for(root: Path, split: SplitSpec | None) -> Path:
-    """Each split the protocols ask for gets its own prepared copy (the default keeps the
-    original location), so one study's split can never be silently replaced by another's."""
-    return root / "prepared" if is_default_split(split) else root / f"prepared-{split_key(split)}"  # type: ignore[arg-type]
-
-
-def dataset_record_id(dataset_id: str, split: SplitSpec | None) -> str:
-    return dataset_id if is_default_split(split) else f"{dataset_id}@{split_key(split)}"  # type: ignore[arg-type]
-
-
 def prepare(
     root: Path,
     split: SplitSpec | None = None,
@@ -192,6 +153,8 @@ def prepare(
 ) -> PreparedDataset:
     """Clean, de-duplicate, split and hash CIC-IDS2017. Raises DatasetBlocked on gate failure."""
     split = split or SplitSpec()
+    if split.strategy == "official":
+        raise DatasetBlocked(["CIC-IDS2017 has no official train/test partition"])
     raw = root / "raw"
     csvs = sorted(raw.glob("*.csv")) if raw.exists() else []
     if not csvs:
@@ -200,128 +163,23 @@ def prepare(
     df = pd.concat([_read_csv(p) for p in csvs], ignore_index=True)
     if "Label" not in df.columns:
         raise DatasetBlocked(["no Label column found"])
-    n_raw = len(df)
-
     df["Label"] = df["Label"].map(normalize_label)
     unknown = sorted(set(df["Label"]) - set(LABEL_GROUPS))
     if unknown:
         raise DatasetBlocked([f"unknown labels: {unknown}"])
     df["Class"] = df["Label"].map(LABEL_GROUPS)
-
-    features = [c for c in df.columns if c not in {"Label", "Class", "Day"}]
-    df[features] = df[features].apply(pd.to_numeric, errors="coerce")
-    df[features] = df[features].replace([np.inf, -np.inf], np.nan)
-    n_bad = int(df[features].isna().any(axis=1).sum())
-    df = df.dropna(subset=features)
-    df[features] = df[features].astype("float32")
-    constant = [c for c in features if df[c].nunique() <= 1]
-    features = [c for c in features if c not in constant]
-
-    before = len(df)
-    df = df.drop_duplicates(subset=[*features, "Class"])
-    n_dups = before - len(df)
-    feat_hash = pd.util.hash_pandas_object(df[features], index=False)
-    conflict_mask = feat_hash.duplicated(keep=False) & (
-        df.assign(_h=feat_hash.to_numpy()).groupby("_h")["Class"].transform("nunique").to_numpy()
-        > 1
-    )
-    n_conflicts = int(conflict_mask.sum())
-    df = df.loc[~conflict_mask]
-
-    rng = np.random.default_rng(split.seed)
-    caps: list[pd.DataFrame] = []
-    for cls, g in df.groupby("Class"):
-        cap = benign_cap if cls == "BENIGN" else class_cap
-        if cap is not None and len(g) > cap:
-            g = g.iloc[rng.choice(len(g), size=cap, replace=False)]
-        caps.append(g)
-    df = pd.concat(caps).reset_index(drop=True)
-    df["split"] = _assign_split(df, split, rng)
-
-    reasons: list[str] = []
-    feat_hash = pd.util.hash_pandas_object(df[features], index=False)
-    train_h = set(feat_hash[df["split"] == "train"])
-    overlap = int(feat_hash[df["split"] == "test"].isin(train_h).sum())
-    if overlap:
-        reasons.append(f"{overlap} test rows also appear in train (leakage)")
-    test_counts = df.loc[df["split"] == "test", "Class"].value_counts()
-    missing = sorted(set(df["Class"]) - set(test_counts.index))
-    if split.strategy == "by_day":
-        # Testing on unseen days means some attack types only exist in train or test: that is
-        # the point of the design, recorded in the manifest. Only a one-class test set blocks.
-        if len(test_counts) < 2:
-            reasons.append(f"test days {split.test_days} contain fewer than two classes")
-    elif missing:
-        reasons.append(f"classes absent from test split: {missing}")
-
-    out = prepared_dir_for(root, split)
-    out.mkdir(parents=True, exist_ok=True)
-    df[[*features, "Class", "Day", "split"]].to_parquet(out / "clean.parquet", index=False)
-    manifest = DatasetManifest(
+    df = df.drop(columns=["Label"])
+    return finalize(
+        df,
+        root=root,
+        split=split,
         dataset_id=DATASET_ID,
-        name=CICIDS2017.name,
-        source_url=CICIDS2017.source_url,
-        license=CICIDS2017.license,
-        citation=CICIDS2017.citation,
+        info=CICIDS2017,
         files=files,
-        n_rows_raw=n_raw,
-        n_rows_clean=len(df),
-        n_duplicates_removed=n_dups + n_conflicts,
-        features=features,
-        label_column="Class",
-        class_counts={str(k): int(v) for k, v in df["Class"].value_counts().items()},
-        split_counts={str(k): int(v) for k, v in df["split"].value_counts().items()},
-        split_overlap_rows=overlap,
-        status="blocked" if reasons else "verified",
-        blocked_reasons=reasons,
+        group_column="Day",
+        benign_cap=benign_cap,
+        class_cap=class_cap,
     )
-    notes = {
-        "rows_with_inf_or_nan_dropped": n_bad,
-        "exact_duplicates_dropped": n_dups,
-        "conflicting_label_rows_dropped": n_conflicts,
-        "constant_features_dropped": constant,
-        "benign_cap": benign_cap,
-        "class_cap": class_cap,
-        "clean_parquet_sha256": sha256_file(out / "clean.parquet"),
-        "split": split.model_dump(),
-    }
-    (out / "manifest.json").write_text(manifest.model_dump_json(indent=2))
-    (out / "preprocessing_notes.json").write_text(json.dumps(notes, indent=2))
-    return PreparedDataset(manifest, out)
-
-
-def _assign_split(df: pd.DataFrame, split: SplitSpec, rng: np.random.Generator) -> np.ndarray:
-    labels = np.empty(len(df), dtype=object)
-    if split.strategy == "by_day":
-        test_days = {d.capitalize() for d in split.test_days}
-        if not test_days:
-            raise DatasetBlocked(["by_day split needs test_days"])
-        labels[:] = "train"
-        labels[df["Day"].isin(test_days).to_numpy()] = "test"
-        train_idx = np.flatnonzero(labels == "train")
-        n_val = int(len(train_idx) * split.val_fraction)
-        labels[rng.choice(train_idx, size=n_val, replace=False)] = "val"
-        return labels
-    for _cls, idx in df.groupby("Class").indices.items():
-        idx = rng.permutation(idx)
-        n_test = max(1, round(len(idx) * split.test_fraction))
-        n_val = round(len(idx) * split.val_fraction) if len(idx) - n_test > 2 else 0
-        labels[idx[:n_test]] = "test"
-        labels[idx[n_test : n_test + n_val]] = "val"
-        labels[idx[n_test + n_val :]] = "train"
-    return labels
-
-
-def load_split(
-    prepared_dir: Path, which: str, label_scheme: str = "multiclass"
-) -> tuple[pd.DataFrame, pd.Series]:
-    df = pd.read_parquet(prepared_dir / "clean.parquet")
-    manifest = json.loads((prepared_dir / "manifest.json").read_text())
-    part = df[df["split"] == which]
-    y = part["Class"]
-    if label_scheme == "binary":
-        y = (y != "BENIGN").map({True: "ATTACK", False: "BENIGN"})
-    return part[manifest["features"]], y.reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------- test fixture
@@ -375,14 +233,3 @@ def write_fixture(raw_dir: Path, rows_per_class: int = 120, seed: int = 7) -> li
             df.to_csv(fh, header=False, index=False)
         paths.append(path)
     return paths
-
-
-def manifest_summary(m: DatasetManifest) -> dict[str, Any]:
-    return {
-        "dataset_id": m.dataset_id,
-        "status": m.status,
-        "rows": m.n_rows_clean,
-        "classes": m.class_counts,
-        "splits": m.split_counts,
-        "blocked_reasons": m.blocked_reasons,
-    }

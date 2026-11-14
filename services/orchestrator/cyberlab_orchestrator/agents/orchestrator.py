@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from cyberlab_common.db import Project
+from cyberlab_data import get_adapter
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec
 
@@ -33,7 +34,7 @@ def orchestrator_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]
     queries = [q for q in plan.get("search_queries", []) if isinstance(q, str)][:5]
     if not queries:
         queries = [
-            "CIC-IDS2017 intrusion detection machine learning",
+            get_adapter(spec.dataset_hint).search_query,
             "explainable intrusion detection",
         ]
     plan["search_queries"] = queries

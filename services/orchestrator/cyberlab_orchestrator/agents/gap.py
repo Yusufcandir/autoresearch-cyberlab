@@ -6,11 +6,12 @@ from typing import Any
 
 from cyberlab_llm.gateway import as_list
 from cyberlab_orchestrator.context import LabContext
+from cyberlab_orchestrator.datasets import project_adapter
 
 SYSTEM = (
     "You are a research gap analyst for intrusion detection research. From the literature "
-    "summary, propose gaps that a study on CIC-IDS2017 could address with classical and "
-    "gradient-boosted models, plus honest caveats (CIC-IDS2017 is widely studied, so novelty "
+    "summary, propose gaps that a study on {dataset} could address with classical and "
+    "gradient-boosted models, plus honest caveats ({dataset} is widely studied, so novelty "
     "is limited). Output JSON: {'gaps': [{'gap', 'why_it_matters', 'testable_with'}], "
     "'novelty_caveats': [string]}. These are proposals, not established facts."
 )
@@ -20,7 +21,7 @@ def gap_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
     result = ctx.llm.complete_json(
         "gap.analysis",
-        SYSTEM,
+        SYSTEM.replace("{dataset}", project_adapter(ctx, pid).display),
         f"Literature summary:\n{state.get('literature_summary', '')}\n\nPlan: {state.get('plan', {})}",
         project_id=pid,
     )

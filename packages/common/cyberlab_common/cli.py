@@ -80,8 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.set_defaults(func=_create_user)
 
-    p = sub.add_parser("dataset", help="CIC-IDS2017: download (official URL only) or prepare")
+    p = sub.add_parser("dataset", help="download (official URL only), unzip or prepare a dataset")
     p.add_argument("action", choices=["download", "unzip", "prepare", "fixture"])
+    p.add_argument("--name", default="cicids2017", help="cicids2017 (default) or unsw-nb15")
     p.add_argument("--benign-cap", type=int, default=400_000)
     p.set_defaults(func=_dataset)
 
@@ -289,30 +290,37 @@ def _create_user(args: argparse.Namespace) -> int:
 
 
 def _dataset(args: argparse.Namespace) -> int:
-    from cyberlab_data import cicids2017
+    from cyberlab_data import DatasetBlocked, get_adapter, manifest_summary
 
+    adapter = get_adapter(args.name)
     s = Settings()
-    root = s.dataset_root / "cicids2017"
-    if args.action == "download":
-        print("trying the official CIC-IDS2017 download ...")
-        try:
-            cicids2017.download(root)
-        except cicids2017.DatasetBlocked as exc:
-            print(exc)
-            return 2
-    elif args.action == "unzip":
-        files = cicids2017.unzip(root)
-        print(f"extracted {len(files)} CSV files into {root / 'raw'}:")
-        for f in files:
-            print(f"  {f.name}")
-        print("next: cyberlab dataset prepare")
-        return 0 if files else 2
-    elif args.action == "fixture":
-        cicids2017.write_fixture(root / "raw")
-        print(f"wrote a small SYNTHETIC test fixture to {root / 'raw'} (not real data)")
-        return 0
-    prepared = cicids2017.prepare(root, benign_cap=args.benign_cap)
-    print(json.dumps(cicids2017.manifest_summary(prepared.manifest), indent=2))
+    root = adapter.root(s.dataset_root)
+    try:
+        if args.action == "download":
+            if adapter.download is None:
+                print(adapter.manual_steps.format(raw=root / "raw"))
+                return 2
+            print(f"trying the official {adapter.display} download ...")
+            adapter.download(root)
+        elif args.action == "unzip":
+            if adapter.unzip is None:
+                print(f"{adapter.display} is distributed as CSV files; no unzip needed")
+                return 0
+            files = adapter.unzip(root)
+            print(f"extracted {len(files)} CSV files into {root / 'raw'}:")
+            for f in files:
+                print(f"  {f.name}")
+            print(f"next: cyberlab dataset prepare --name {adapter.key}")
+            return 0 if files else 2
+        elif args.action == "fixture":
+            adapter.write_fixture(root / "raw")
+            print(f"wrote a small SYNTHETIC test fixture to {root / 'raw'} (not real data)")
+            return 0
+        prepared = adapter.prepare(root, benign_cap=args.benign_cap)
+    except DatasetBlocked as exc:
+        print(exc)
+        return 2
+    print(json.dumps(manifest_summary(prepared.manifest), indent=2))
     return 0 if prepared.manifest.status == "verified" else 2
 
 

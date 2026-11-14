@@ -10,8 +10,8 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from cyberlab_common.db import Project, ProtocolVersion, audit
-from cyberlab_data.cicids2017 import DATASET_ID
 from cyberlab_orchestrator.context import LabContext
+from cyberlab_orchestrator.datasets import project_adapter
 from cyberlab_protocol import default_protocol
 from cyberlab_protocol.intent import (
     PRETTY,
@@ -39,7 +39,8 @@ SYSTEM = (
 
 def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
-    base = default_protocol(pid, DATASET_ID)
+    adapter = project_adapter(ctx, pid)
+    base = default_protocol(pid, adapter.dataset_id, dataset_name=adapter.display)
     feedback = state.get("protocol_feedback", "")
     with ctx.db.session() as s:
         project = s.get(Project, pid)
@@ -63,7 +64,7 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     protocol, rationale, problems = _merge(base, proposal)
     protocol, fixed = _fixed_params(protocol, feedback)
     problems += fixed
-    protocol, enforced = _enforce_intent(protocol, intent, goal)
+    protocol, enforced = _enforce_intent(protocol, intent, goal, adapter.split_strategies)
     problems += enforced
     with ctx.db.session() as s:
         version = (
@@ -140,7 +141,10 @@ def _fixed_params(protocol: Protocol, feedback: str) -> tuple[Protocol, list[str
 
 
 def _enforce_intent(
-    protocol: Protocol, intent: dict[str, Any], goal: str
+    protocol: Protocol,
+    intent: dict[str, Any],
+    goal: str,
+    split_strategies: tuple[str, ...] = ("stratified_dedup", "by_day"),
 ) -> tuple[Protocol, list[str]]:
     """The researcher's own hypotheses and primary metric win over the agent's proposal, and
     research questions no experiment can answer are removed."""
@@ -186,9 +190,18 @@ def _enforce_intent(
         rqs = [first.rstrip(".") + "?"] if first else list(protocol.research_questions)
     update: dict[str, Any] = {"hypotheses": hyps, "research_questions": rqs}
     wanted_split = split_from_goal(goal)
-    if wanted_split:
+    if wanted_split and wanted_split["strategy"] in split_strategies:
         update["split"] = SplitSpec(**wanted_split)
         notes.append(f"split taken from the research goal: {wanted_split}")
+    elif wanted_split:
+        notes.append(
+            f"split in the goal not available for this dataset: {wanted_split['strategy']}"
+        )
+    if protocol.split.strategy not in split_strategies and "split" not in update:
+        update["split"] = SplitSpec()
+        notes.append(
+            f"split {protocol.split.strategy} not available for this dataset; default used"
+        )
     updated = protocol.model_copy(update=update)
     return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
 

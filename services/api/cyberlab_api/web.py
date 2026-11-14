@@ -46,7 +46,7 @@ from cyberlab_common.db import (
     RunRecord,
     User,
 )
-from cyberlab_data import dataset_record_id
+from cyberlab_data import ADAPTERS, dataset_record_id, get_adapter
 from cyberlab_orchestrator.lab import GateError, Lab
 from cyberlab_schemas import ResearchSpec, SplitSpec
 
@@ -178,7 +178,22 @@ def new_project(
 ) -> Response:
     if me is None:
         return _login_redirect()
-    return render(request, lab, "new_project.html", me, error=None)
+    return render(request, lab, "new_project.html", me, error=None, datasets=_dataset_choices(lab))
+
+
+def _dataset_choices(lab: Lab) -> list[dict[str, Any]]:
+    """Registered datasets, and whether their files are on this server yet."""
+    out = []
+    for a in ADAPTERS.values():
+        raw = a.root(lab.settings.dataset_root) / "raw"
+        out.append(
+            {
+                "value": a.display,
+                "label": a.info.name,
+                "ready": raw.exists() and any(raw.glob("*.csv")),
+            }
+        )
+    return out
 
 
 @router.post("/projects/new")
@@ -189,6 +204,7 @@ def new_project_post(
     goal: str = Form(),
     constraints: str = Form(""),
     data_may_leave_host: str = Form("no"),
+    dataset: str = Form("CIC-IDS2017"),
     gpu_budget_minutes: int = Form(120),
     llm_token_budget: int = Form(200000),
     csrf: str = Form(),
@@ -204,6 +220,7 @@ def new_project_post(
             goal=goal,
             constraints=[c.strip() for c in constraints.splitlines() if c.strip()],
             data_may_leave_host=data_may_leave_host == "yes",
+            dataset_hint=get_adapter(dataset).display,
             gpu_budget_minutes=gpu_budget_minutes,
             llm_token_budget=llm_token_budget,
         )
@@ -214,10 +231,19 @@ def new_project_post(
             "goal": goal,
             "constraints": constraints,
             "data_may_leave_host": data_may_leave_host,
+            "dataset": dataset,
             "gpu_budget_minutes": gpu_budget_minutes,
             "llm_token_budget": llm_token_budget,
         }
-        return render(request, lab, "new_project.html", me, error=str(exc), form=form)
+        return render(
+            request,
+            lab,
+            "new_project.html",
+            me,
+            error=str(exc),
+            form=form,
+            datasets=_dataset_choices(lab),
+        )
     pid = lab.create_project(me, spec)
     bg.add_task(_safe, lab.start, pid)
     return RedirectResponse(f"/projects/{pid}", status_code=303)

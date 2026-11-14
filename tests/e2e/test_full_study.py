@@ -130,3 +130,41 @@ def test_redraft_rewrites_from_stored_results(lab: Lab) -> None:
         )
         assert len(list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))) == runs
     assert after == before + 1
+
+
+def test_full_study_on_unsw_nb15(lab: Lab) -> None:
+    """The same pipeline end to end on the second dataset, with its official partition."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Intrusion detection models on UNSW-NB15",
+        goal="Compare classical and gradient boosted classifiers on UNSW-NB15 using the "
+        "official train/test split, reporting macro-F1.",
+        dataset_hint="UNSW-NB15",
+    )
+    pid = lab.create_project(pi, spec)
+    status = lab.start(pid)
+    assert status["pending"]["gate"] == "A", status
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        assert pv.body["dataset_id"] == "unsw-nb15-v1"
+        assert pv.body["split"]["strategy"] == "official"
+        cites = {c.doi: c.status for c in s.scalars(select(CitationRecord))}
+        version, sha = pv.version, pv.sha256
+    assert cites["10.1109/milcis.2015.7348942"] == "Verified"
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md, report = ms.markdown, ms.evidence_report
+    body = md.split("## References")[0]
+    assert "CIC-IDS2017" not in body and "Fwd Header" not in body
+    assert "official" in md and "[citation needed]" not in md
+    assert report["release_ready"], report["flags"]

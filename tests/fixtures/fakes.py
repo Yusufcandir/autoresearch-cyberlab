@@ -9,6 +9,7 @@ import httpx
 
 from cyberlab_common.config import Settings
 from cyberlab_data import write_fixture
+from cyberlab_data.unsw_nb15 import write_fixture as unsw_fixture
 from cyberlab_literature import ScholarlyClient
 from cyberlab_llm import FakeProvider, LLMGateway
 from cyberlab_orchestrator.offline import offline_responder
@@ -18,6 +19,10 @@ PAPERS = {
     "10.1000/real.two": "Gradient boosting for flow-based attack classification",
     "10.5220/0006639801080116": (
         "Toward Generating a New Intrusion Detection Dataset and Intrusion Traffic Characterization"
+    ),
+    "10.1109/MilCIS.2015.7348942": (
+        "UNSW-NB15: a comprehensive data set for network intrusion detection systems "
+        "(UNSW-NB15 network data set)"
     ),
 }
 FAKE_DOI = "10.9999/invented.by.llm"
@@ -54,6 +59,7 @@ def scholarly_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": results})
     if "api.crossref.org/works/" in url:
         doi = url.split("/works/", 1)[1].split("?")[0]
+        doi = next((d for d in PAPERS if d.lower() == doi.lower()), doi)  # DOIs are case-insensitive
         if doi in PAPERS:
             return httpx.Response(
                 200,
@@ -83,6 +89,7 @@ def fake_gateway(responder: Any = offline_responder) -> LLMGateway:
 
 def make_settings(tmp: Path, **kw: Any) -> Settings:
     write_fixture(tmp / "var" / "datasets" / "cicids2017" / "raw")
+    unsw_fixture(tmp / "var" / "datasets" / "unsw_nb15" / "raw")
     base: dict[str, Any] = {
         "_env_file": None,
         "database_url": f"sqlite:///{(tmp / 'lab.db').as_posix()}",

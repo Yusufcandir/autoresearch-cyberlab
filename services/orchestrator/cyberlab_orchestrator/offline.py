@@ -96,7 +96,15 @@ def offline_responder(task: str, system: str, prompt: str) -> str:
         ctx = json.loads(prompt) if prompt.strip().startswith("{") else {}
         models = ctx.get("models") or ["xgboost"]
         best = "xgboost" if "xgboost" in models else models[0]
-        return json.dumps({k: v.replace("BEST", best) for k, v in _SECTIONS.items()})
+        sections = {k: v.replace("BEST", best) for k, v in _SECTIONS.items()}
+        if "UNSW" in prompt and "Sharafaldin2018dataset" not in prompt:
+            sections = {
+                k: v.replace("CIC-IDS2017", "UNSW-NB15").replace(
+                    "Sharafaldin2018dataset", "Moustafa2015unswnb15"
+                )
+                for k, v in sections.items()
+            }
+        return json.dumps(sections)
     if task == "reviewer.claim_check":
         return json.dumps({"citations": [], "unsupported_claims": []})
     if task == "reviewer.review":

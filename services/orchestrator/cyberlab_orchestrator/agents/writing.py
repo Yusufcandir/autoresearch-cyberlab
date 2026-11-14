@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, ProtocolVersion, audit
-from cyberlab_data import prepared_dir_for
+from cyberlab_data import get_adapter, prepared_dir_for
 from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
@@ -33,7 +33,7 @@ SYSTEM = (
     "data, so do not say that de-duplication changed or lowered the scores.\n"
     "4. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'. Say about a "
     "paper only what its title and abstract support; name authors exactly as in 'authors'. In related_work, cite every paper at least once.\n"
-    "5. Be precise and modest; mention CIC-IDS2017 limitations.\n"
+    "5. Be precise and modest; mention the dataset's known limitations.\n"
     "6. Compare two models (outperforms, better than, comparable to, superior) ONLY for the "
     "pairs listed in 'tested_comparisons'. Never call one model the best overall unless every "
     "pair was tested. Describe other models by their own scores, without comparing.\n"
@@ -71,8 +71,9 @@ def method_facts(
         )
         body: dict[str, Any] = pv.body if pv else {}
     split_spec = SplitSpec.model_validate(body.get("split", {}))
+    adapter = get_adapter(body.get("dataset_id"))
     notes_path = (
-        prepared_dir_for(ctx.settings.dataset_root / "cicids2017", split_spec)
+        prepared_dir_for(adapter.root(ctx.settings.dataset_root), split_spec)
         / "preprocessing_notes.json"
     )
     notes = json.loads(notes_path.read_text()) if notes_path.exists() else {}
@@ -115,10 +116,13 @@ def method_facts(
         "Exact duplicate rows (same features and label) were removed, and feature vectors that "
         "appeared with conflicting labels were removed entirely "
         "(facts.rows_removed_duplicates_or_conflicts in total).",
-        "Constant features and the duplicated Fwd Header Length column were dropped.",
-        "Fine-grained labels were grouped into classes: BENIGN, DoS, DDoS, PortScan, BruteForce "
-        "(FTP/SSH-Patator), WebAttack, Bot, and Rare (Infiltration and Heartbleed).",
-        "BENIGN rows were randomly down-sampled to at most facts.benign_cap.",
+        *adapter.preprocessing,
+        *(
+            ["BENIGN rows were randomly down-sampled to at most facts.benign_cap."]
+            if notes.get("benign_cap")
+            and (ds.get("class_counts") or {}).get("BENIGN", 0) >= notes["benign_cap"]
+            else []
+        ),
         *(
             [
                 "Test rows are all flows from the test days (facts.test_days); training and "
@@ -127,6 +131,13 @@ def method_facts(
                 "also appears in training.",
             ]
             if split_spec.strategy == "by_day"
+            else [
+                "The dataset's official partition was used: test rows come only from the "
+                "official testing file and training and validation rows only from the official "
+                "training file. Rows of the testing file that duplicate a training row were "
+                "removed before evaluation, so no test row also appears in training.",
+            ]
+            if split_spec.strategy == "official"
             else [
                 "One stratified train/validation/test split was made with a single fixed seed "
                 "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "

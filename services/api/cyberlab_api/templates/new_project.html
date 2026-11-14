@@ -15,6 +15,12 @@
   <label for="c">Constraints (one per line, optional)</label>
   <textarea id="c" name="constraints"
             placeholder="e.g. Public dataset only&#10;Report macro-F1 with 95% confidence intervals&#10;At most one GPU job at a time">{{ f.constraints or '' }}</textarea>
+  <label for="ds">Dataset</label>
+  <select id="ds" name="dataset">
+    {% for d in datasets or [] %}
+    <option value="{{ d.value }}" {% if f.dataset == d.value %}selected{% endif %}>{{ d.label }}{% if not d.ready %} (files not on the server yet: the study will stop at the dataset check){% endif %}</option>
+    {% endfor %}
+  </select>
   <div class="grid">
     <div><label for="d">May study data be sent to the cloud LLM (Gemini)?</label>
       <select id="d" name="data_may_leave_host">
