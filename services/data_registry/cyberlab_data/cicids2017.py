@@ -165,6 +165,25 @@ def _read_csv(path: Path) -> pd.DataFrame:
     return df
 
 
+def is_default_split(split: SplitSpec | None) -> bool:
+    return split is None or split.model_dump() == SplitSpec().model_dump()
+
+
+def split_key(split: SplitSpec) -> str:
+    """Short stable id of a split definition (part of the prepared directory name)."""
+    return hashlib.sha256(split.model_dump_json().encode()).hexdigest()[:12]
+
+
+def prepared_dir_for(root: Path, split: SplitSpec | None) -> Path:
+    """Each split the protocols ask for gets its own prepared copy (the default keeps the
+    original location), so one study's split can never be silently replaced by another's."""
+    return root / "prepared" if is_default_split(split) else root / f"prepared-{split_key(split)}"  # type: ignore[arg-type]
+
+
+def dataset_record_id(dataset_id: str, split: SplitSpec | None) -> str:
+    return dataset_id if is_default_split(split) else f"{dataset_id}@{split_key(split)}"  # type: ignore[arg-type]
+
+
 def prepare(
     root: Path,
     split: SplitSpec | None = None,
@@ -227,10 +246,15 @@ def prepare(
         reasons.append(f"{overlap} test rows also appear in train (leakage)")
     test_counts = df.loc[df["split"] == "test", "Class"].value_counts()
     missing = sorted(set(df["Class"]) - set(test_counts.index))
-    if missing:
+    if split.strategy == "by_day":
+        # Testing on unseen days means some attack types only exist in train or test: that is
+        # the point of the design, recorded in the manifest. Only a one-class test set blocks.
+        if len(test_counts) < 2:
+            reasons.append(f"test days {split.test_days} contain fewer than two classes")
+    elif missing:
         reasons.append(f"classes absent from test split: {missing}")
 
-    out = root / "prepared"
+    out = prepared_dir_for(root, split)
     out.mkdir(parents=True, exist_ok=True)
     df[[*features, "Class", "Day", "split"]].to_parquet(out / "clean.parquet", index=False)
     manifest = DatasetManifest(

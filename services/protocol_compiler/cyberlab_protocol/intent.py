@@ -110,3 +110,23 @@ def hypothesis_statement(a: str, b: str, metric: str) -> str:
         f"{PRETTY.get(a, a)} achieves higher {PRETTY.get(metric, metric)} than {PRETTY.get(b, b)}."
     )
     return text[:1].upper() + text[1:]
+
+
+DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday")
+_TEMPORAL = re.compile(
+    r"by[- ]day|day[- ]based|temporal(?:ly)? split|unseen days?|days? (?:it|they|the models?) "
+    r"never saw|train(?:ed|ing)? on (?:earlier|the first)",
+    re.I,
+)
+
+
+def split_from_goal(goal: str) -> dict[str, Any] | None:
+    """A by-day split when the goal asks for one, with the test days it names
+    ('train on Monday to Wednesday and test on Thursday and Friday')."""
+    if not _TEMPORAL.search(goal) and not re.search(r"\btest(?:ed|ing)? on (?:\w+day)", goal, re.I):
+        return None
+    m = re.search(r"\btest(?:ed|ing)?\b(.{0,80})", goal, re.I | re.S)
+    days = [d for d in DAYS if m and re.search(d, m.group(1), re.I)]
+    if not days:
+        return None
+    return {"strategy": "by_day", "test_days": days}

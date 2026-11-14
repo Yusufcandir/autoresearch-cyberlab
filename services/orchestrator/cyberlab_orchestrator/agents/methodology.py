@@ -17,9 +17,10 @@ from cyberlab_protocol.intent import (
     PRETTY,
     hypothesis_statement,
     research_intent,
+    split_from_goal,
     testable_questions,
 )
-from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec
+from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec, SplitSpec
 
 SYSTEM = (
     "You are a methodology design agent. Design the experimental protocol for THIS study's "
@@ -143,7 +144,12 @@ def _enforce_intent(
     elif not rqs:
         first = re.split(r"(?<=[.?!])\s", goal.strip(), maxsplit=1)[0] if goal.strip() else ""
         rqs = [first.rstrip(".") + "?"] if first else list(protocol.research_questions)
-    updated = protocol.model_copy(update={"hypotheses": hyps, "research_questions": rqs})
+    update: dict[str, Any] = {"hypotheses": hyps, "research_questions": rqs}
+    wanted_split = split_from_goal(goal)
+    if wanted_split:
+        update["split"] = SplitSpec(**wanted_split)
+        notes.append(f"split taken from the research goal: {wanted_split}")
+    updated = protocol.model_copy(update=update)
     return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
 
 

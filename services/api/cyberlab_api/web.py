@@ -46,8 +46,9 @@ from cyberlab_common.db import (
     RunRecord,
     User,
 )
+from cyberlab_data import dataset_record_id
 from cyberlab_orchestrator.lab import GateError, Lab
-from cyberlab_schemas import ResearchSpec
+from cyberlab_schemas import ResearchSpec, SplitSpec
 
 router = APIRouter(include_in_schema=False)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -277,7 +278,17 @@ def project_page(
                 .order_by(ManuscriptRecord.version.desc())
             )
         )
-        dataset = s.get(DatasetRecord, protocol.body["dataset_id"]) if protocol else None
+        dataset = (
+            s.get(
+                DatasetRecord,
+                dataset_record_id(
+                    protocol.body["dataset_id"], SplitSpec.model_validate(protocol.body["split"])
+                ),
+            )
+            or s.get(DatasetRecord, protocol.body["dataset_id"])
+            if protocol
+            else None
+        )
         analysis_rec = s.scalar(
             select(ArtifactRecord)
             .where(ArtifactRecord.project_id == pid, ArtifactRecord.name == "analysis.json")

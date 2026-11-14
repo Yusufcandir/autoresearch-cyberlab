@@ -13,6 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from cyberlab_common.db import ClaimRecord, DatasetRecord, ProtocolVersion, RunRecord, audit
+from cyberlab_data import dataset_record_id
 from cyberlab_evidence import ArtifactStore
 from cyberlab_qa.metrics import (
     QAFlag,
@@ -123,7 +124,7 @@ def analyze_project(
             }
         )
 
-    ds = s.get(DatasetRecord, protocol.dataset_id)
+    ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
     overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
     audit_input = {
         n: {"macro_f1": m["aggregate"]["macro_f1"]["mean"], "per_class": m["per_class"]}

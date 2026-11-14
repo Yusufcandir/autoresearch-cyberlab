@@ -110,3 +110,29 @@ def test_fast_bootstrap_metrics_match_sklearn_exactly() -> None:
     cm = np.bincount(codes[:5000] * k + codes[5000:], minlength=k * k).reshape(k, k)
     assert abs(_balanced_accuracy_cm(cm) - skm.balanced_accuracy_score(y, p)) < 1e-12
     assert abs(_mcc_cm(cm) - skm.matthews_corrcoef(y, p)) < 1e-12
+
+
+def test_protocol_split_gets_its_own_prepared_copy(tmp_path: Path) -> None:
+    """A by-day protocol must train and test on its own split, not the shared default one."""
+    from cyberlab_data import dataset_record_id, prepare, prepared_dir_for, write_fixture
+    from cyberlab_protocol.intent import split_from_goal
+    from cyberlab_schemas import SplitSpec
+
+    write_fixture(tmp_path / "raw", rows_per_class=60)
+    default = prepare(tmp_path)
+    wanted = split_from_goal(
+        "Do models detect attacks on days they never saw? Train on Monday to Wednesday "
+        "and test on Thursday and Friday."
+    )
+    assert wanted == {"strategy": "by_day", "test_days": ["Thursday", "Friday"]}
+    by_day = SplitSpec(**wanted)
+    temporal = prepare(tmp_path, by_day)
+    assert default.root == prepared_dir_for(tmp_path, None) == tmp_path / "prepared"
+    assert temporal.root == prepared_dir_for(tmp_path, by_day) != default.root
+    assert (default.root / "clean.parquet").exists() and (temporal.root / "clean.parquet").exists()
+    test_days = set(pd.read_parquet(temporal.clean_path).query("split == 'test'")["Day"])
+    assert test_days <= {"Thursday", "Friday"}
+    assert dataset_record_id("ds", None) == "ds" and dataset_record_id("ds", by_day).startswith(
+        "ds@"
+    )
+    assert split_from_goal("Compare four models on CIC-IDS2017.") is None

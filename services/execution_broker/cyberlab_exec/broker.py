@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from cyberlab_authz.policy import ExecutionRequest, decide
 from cyberlab_common.config import Settings
 from cyberlab_common.db import ArtifactRecord, Database, JobRecord, Project, RunRecord, audit, now
+from cyberlab_data import prepared_dir_for
 from cyberlab_evidence import ArtifactStore
 from cyberlab_qa import compute_metrics
 from cyberlab_schemas import ExperimentManifest
@@ -312,7 +313,9 @@ class Broker:
     def _execute(
         self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None
     ) -> None:
-        prepared = prepared_dir or (self.settings.dataset_root / "cicids2017" / "prepared")
+        prepared = prepared_dir or prepared_dir_for(
+            self.settings.dataset_root / "cicids2017", manifest.split
+        )
         work = self.work_root / job_id
         work.mkdir(parents=True, exist_ok=True)
         (work / "manifest.json").write_text(manifest.model_dump_json())

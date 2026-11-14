@@ -9,13 +9,14 @@ from typing import Any
 from sqlalchemy import func, select
 
 from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, ProtocolVersion, audit
+from cyberlab_data import prepared_dir_for
 from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_manuscript.evidence_text import lock_evidence
 from cyberlab_orchestrator.context import LabContext
-from cyberlab_schemas import ResearchSpec
+from cyberlab_schemas import ResearchSpec, SplitSpec
 
 MAX_REVISIONS = 1
 
@@ -69,7 +70,11 @@ def method_facts(
             )
         )
         body: dict[str, Any] = pv.body if pv else {}
-    notes_path = ctx.settings.dataset_root / "cicids2017" / "prepared" / "preprocessing_notes.json"
+    split_spec = SplitSpec.model_validate(body.get("split", {}))
+    notes_path = (
+        prepared_dir_for(ctx.settings.dataset_root / "cicids2017", split_spec)
+        / "preprocessing_notes.json"
+    )
     notes = json.loads(notes_path.read_text()) if notes_path.exists() else {}
     ds = analysis.get("dataset") or {}
     split = body.get("split", {})
@@ -103,6 +108,7 @@ def method_facts(
         "bootstrap_resamples": ci.get("n_boot", 500),
         "ci_seed": first.get("ci_seed"),
         "ci_level": "95%",
+        "test_days": ", ".join(split_spec.test_days),
     }
     prose = [
         "Rows with infinite or missing feature values were removed (facts.rows_dropped_inf_nan).",
@@ -113,9 +119,20 @@ def method_facts(
         "Fine-grained labels were grouped into classes: BENIGN, DoS, DDoS, PortScan, BruteForce "
         "(FTP/SSH-Patator), WebAttack, Bot, and Rare (Infiltration and Heartbleed).",
         "BENIGN rows were randomly down-sampled to at most facts.benign_cap.",
-        "One stratified train/validation/test split was made with a single fixed seed "
-        "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "
-        "No test row also appears in training.",
+        *(
+            [
+                "Test rows are all flows from the test days (facts.test_days); training and "
+                "validation rows come only from the other days, so the models never see traffic "
+                "from the test days. Duplicates were removed before splitting and no test row "
+                "also appears in training.",
+            ]
+            if split_spec.strategy == "by_day"
+            else [
+                "One stratified train/validation/test split was made with a single fixed seed "
+                "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "
+                "No test row also appears in training.",
+            ]
+        ),
         "The model seeds (facts.seeds) change only the randomness of model training, not the split.",
         "Every model was trained on the training split and evaluated once on the test split; no "
         "hyper-parameter tuning was performed (fixed, documented defaults).",
