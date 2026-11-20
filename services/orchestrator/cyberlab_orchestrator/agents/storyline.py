@@ -179,6 +179,22 @@ OUTLINE_SYSTEM = (
     "specific to this study], 'conclusion': one sentence}."
 )
 
+# Professor's plan, Step 6.1: twelve review dimensions
+RUBRIC = (
+    "scientific_correctness",
+    "research_motivation",
+    "research_gap_clarity",
+    "methodological_completeness",
+    "statistical_validity",
+    "results_interpretation",
+    "critical_discussion",
+    "citation_integrity",
+    "logical_coherence",
+    "academic_writing_quality",
+    "reproducibility",
+    "consistency_between_sections",
+)
+
 REFEREE_SYSTEM = (
     "You are a demanding referee for a peer-reviewed security venue. Read the draft sections "
     "and report concrete problems: claims the evidence brief does not support or that overstate "
@@ -186,8 +202,12 @@ REFEREE_SYSTEM = (
     "across sections; Related Work that lists papers instead of comparing them; a Discussion "
     "that only restates numbers instead of interpreting them; missing connection between the "
     "findings and prior work; inconsistent terminology; weak flow between paragraphs. Quote the "
-    "exact words. Output JSON: {'issues': [{'section', 'quote', 'problem', 'fix'}], "
-    "'verdict': 'accept' | 'revise'} with at most 10 issues, most important first."
+    "exact words. Score the draft 1-5 on each rubric dimension: " + ", ".join(RUBRIC) + ". "
+    "Mark an issue 'major' when it affects scientific correctness, statistical validity, "
+    "citation integrity or consistency with the evidence, else 'minor'. Never invent "
+    "replacement evidence. Output JSON: {'rubric': {dimension: score}, 'issues': [{'section', "
+    "'quote', 'problem', 'fix', 'severity'}], 'verdict': 'accept' | 'revise'} with at most 10 "
+    "issues, most important first."
 )
 
 
@@ -217,9 +237,10 @@ def outline(
     return got if isinstance(got, dict) else {}
 
 
-def referee(
+def critique(
     ctx: LabContext, pid: str, sections: dict[str, str], brief: dict[str, Any]
-) -> list[dict[str, Any]]:
+) -> dict[str, Any]:
+    """Manuscript critic (professor's plan, Step 6.1): rubric scores and concrete issues."""
     got = _call(
         ctx,
         pid,
@@ -227,8 +248,19 @@ def referee(
         REFEREE_SYSTEM,
         {"evidence_brief": brief, "sections": sections},
     )
-    issues = got.get("issues") if isinstance(got, dict) else None
-    return [i for i in issues if isinstance(i, dict)][:10] if isinstance(issues, list) else []
+    got = got if isinstance(got, dict) else {}
+    issues = got.get("issues")
+    issues = [i for i in issues if isinstance(i, dict)][:10] if isinstance(issues, list) else []
+    raw = got.get("rubric")
+    rubric: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    scores = {d: rubric.get(d) for d in RUBRIC if isinstance(rubric.get(d), (int, float))}
+    return {"issues": issues, "rubric": scores}
+
+
+def referee(
+    ctx: LabContext, pid: str, sections: dict[str, str], brief: dict[str, Any]
+) -> list[dict[str, Any]]:
+    return list(critique(ctx, pid, sections, brief)["issues"])
 
 
 def revise(
@@ -294,3 +326,86 @@ def sameness_flags(
                     }
                 )
     return flags[:10]
+
+
+def evidence_package(
+    title: str,
+    goal: str,
+    analysis: dict[str, Any],
+    protocol: dict[str, Any],
+    cites: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """verified_evidence_package.json (professor's plan, Step 5.3): the only facts the writer
+    receives. Every numerical claim has an id, its value, its source artifact and the
+    validation status of the analysis it comes from."""
+    validation = analysis.get("validation") or {}
+    status = (
+        "PASS"
+        if validation.get("status") in ("PASS", "WARNING")
+        else validation.get("status", "NOT_EVALUATED")
+    )
+    claims: list[dict[str, Any]] = []
+    n = 0
+    for name, m in analysis.get("models", {}).items():
+        for metric, v in (m.get("aggregate") or {}).items():
+            n += 1
+            claims.append(
+                {
+                    "claim_id": f"C{n:03d}",
+                    "statement": f"{name} {metric} mean over {v.get('n_seeds', 1)} seeds",
+                    "evidence_type": "experiment_result",
+                    "source_artifact": analysis.get("artifact_sha256"),
+                    "model": name,
+                    "metric": metric,
+                    "value": v.get("mean"),
+                    "sd": v.get("sd"),
+                    "placeholder": f"{{{{metric:{name}:{metric}}}}}",
+                    "validation_status": status,
+                }
+            )
+    for h in analysis.get("hypotheses", []):
+        n += 1
+        claims.append(
+            {
+                "claim_id": f"C{n:03d}",
+                "statement": f"{h.get('id')}: {h.get('statement')}",
+                "evidence_type": "hypothesis_test",
+                "source_artifact": analysis.get("artifact_sha256"),
+                "result": h.get("result"),
+                "p_holm": h.get("p_holm"),
+                "test": (h.get("test") or {}).get("method"),
+                "placeholder": f"{{{{hyp:{h.get('id')}}}}}",
+                "validation_status": status,
+            }
+        )
+    return {
+        "research_title": title,
+        "research_objectives": goal,
+        "research_questions": protocol.get("research_questions", []),
+        "hypotheses": protocol.get("hypotheses", []),
+        "dataset": {
+            k: (analysis.get("dataset") or {}).get(k)
+            for k in (
+                "name",
+                "license",
+                "n_rows_raw",
+                "n_rows_clean",
+                "class_counts",
+                "split_counts",
+            )
+        },
+        "experimental_configuration": {
+            "models": {n_: m.get("params") for n_, m in analysis.get("models", {}).items()},
+            "seeds": protocol.get("seeds"),
+            "split": protocol.get("split"),
+            "tuning": protocol.get("tuning"),
+        },
+        "claims": claims,
+        "verified_references": [k for k, c in cites.items() if c.get("status") == "Verified"],
+        "limitations_and_warnings": [
+            {"check": c["check"], "status": c["status"], "detail": c["detail"]}
+            for c in validation.get("checks", [])
+            if c.get("status") in ("WARNING", "NOT_EVALUATED")
+        ],
+        "validation_status": validation.get("status", "NOT_EVALUATED"),
+    }

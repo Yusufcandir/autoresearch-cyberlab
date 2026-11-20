@@ -16,9 +16,10 @@ from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_manuscript.evidence_text import lock_evidence
 from cyberlab_orchestrator.agents.storyline import (
+    critique,
     evidence_brief,
+    evidence_package,
     outline,
-    referee,
     related_themes,
     revise,
     sameness_flags,
@@ -27,7 +28,7 @@ from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec, SplitSpec
 
 MAX_REVISIONS = 1
-REFEREE_ROUNDS = 2
+REFEREE_ROUNDS = 3
 
 SYSTEM = (
     "You are an experienced researcher writing a paper on network intrusion detection for a "
@@ -321,17 +322,35 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         if c["status"] in ("WARNING", "NOT_EVALUATED")
     ]
     context["evidence_brief"] = brief
+    package = evidence_package(
+        spec.title, spec.goal, analysis, _protocol_body(ctx, pid, analysis), cites
+    )
+    context["evidence_package_claims"] = [
+        {k: c[k] for k in ("claim_id", "statement", "placeholder")} for c in package["claims"]
+    ]
+    _store_json(ctx, pid, "verified_evidence_package.json", package)
     context["related_work_themes"] = related_themes(cites, _evidence_matrix(ctx, pid))
     context["outline"] = outline(ctx, pid, brief, context)
     sections = write_sections(ctx, pid, context)
     corpus = _earlier_papers(ctx, pid)
-    for _round in range(REFEREE_ROUNDS):
-        issues = referee(ctx, pid, sections, brief) + sameness_flags(sections, corpus)
-        if not issues:
+    # Draft -> Review -> Identify problems -> Revise -> Verify, at most REFEREE_ROUNDS times;
+    # the build and evidence lock below re-verify numbers and citations after the last round.
+    unresolved: list[dict[str, Any]] = []
+    for _round in range(REFEREE_ROUNDS + 1):
+        review = critique(ctx, pid, sections, brief)
+        issues = review["issues"] + sameness_flags(sections, corpus)
+        with ctx.db.session() as s:
+            ctx.note(
+                s,
+                pid,
+                "writing",
+                "manuscript_critique",
+                {"round": _round + 1, "rubric": review["rubric"], "issues": issues},
+            )
+        unresolved = [i for i in review["issues"] if str(i.get("severity", "")).lower() == "major"]
+        if not issues or _round == REFEREE_ROUNDS:
             break
         sections = revise(ctx, pid, SYSTEM, sections, issues, context)
-        with ctx.db.session() as s:
-            ctx.note(s, pid, "writing", "referee_round", {"round": _round + 1, "issues": issues})
     # Final revision: the deterministic guardrail removes anything still unsupported.
     final = state.get("revisions", 0) >= MAX_REVISIONS
     models = sorted(
@@ -346,6 +365,14 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     )
     # Evidence statements are generated, never written by the model (see evidence_text).
     md, dropped = lock_evidence(md, analysis, facts, prose, rich=True)
+    if unresolved:  # the critic still finds major problems: stop for the authors
+        report.flag(
+            "warning",
+            "HUMAN_REVIEW_REQUIRED",
+            f"after {REFEREE_ROUNDS} revision rounds the manuscript critic still reports "
+            f"{len(unresolved)} major issue(s): "
+            + " | ".join(f"{i.get('section')}: {i.get('problem')}" for i in unresolved[:5]),
+        )
     if dropped:
         report.flag(
             "warning",
@@ -440,3 +467,24 @@ def _earlier_papers(ctx: LabContext, pid: str, limit: int = 20) -> list[str]:
         for r in rows:
             latest.setdefault(r.project_id, r.markdown)
     return list(latest.values())[:limit]
+
+
+def _protocol_body(ctx: LabContext, pid: str, analysis: dict[str, Any]) -> dict[str, Any]:
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid,
+                ProtocolVersion.version == analysis.get("protocol_version"),
+            )
+        )
+        return dict(pv.body) if pv else {}
+
+
+def _store_json(ctx: LabContext, pid: str, name: str, content: dict[str, Any]) -> str:
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp, ctx.db.session() as s:
+        path = Path(tmp) / name
+        path.write_text(json.dumps(content, indent=2, default=str))
+        return str(ctx.store.put(s, pid, path, name=name).sha256)
