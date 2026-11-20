@@ -122,6 +122,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--alert", action="store_true", help="post problems to ALERT_WEBHOOK")
     p.set_defaults(func=_health_check)
 
+    p = sub.add_parser("eval-report", help="system reliability measures from the records")
+    p.add_argument("--project", default=None)
+    p.set_defaults(func=_eval_report)
+
+    p = sub.add_parser("compare-drafts", help="compare two manuscript versions of a study")
+    p.add_argument("project")
+    p.add_argument("a", type=int)
+    p.add_argument("b", type=int)
+    p.set_defaults(func=_compare_drafts)
+
     p = sub.add_parser("db-upgrade", help="apply database schema migrations (Alembic)")
     p.set_defaults(func=_db_upgrade)
 
@@ -226,6 +236,20 @@ def _health_check(args: argparse.Namespace) -> int:
     if problems and args.alert and settings.alert_webhook:
         alert(settings.alert_webhook, problems, socket.gethostname())
     return 1 if any(r["level"] == "error" for r in problems) else 0
+
+
+def _eval_report(args: argparse.Namespace) -> int:
+    from cyberlab_common.evaluation import reliability_report
+
+    print(json.dumps(reliability_report(_db(), args.project), indent=2, default=str))
+    return 0
+
+
+def _compare_drafts(args: argparse.Namespace) -> int:
+    from cyberlab_common.evaluation import compare_drafts
+
+    print(json.dumps(compare_drafts(_db(), args.project, args.a, args.b), indent=2))
+    return 0
 
 
 def _db_upgrade(args: argparse.Namespace) -> int:
