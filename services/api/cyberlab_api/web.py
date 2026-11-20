@@ -368,6 +368,8 @@ def project_page(
         project=project,
         role=role,
         status=status,
+        decisions=lab.research_decisions(pid),
+        validation=_latest_note(lab, pid, "scientific_validation"),
         protocol=protocol,
         cites=cites,
         verified=verified,
@@ -853,3 +855,37 @@ def diff_view(
         f"<h1>{kind.title()}: version {a} versus {b}</h1>"
         f"<p><a href='/projects/{pid}'>Back to the study</a></p>{table}"
     )
+
+
+def _latest_note(lab: Lab, pid: str, kind: str) -> dict[str, Any]:
+    from cyberlab_common.db import AgentNote
+
+    with lab.db.session() as s:
+        n = s.scalar(
+            select(AgentNote)
+            .where(AgentNote.project_id == pid, AgentNote.kind == kind)
+            .order_by(AgentNote.id.desc())
+        )
+        return dict(n.content) if n else {}
+
+
+@router.post("/projects/{pid}/followup/{note_id}")
+def followup_post(
+    pid: str,
+    note_id: int,
+    request: Request,
+    bg: BackgroundTasks,
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    """PI approves a feedback-controller decision: a new protocol version is drafted and waits
+    for gate A (nothing runs before that approval)."""
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    try:
+        lab.start_followup(me, pid, note_id)
+    except GateError as exc:
+        return _message("Follow-up not possible", str(exc), f"/projects/{pid}")
+    return RedirectResponse(f"/projects/{pid}#protocol", status_code=303)

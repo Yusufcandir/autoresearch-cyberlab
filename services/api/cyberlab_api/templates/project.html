@@ -295,7 +295,19 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 
 <!-- ============================== VERIFICATION -->
 <section class="panel" id="tab-verification"><div class="card">
-<h2>How we know it is not hallucinating</h2>
+{% if validation %}<h2>Scientific validation: {{ validation.status }}</h2>
+<p class="muted">Independent checks before writing. BLOCK stops the paper; NOT_EVALUATED is never counted as a pass.</p>
+<table><tr><th>Check</th><th>Status</th><th>Finding</th></tr>{% for c in validation.checks %}<tr><td>{{ c.check|replace('_',' ') }}</td><td class="{{ 'error' if c.status == 'BLOCK' else '' }}"><b>{{ c.status }}</b></td><td class="muted">{{ c.detail }}</td></tr>{% endfor %}</table>{% endif %}
+{% if decisions %}<h2 style="margin-top:18px">Research decisions</h2>
+<p class="muted">Rules A–E of the feedback controller. A follow-up experiment becomes a new protocol version and still needs your approval before it runs.</p>
+{% for d in decisions %}<div class="card" style="margin:8px 0"><b>Rule {{ d.rule }}: {{ d.identified_problem }}</b>
+<div class="muted">Evidence: {{ d.observed_evidence }}</div>
+<div>Proposed: {{ d.proposed_action }}</div>
+<div class="muted">Why: {{ d.scientific_justification }} · Benefit: {{ d.expected_benefit }}{% if d.computational_cost_estimate_minutes %} · Estimated compute: {{ d.computational_cost_estimate_minutes|round(0)|int }} min{% endif %}</div>
+<div class="muted">Status: {{ d.approval_status|replace('_',' ') }}{% if d.final_outcome %} · {{ d.final_outcome }}{% endif %}</div>
+{% if d.protocol_change and d.approval_status == 'pending_pi' and role == 'pi' %}<form method="post" action="/projects/{{ project.id }}/followup/{{ d.note_id }}"><input type="hidden" name="csrf" value="{{ csrf }}"><div class="actions"><button class="secondary small">Draft this follow-up protocol</button></div></form>{% endif %}
+</div>{% endfor %}{% endif %}
+<h2 style="margin-top:18px">How we know it is not hallucinating</h2>
 <p class="muted">The AI writes the words, but it is never trusted for facts. Each kind of fact has its own check that does not use AI:</p>
 <div class="trust">{% for t in trust %}<div class="titem"><div class="ticon {{ t.status }}">{{ {'ok':'✓','warn':'!','bad':'✗','pending':'…'}[t.status] }}</div><div><b>{{ t.check }}</b><div class="muted">{{ t.detail }}</div></div></div>{% endfor %}</div>
 {% if manuscripts and manuscripts[0].evidence_report.flags %}<details style="margin-top:14px"><summary>All evidence flags ({{ manuscripts[0].evidence_report.flags|length }})</summary><ul>{% for f in manuscripts[0].evidence_report.flags %}<li class="{{ 'error' if f.severity == 'blocker' else 'muted' }}">{{ f.code }}: {{ f.message }}</li>{% endfor %}</ul></details>{% endif %}

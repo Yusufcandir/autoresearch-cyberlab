@@ -309,3 +309,47 @@ def test_text_modality_study(lab: Lab) -> None:
         md, report = ms.markdown, ms.evidence_report
     assert "grouped by website" in md and "TF-IDF" in md
     assert report["release_ready"], report["flags"]
+
+
+def test_feedback_controller_improvement_cycle(lab: Lab) -> None:
+    """Professor's plan, Phase 3 deliverable: validate -> critique -> PI-approved follow-up with
+    a stricter split -> rerun -> paper compares both versions."""
+    pi, _ = _users(lab)
+    pid = lab.create_project(pi, SPEC)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D"
+    decisions = lab.research_decisions(pid)
+    split_rule = next(d for d in decisions if d["rule"] == "B" and d["protocol_change"])
+    assert split_rule["protocol_change"]["split"]["strategy"] == "by_day"
+    status = lab.start_followup(pi, pid, split_rule["note_id"])
+    assert status["pending"]["gate"] == "A"  # the follow-up still needs the PI's approval
+    with lab.db.session() as s:
+        v2 = s.scalar(
+            select(ProtocolVersion)
+            .where(ProtocolVersion.project_id == pid)
+            .order_by(ProtocolVersion.version.desc())
+        )
+        assert v2 is not None and v2.body["followup_of"]["version"] == version
+        assert v2.body["split"]["strategy"] == "by_day"
+        v2_version, v2_sha = v2.version, v2.sha256
+    lab.approve_protocol(pi, pid, v2_version, v2_sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+    assert f"Follow-up to protocol version {version}" in ms.markdown
+    approved = [d for d in lab.research_decisions(pid) if d["approval_status"] == "approved"]
+    assert approved and "created" in approved[0]["final_outcome"]
