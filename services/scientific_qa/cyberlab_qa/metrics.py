@@ -342,4 +342,22 @@ def leakage_audit(
                         f"{name}: class {cls} has only {pc['support']} test rows",
                     )
                 )
+    # spec 13.2: a surprisingly large improvement over the baselines triggers a leakage audit
+    base = [m.get("macro_f1", 0) for m in metrics_by_model.values() if m.get("role") == "baseline"]
+    if base:
+        best_base = max(base)
+        for name, m in metrics_by_model.items():
+            gain = m.get("macro_f1", 0) - best_base
+            if m.get("role") != "baseline" and gain >= SURPRISE_MARGIN:
+                flags.append(
+                    QAFlag(
+                        "warning",
+                        "SURPRISING_IMPROVEMENT",
+                        f"{name} beats the best baseline by {gain:.4f} macro-F1: check the "
+                        "dataset's single-feature shortcuts and the split before claiming it",
+                    )
+                )
     return flags
+
+
+SURPRISE_MARGIN = 0.2

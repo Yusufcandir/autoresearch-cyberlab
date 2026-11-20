@@ -168,7 +168,11 @@ def analyze_project(
     ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
     overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
     audit_input = {
-        n: {"macro_f1": m["aggregate"]["macro_f1"]["mean"], "per_class": m["per_class"]}
+        n: {
+            "macro_f1": m["aggregate"]["macro_f1"]["mean"],
+            "per_class": m["per_class"],
+            "role": m["role"],
+        }
         for n, m in models.items()
     }
     flags = leakage_audit(audit_input, overlap)

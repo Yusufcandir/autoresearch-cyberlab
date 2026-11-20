@@ -270,3 +270,38 @@ def test_cross_dataset_study(lab: Lab) -> None:
         md, report = ms.markdown, ms.evidence_report
     assert "Cross-dataset evaluation" in md and "NF-ToN-IoT-v2" in md
     assert report["release_ready"], report["flags"]
+
+
+def test_text_modality_study(lab: Lab) -> None:
+    """Second modality (spec definition of done): URL text, text templates, grouped split."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Phishing URL detection from the URL text alone",
+        goal="Detect phishing URLs from the URL string using character n-gram models, "
+        "reporting macro-F1.",
+        dataset_hint="PhiUSIIL phishing URLs",
+    )
+    pid = lab.create_project(pi, spec)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        assert {m["template"] for m in pv.body["models"]} == {"tfidf_logreg", "tfidf_linear_svm"}
+        assert pv.body["split"]["strategy"] == "grouped"
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(10):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        runs = list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))
+        assert all(r.status == "succeeded" for r in runs), [r.receipt.get("error") for r in runs]
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md, report = ms.markdown, ms.evidence_report
+    assert "grouped by website" in md and "TF-IDF" in md
+    assert report["release_ready"], report["flags"]

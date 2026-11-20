@@ -31,8 +31,10 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "ft_transformer": (r"ft[- _]?transformer", r"feature[- ]tokeni[sz]er transformer"),
     "cnn1d": (r"\b1d[- ]?cnn\b", r"\bcnn1d\b", r"one-dimensional (?:cnn|convolutional)"),
     "tabnet": (r"\btabnet\b",),
+    "tfidf_logreg": (r"tf-?idf (?:\+ )?logistic regression",),
+    "tfidf_linear_svm": (r"tf-?idf (?:\+ )?(?:linear )?svm", r"\blinear svm\b"),
 }
-BASELINES = {"logistic_regression", "random_forest"}
+BASELINES = {"logistic_regression", "random_forest", "tfidf_logreg"}
 # Things no experiment on this platform measures.
 UNTESTABLE = re.compile(
     r"real[- ]time|scalab|latency|runtime|run time|inference time|training time|deploy|"
@@ -123,6 +125,8 @@ PRETTY = {
     "ft_transformer": "the FT-Transformer",
     "cnn1d": "the 1D-CNN",
     "tabnet": "TabNet",
+    "tfidf_logreg": "TF-IDF logistic regression",
+    "tfidf_linear_svm": "TF-IDF linear SVM",
     "balanced_accuracy": "balanced accuracy",
     "macro_f1": "macro-F1",
     "mcc": "MCC",

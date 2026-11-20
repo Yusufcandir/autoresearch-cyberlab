@@ -29,6 +29,8 @@ PRETTY = {
     "ft_transformer": "FT-Transformer",
     "cnn1d": "1D-CNN",
     "tabnet": "TabNet",
+    "tfidf_logreg": "TF-IDF logistic regression",
+    "tfidf_linear_svm": "TF-IDF linear SVM",
     "macro_f1": "macro-F1",
     "balanced_accuracy": "balanced accuracy",
     "mcc": "MCC",

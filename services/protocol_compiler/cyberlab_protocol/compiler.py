@@ -28,7 +28,10 @@ ALLOWED_TEMPLATES = {
     "ft_transformer",
     "cnn1d",
     "tabnet",
+    "tfidf_logreg",
+    "tfidf_linear_svm",
 }
+TEXT_TEMPLATES = {"tfidf_logreg", "tfidf_linear_svm"}
 GPU_TEMPLATES = {"xgboost", "resnet_mlp", "ft_transformer", "cnn1d", "tabnet"}
 
 
@@ -103,6 +106,15 @@ def compile_protocol(
     for m in protocol.models:
         if m.template not in ALLOWED_TEMPLATES:
             reasons.append(f"template {m.template} not allowlisted")
+    if dataset is not None and dataset.features:
+        text_data = all(f.startswith("text:") for f in dataset.features)
+        for m in protocol.models:
+            if (m.template in TEXT_TEMPLATES) != text_data:
+                kind = "text" if text_data else "tabular"
+                reasons.append(
+                    f"UNAVAILABLE_FEATURE_VIEW: template {m.template} does not fit this {kind} "
+                    "dataset"
+                )
     names = [m.name for m in protocol.models]
     if len(set(names)) != len(names):
         reasons.append("model names must be unique")

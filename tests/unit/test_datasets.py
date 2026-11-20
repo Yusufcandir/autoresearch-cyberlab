@@ -96,3 +96,16 @@ def test_cross_dataset_split(tmp_path: Path) -> None:
 
     with pytest.raises(DatasetBlocked):
         prepare_split(ADAPTERS["cicids2017"], tmp_path, split)
+
+
+def test_phishing_text_grouped_split(tmp_path: Path) -> None:
+    from cyberlab_data import ADAPTERS
+
+    a = ADAPTERS["phishing_urls"]
+    a.write_fixture(tmp_path / "raw")
+    p = a.prepare(tmp_path, SplitSpec(strategy="grouped"))
+    assert p.manifest.status == "verified", p.manifest.blocked_reasons
+    assert p.manifest.features == ["text:URL"]
+    df = pd.read_parquet(p.clean_path)
+    train_hosts = set(df.loc[df["split"] == "train", "Group"])
+    assert not train_hosts & set(df.loc[df["split"] == "test", "Group"])

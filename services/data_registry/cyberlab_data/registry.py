@@ -11,7 +11,7 @@ from typing import Any
 
 import pandas as pd
 
-from cyberlab_data import cicids2017, ctu13, netflow, unsw_nb15
+from cyberlab_data import cicids2017, ctu13, netflow, phishing_urls, unsw_nb15
 from cyberlab_data.common import DatasetInfo
 
 
@@ -34,6 +34,9 @@ class DatasetAdapter:
     # only datasets in a shared feature format can be combined for cross-dataset testing
     load: Callable[..., Any] | None = None
     observed: bool = False  # captured on a real network (spec 7.5: label synthetic vs observed)
+    modality: str = "tabular"  # "tabular" or "text" (selects the allowed model templates)
+    default_split: str = "stratified_dedup"
+    default_models: tuple[str, ...] = ()
 
     def root(self, dataset_root: Path) -> Path:
         return dataset_root / self.key
@@ -162,8 +165,38 @@ def _netflow(v: netflow.Variant) -> DatasetAdapter:
     )
 
 
+PHISH = DatasetAdapter(
+    key="phishing_urls",
+    display="PhiUSIIL phishing URLs",
+    dataset_id=phishing_urls.DATASET_ID,
+    info=phishing_urls.PHIUSIIL,
+    paper={
+        "title": "PhiUSIIL: A diverse security profile empowered phishing URL detection "
+        "framework based on similarity index and incremental learning",
+        "year": 2024,
+        "authors": ["Arvind Prasad", "Shalini Chandra"],
+        "venue": "Computers & Security",
+        "key": "Prasad2024phiusiil",
+    },
+    prepare=phishing_urls.prepare,
+    write_fixture=phishing_urls.write_fixture,
+    manual_steps=phishing_urls.MANUAL_STEPS,
+    split_strategies=("grouped", "stratified_dedup"),
+    search_query="phishing URL detection machine learning character n-grams",
+    preprocessing=[
+        "Only the URL string was used as input (a text modality); the dataset's engineered "
+        "page-content features were not used.",
+        "URLs were represented by TF-IDF weighted character n-grams within word boundaries.",
+        "Label 1 (legitimate) is the BENIGN class and label 0 the Phishing class.",
+    ],
+    observed=True,
+    modality="text",
+    default_split="grouped",
+    default_models=("tfidf_logreg", "tfidf_linear_svm"),
+)
+
 ADAPTERS: dict[str, DatasetAdapter] = {
-    a.key: a for a in (CIC, UNSW, CTU, *(_netflow(v) for v in netflow.VARIANTS.values()))
+    a.key: a for a in (CIC, UNSW, CTU, *(_netflow(v) for v in netflow.VARIANTS.values()), PHISH)
 }
 
 

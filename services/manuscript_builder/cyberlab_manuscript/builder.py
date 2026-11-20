@@ -363,6 +363,8 @@ def _pretty_model(name: str) -> str:
         "ft_transformer": "the FT-Transformer",
         "cnn1d": "the 1D-CNN",
         "tabnet": "TabNet",
+        "tfidf_logreg": "TF-IDF logistic regression",
+        "tfidf_linear_svm": "TF-IDF linear SVM",
     }.get(name, name)
 
 

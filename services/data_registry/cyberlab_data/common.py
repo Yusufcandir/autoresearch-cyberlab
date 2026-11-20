@@ -106,6 +106,25 @@ def assign_split(df: pd.DataFrame, split: SplitSpec, rng: np.random.Generator) -
         n_val = int(len(train_idx) * split.val_fraction)
         labels[rng.choice(train_idx, size=n_val, replace=False)] = "val"
         return labels
+    if split.strategy == "grouped":
+        # whole groups (e.g. a website's domain) go to one split, so no group is in both
+        if "Group" not in df.columns:
+            raise DatasetBlocked(["a grouped split needs a Group column"])
+        groups = df["Group"].astype(str).to_numpy()
+        uniq = rng.permutation(np.unique(groups))
+        sizes = pd.Series(groups).value_counts()
+        target_test, target_val = split.test_fraction * len(df), split.val_fraction * len(df)
+        assign: dict[str, str] = {}
+        n_test = n_val = 0
+        for g in uniq:
+            if n_test < target_test:
+                assign[g], n_test = "test", n_test + int(sizes[g])
+            elif n_val < target_val:
+                assign[g], n_val = "val", n_val + int(sizes[g])
+            else:
+                assign[g] = "train"
+        labels[:] = [assign[g] for g in groups]
+        return labels
     for _cls, idx in df.groupby("Class").indices.items():
         idx = rng.permutation(idx)
         n_test = max(1, round(len(idx) * split.test_fraction))
@@ -133,11 +152,20 @@ def finalize(
     n_raw = len(df)
     meta = {"Class", *([group_column] if group_column else [])}
     features = [c for c in df.columns if c not in meta]
-    df[features] = df[features].apply(pd.to_numeric, errors="coerce")
-    df[features] = df[features].replace([np.inf, -np.inf], np.nan)
+    # text features (modality 'text') are named 'text:<column>' and kept as strings
+    text = [c for c in features if c.startswith("text:")]
+    numeric = [c for c in features if c not in text]
+    if numeric:
+        df[numeric] = df[numeric].apply(pd.to_numeric, errors="coerce")
+        df[numeric] = df[numeric].replace([np.inf, -np.inf], np.nan)
+    for c in text:
+        df[c] = df[c].astype("string").str.strip().replace("", pd.NA)
     n_bad = int(df[features].isna().any(axis=1).sum())
     df = df.dropna(subset=features)
-    df[features] = df[features].astype("float32")
+    if numeric:
+        df[numeric] = df[numeric].astype("float32")
+    for c in text:
+        df[c] = df[c].astype(str)
     constant = [c for c in features if df[c].nunique() <= 1]
     features = [c for c in features if c not in constant]
 
@@ -172,6 +200,11 @@ def finalize(
         reasons.append(f"{overlap} test rows also appear in train (leakage)")
     test_counts = df.loc[df["split"] == "test", "Class"].value_counts()
     missing = sorted(set(df["Class"]) - set(test_counts.index))
+    if group_column == "Group" and split.strategy in ("grouped", "by_group"):
+        g_train = set(df.loc[df["split"] == "train", "Group"].astype(str))
+        shared = g_train & set(df.loc[df["split"] == "test", "Group"].astype(str))
+        if shared:
+            reasons.append(f"{len(shared)} groups appear in both train and test (group leakage)")
     if split.strategy in ("by_day", "official", "by_group", "cross_dataset"):
         # A fixed external test set (unseen days, official partition) may lack some classes:
         # that is part of the design and recorded in the manifest. Only a one-class test blocks.
@@ -203,6 +236,7 @@ def finalize(
         blocked_reasons=reasons,
     )
     notes = {
+        "single_feature_shortcuts": shortcut_scan(df[df["split"] == "train"], features),
         "rows_with_inf_or_nan_dropped": n_bad,
         "exact_duplicates_dropped": n_dups,
         "conflicting_label_rows_dropped": n_conflicts,
@@ -240,3 +274,23 @@ def manifest_summary(m: DatasetManifest) -> dict[str, Any]:
         "splits": m.split_counts,
         "blocked_reasons": m.blocked_reasons,
     }
+
+
+def shortcut_scan(train: pd.DataFrame, features: list[str], top: int = 5) -> list[dict[str, Any]]:
+    """Features whose value alone almost decides the class on the training rows (a leakage
+    or shortcut warning, spec 13.2). Purity = share of rows whose value maps to one class."""
+    out = []
+    n = len(train)
+    if n == 0:
+        return out
+    for f in features:
+        if f.startswith("text:"):
+            continue
+        col = train[f]
+        if col.nunique() > 50:  # many distinct values would look "pure" by chance
+            col = pd.qcut(col, q=50, duplicates="drop", labels=False)
+        counts = pd.crosstab(col, train["Class"])
+        purity = float(counts.max(axis=1).sum() / n)
+        out.append({"feature": f, "purity": round(purity, 4), "values": int(len(counts))})
+    out.sort(key=lambda r: -r["purity"])
+    return [r for r in out[:top] if r["purity"] >= 0.99]

@@ -44,8 +44,12 @@ ALLOWED_PARAMS: dict[str, set[str]] = {
     "ft_transformer": {"d_token", "n_blocks", "n_heads", "dropout", *_TRAIN},
     "cnn1d": {"channels", "n_layers", "kernel_size", "dropout", *_TRAIN},
     "tabnet": {"n_d", "n_steps", "gamma", *_TRAIN},
+    # text templates (modality 'text': one string feature such as a URL)
+    "tfidf_logreg": {"C", "ngram_max", "max_features"},
+    "tfidf_linear_svm": {"C", "ngram_max", "max_features"},
 }
 DEEP_TEMPLATES = {"resnet_mlp", "ft_transformer", "cnn1d", "tabnet"}
+TEXT_TEMPLATES = {"tfidf_logreg", "tfidf_linear_svm"}
 
 
 # Reviewed, documented settings used for every study (spec 7.4: no silent tuning). The protocol
@@ -105,11 +109,19 @@ DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
         "batch_size": 2048,
         "class_weight": "none",
     },
+    "tfidf_logreg": {"C": 4.0, "ngram_max": 5, "max_features": 200_000},
+    "tfidf_linear_svm": {"C": 0.5, "ngram_max": 5, "max_features": 200_000},
 }
 
 
+# Allowed on every template (spec FR-008): an ablation drops feature groups (names or name
+# prefixes), a robustness stress test adds Gaussian noise (in feature standard deviations) to
+# the numeric TEST features only. Both are reviewed, deterministic operations.
+COMMON_PARAMS = {"drop_features", "test_noise"}
+
+
 def _check_params(template: str, params: dict[str, Any]) -> None:
-    extra = set(params) - ALLOWED_PARAMS[template]
+    extra = set(params) - ALLOWED_PARAMS[template] - COMMON_PARAMS
     if extra:
         raise ValueError(f"parameters not allowed for {template}: {sorted(extra)}")
 
@@ -191,6 +203,44 @@ def _deep(arch: str) -> Callable[[dict[str, Any], int, bool], Any]:
     return build
 
 
+def _ravel(x: Any) -> Any:
+    return np.asarray(x).ravel().astype(str)
+
+
+def _tfidf(p: dict[str, Any]) -> Any:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.preprocessing import FunctionTransformer
+
+    return [
+        FunctionTransformer(_ravel),
+        TfidfVectorizer(
+            analyzer="char_wb",
+            ngram_range=(2, int(p.get("ngram_max", 5))),
+            max_features=int(p.get("max_features", 200_000)),
+            sublinear_tf=True,
+            lowercase=True,
+            dtype=np.float32,
+        ),
+    ]
+
+
+def _tfidf_logreg(p: dict[str, Any], seed: int, gpu: bool) -> Any:
+    return make_pipeline(
+        *_tfidf(p),
+        LogisticRegression(C=p.get("C", 4.0), max_iter=2000, random_state=seed),
+    )
+
+
+def _tfidf_svm(p: dict[str, Any], seed: int, gpu: bool) -> Any:
+    from sklearn.calibration import CalibratedClassifierCV
+    from sklearn.svm import LinearSVC
+
+    return make_pipeline(
+        *_tfidf(p),
+        CalibratedClassifierCV(LinearSVC(C=p.get("C", 0.5), random_state=seed), cv=3),
+    )
+
+
 TEMPLATES: dict[str, Callable[[dict[str, Any], int, bool], Any]] = {
     "logistic_regression": _logreg,
     "random_forest": _rf,
@@ -198,6 +248,8 @@ TEMPLATES: dict[str, Callable[[dict[str, Any], int, bool], Any]] = {
     "mlp": _mlp,
     "lightgbm": _lgbm,
     **{arch: _deep(arch) for arch in DEEP_TEMPLATES},
+    "tfidf_logreg": _tfidf_logreg,
+    "tfidf_linear_svm": _tfidf_svm,
 }
 
 
@@ -290,12 +342,22 @@ def _space_tabnet(t: Any) -> dict[str, Any]:
     }
 
 
+def _space_text(t: Any) -> dict[str, Any]:
+    return {
+        "C": t.suggest_float("C", 1e-2, 1e2, log=True),
+        "ngram_max": t.suggest_int("ngram_max", 3, 6),
+        "max_features": t.suggest_categorical("max_features", [50_000, 200_000, 500_000]),
+    }
+
+
 SEARCH_SPACES: dict[str, Callable[[Any], dict[str, Any]]] = {
     "lightgbm": _space_lgbm,
     "resnet_mlp": _space_resnet,
     "ft_transformer": _space_ft,
     "cnn1d": _space_cnn,
     "tabnet": _space_tabnet,
+    "tfidf_logreg": _space_text,
+    "tfidf_linear_svm": _space_text,
     "logistic_regression": _space_logreg,
     "random_forest": _space_rf,
     "xgboost": _space_xgb,
@@ -409,11 +471,29 @@ def run_experiment(
     enc = LabelEncoder().fit(pd.concat([y_train, y_test]))
     np.random.seed(manifest.seed)
     params = dict(manifest.model.params)
+    drop = [str(d) for d in params.pop("drop_features", None) or []]
+    noise = float(params.pop("test_noise", 0.0) or 0.0)
+    dropped: list[str] = []
+    if drop:
+        dropped = [c for c in x_train.columns if any(c == d or c.startswith(d) for d in drop)]
+        if len(dropped) == len(x_train.columns):
+            raise ValueError("ablation would remove every feature")
+        x_train, x_test = x_train.drop(columns=dropped), x_test.drop(columns=dropped)
+    if noise > 0:
+        num = [c for c in x_test.columns if not c.startswith("text:")]
+        rng = np.random.default_rng(manifest.seed + 7919)
+        sd = x_train[num].std().replace(0, 1.0).to_numpy()
+        x_test = x_test.copy()
+        x_test[num] = (
+            x_test[num].to_numpy() + rng.normal(0, noise, size=(len(x_test), len(num))) * sd
+        )
     tuning: dict[str, Any] | None = None
     if manifest.tuning is not None:
         x_val, y_val = load_split(prepared_dir, "val", manifest.label_scheme)
         if len(x_val) == 0:
             raise ValueError("tuning needs a validation split (val_fraction > 0)")
+        if dropped:
+            x_val = x_val.drop(columns=dropped)
         tuning = tune(manifest, x_train, enc.transform(y_train), x_val, enc.transform(y_val))
         params = tuning["best_params"]
         (out_dir / "tuning.json").write_text(json.dumps(tuning, indent=2, default=str))
@@ -439,6 +519,9 @@ def run_experiment(
         "template": tmpl,
         "params": params,
         "tuned": tuning is not None,
+        "ablation_dropped_features": dropped,
+        "robustness_test_noise_sd": noise,
+        "run_label": "confirmatory",
         "tuning_best_value": tuning["best_value"] if tuning else None,
         "seed": manifest.seed,
         "classes": classes,

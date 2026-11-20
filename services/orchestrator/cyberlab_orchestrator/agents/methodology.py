@@ -31,7 +31,9 @@ SYSTEM = (
     "You are a methodology design agent. Design the experimental protocol for THIS study's "
     "research goal: its research questions and hypotheses must test what the goal asks, with "
     "the goal's primary metric. You may only use these model templates (settings are fixed "
-    "by the platform or tuned on the validation split, so leave params empty): "
+    "by the platform or tuned on the validation split, so leave params empty, except: an "
+    "ablation model (role 'ablation') may set params {'drop_features': [feature names or name "
+    "prefixes]} and a robustness model may set {'test_noise': standard deviations}): "
     "logistic_regression, random_forest, xgboost, lightgbm, mlp (classical); resnet_mlp, "
     "ft_transformer, cnn1d, tabnet (deep, PyTorch). Use the models the goal names; if it names "
     "none, use logistic_regression, random_forest, xgboost and mlp. Hypotheses compare model "
@@ -46,7 +48,9 @@ SYSTEM = (
 def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     pid = state["project_id"]
     adapter = project_adapter(ctx, pid)
-    base = default_protocol(pid, adapter.dataset_id, dataset_name=adapter.display)
+    base = _dataset_baseline(
+        default_protocol(pid, adapter.dataset_id, dataset_name=adapter.display), adapter
+    )
     feedback = state.get("protocol_feedback", "")
     with ctx.db.session() as s:
         project = s.get(Project, pid)
@@ -74,6 +78,8 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     problems += enforced
     protocol, design = _design_from_text(protocol, " ".join([goal, *constraints, feedback or ""]))
     problems += design
+    protocol, fit = _fit_modality(protocol, adapter, base)
+    problems += fit
     with ctx.db.session() as s:
         version = (
             s.scalar(
@@ -139,7 +145,9 @@ def _fixed_params(protocol: Protocol, feedback: str) -> tuple[Protocol, list[str
     overrides = pi_param_overrides(feedback or "")
     models = []
     for mdl in protocol.models:
-        params = {**DEFAULT_PARAMS[mdl.template], **overrides.get(mdl.template, {})}
+        # ablation / robustness settings are part of the design and are kept
+        common = {k: v for k, v in mdl.params.items() if k in ("drop_features", "test_noise")}
+        params = {**DEFAULT_PARAMS[mdl.template], **common, **overrides.get(mdl.template, {})}
         models.append(mdl.model_copy(update={"params": params}))
     notes = ["model settings: reviewed defaults"]
     if overrides:
@@ -318,13 +326,69 @@ def _merge(base: Protocol, proposal: dict[str, Any]) -> tuple[Protocol, str, lis
         for h in candidate.hypotheses:
             if not all(x.strip() in names for x in h.comparison.split(">")):
                 raise ValueError(f"{h.id} compares unknown models")
-        from cyberlab_tabular.templates import ALLOWED_PARAMS
+        from cyberlab_tabular.templates import ALLOWED_PARAMS, COMMON_PARAMS
 
         for m in candidate.models:
-            extra = set(m.params) - ALLOWED_PARAMS[m.template]
+            extra = set(m.params) - ALLOWED_PARAMS[m.template] - COMMON_PARAMS
             if extra:
                 raise ValueError(f"{m.name}: params not allowed {sorted(extra)}")
     except (ValidationError, ValueError) as exc:
         problems.append(f"proposal rejected, baseline kept: {exc}")
         candidate = base
     return candidate, str(proposal.get("rationale", "")), problems
+
+
+def _dataset_baseline(base: Protocol, adapter: Any) -> Protocol:
+    """A dataset's own default line-up and split (e.g. text models and a split grouped by
+    website for the phishing URL dataset)."""
+    from cyberlab_tabular.templates import DEFAULT_PARAMS
+
+    update: dict[str, Any] = {}
+    if adapter.default_models:
+        names = list(adapter.default_models)
+        update["models"] = [
+            ModelSpec(
+                name=n,
+                template=n,
+                params=dict(DEFAULT_PARAMS[n]),
+                role="baseline" if i == 0 else "candidate",
+            )
+            for i, n in enumerate(names)
+        ]
+        update["hypotheses"] = [
+            Hypothesis(
+                id="H1",
+                statement=hypothesis_statement(names[-1], names[0], "macro_f1"),
+                comparison=f"{names[-1]} > {names[0]}",
+            )
+        ]
+        update["research_questions"] = [
+            f"How well do {PRETTY.get(names[0], names[0])} and "
+            f"{PRETTY.get(names[-1], names[-1])} detect attacks in {adapter.display}?"
+        ]
+    if adapter.default_split != "stratified_dedup":
+        update["split"] = SplitSpec(strategy=adapter.default_split)
+    if not update:
+        return base
+    return Protocol.model_validate(json.loads(base.model_copy(update=update).model_dump_json()))
+
+
+def _fit_modality(protocol: Protocol, adapter: Any, base: Protocol) -> tuple[Protocol, list[str]]:
+    """Text datasets take text templates only, tabular datasets tabular ones; anything else
+    is removed here rather than failing later at compile time."""
+    from cyberlab_tabular.templates import TEXT_TEMPLATES
+
+    text = adapter.modality == "text"
+    keep = [m for m in protocol.models if (m.template in TEXT_TEMPLATES) == text]
+    if len(keep) == len(protocol.models):
+        return protocol, []
+    if len(keep) < 2:
+        keep = list(base.models)
+    names = {m.name for m in keep}
+    hyps = [
+        h for h in protocol.hypotheses if all(x.strip() in names for x in h.comparison.split(">"))
+    ] or list(base.hypotheses)
+    updated = protocol.model_copy(update={"models": keep, "hypotheses": hyps})
+    return Protocol.model_validate(json.loads(updated.model_dump_json())), [
+        f"models that do not fit the {adapter.modality} dataset were removed"
+    ]

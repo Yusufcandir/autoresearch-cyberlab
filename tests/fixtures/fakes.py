@@ -24,6 +24,10 @@ PAPERS = {
         "Towards a Standard Feature Set for Network Intrusion Detection System Datasets"
     ),
     "10.1016/j.cose.2014.05.011": "An empirical comparison of botnet detection methods",
+    "10.1016/j.cose.2023.103545": (
+        "PhiUSIIL: A diverse security profile empowered phishing URL detection framework based "
+        "on similarity index and incremental learning"
+    ),
     "10.1109/MilCIS.2015.7348942": (
         "UNSW-NB15: a comprehensive data set for network intrusion detection systems "
         "(UNSW-NB15 network data set)"
@@ -98,7 +102,7 @@ def make_settings(tmp: Path, **kw: Any) -> Settings:
     unsw_fixture(tmp / "var" / "datasets" / "unsw_nb15" / "raw")
     from cyberlab_data import ADAPTERS
 
-    for key in ("ctu13", "nf_unsw_nb15_v2", "nf_ton_iot_v2"):
+    for key in ("ctu13", "nf_unsw_nb15_v2", "nf_ton_iot_v2", "phishing_urls"):
         ADAPTERS[key].write_fixture(tmp / "var" / "datasets" / key / "raw")
     base: dict[str, Any] = {
         "_env_file": None,

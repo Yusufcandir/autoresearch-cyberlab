@@ -80,6 +80,12 @@ def split_prose(strategy: str, notes: dict[str, Any]) -> list[str]:
             "training and validation rows come only from the other scenarios, so the test "
             "botnets were never seen in training. No test row also appears in training."
         ]
+    if strategy == "grouped":
+        return [
+            "The split was grouped by website: all URLs of one host are in the same split "
+            "(stratified seed facts.split_seed), so no website in the test set was seen in "
+            "training. No test row also appears in training."
+        ]
     if strategy == "cross_dataset":
         return [
             f"Cross-dataset evaluation: models were trained on {notes.get('train_dataset')} and "

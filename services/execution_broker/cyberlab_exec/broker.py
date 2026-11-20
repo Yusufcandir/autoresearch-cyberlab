@@ -354,7 +354,7 @@ class Broker:
                 proc.wait()
                 break
         finished = datetime.now(UTC)
-        self._finish(job_id, manifest, work, proc.returncode, reason, started, finished)
+        self._finish(job_id, manifest, work, proc.returncode, reason, started, finished, prepared)
 
     def _finish(
         self,
@@ -365,6 +365,7 @@ class Broker:
         reason: str | None,
         started: datetime,
         finished: datetime,
+        prepared: Path | None = None,
     ) -> None:
         out = work / "out"
         with self.db.session() as s:
@@ -381,6 +382,19 @@ class Broker:
                     s, manifest.project_id, work / "stdout.log"
                 ).sha256
             ok = reason is None and returncode == 0 and "predictions.csv" in artifacts
+            info_pre = (
+                json.loads((out / "model_info.json").read_text())
+                if (out / "model_info.json").exists()
+                else {}
+            )
+            missing = [
+                k
+                for k, v in _lineage(manifest, prepared, job.external_ref, info_pre).items()
+                if v in ("", None)
+            ]
+            if ok and missing:
+                # spec 8.3: a receipt with incomplete hashes is refused
+                ok, reason = False, f"INCOMPLETE_RECEIPT: missing {', '.join(missing)}"
             metrics: dict[str, Any] = {}
             if ok:
                 metrics = compute_metrics(pd.read_csv(out / "predictions.csv"))
@@ -398,6 +412,7 @@ class Broker:
                 "finished_at": finished.isoformat(),
                 "artifacts": artifacts,
                 "code_version": _code_version(),
+                **_lineage(manifest, prepared, job.external_ref, info),
                 "environment": info.get("environment", {}),
                 "external_ref": job.external_ref,
                 "error": error,
@@ -454,3 +469,67 @@ def _code_version() -> str:
         [git, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
     )  # noqa: S603
     return res.stdout.strip() or "unknown"
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def _full_commit() -> str:
+    """Git commit of the running code, or (without git, e.g. in a container) a digest of the
+    source files, so every receipt names the exact code that produced it."""
+    git = shutil.which("git")
+    if git is not None:
+        res = subprocess.run(
+            [git, "-C", str(_REPO), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )  # noqa: S603
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    import hashlib
+
+    h = hashlib.sha256()
+    for d in ("services", "packages", "plugins"):
+        for f in sorted((_REPO / d).rglob("*.py")):
+            h.update(f.read_bytes())
+    return "src-" + h.hexdigest()
+
+
+def _lineage(
+    manifest: ExperimentManifest,
+    prepared: Path | None,
+    external_ref: str | None,
+    info: dict[str, Any],
+) -> dict[str, Any]:
+    """Run-receipt lineage fields (spec 8.3)."""
+    lock = _REPO / "uv.lock"
+    notes: dict[str, Any] = {}
+    if prepared is not None and (prepared / "preprocessing_notes.json").exists():
+        notes = json.loads((prepared / "preprocessing_notes.json").read_text())
+    return {
+        "code_commit": _full_commit(),
+        "environment_digest": _sha256(lock) if lock.exists() else "",
+        "dataset_manifest_sha256": (
+            _sha256(prepared / "manifest.json")
+            if prepared is not None and (prepared / "manifest.json").exists()
+            else ""
+        ),
+        "split_manifest_sha256": notes.get("clean_parquet_sha256", ""),
+        "scheduler_job_id": external_ref or "",
+        "random_seed": manifest.seed,
+        "protocol_version": manifest.protocol_version,
+        "protocol_sha256": manifest.protocol_sha256,
+        "run_label": info.get("run_label", "confirmatory"),
+        "hardware": {"device": info.get("device", "gpu" if manifest.use_gpu else "cpu")},
+    }

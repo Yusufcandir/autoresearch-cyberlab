@@ -91,3 +91,37 @@ def test_tuning_uses_validation_and_is_cached(tmp_path: Path, monkeypatch) -> No
 
     t2 = json.loads((tmp_path / "out2" / "tuning.json").read_text())
     assert t2["reused"] is True and t2["split"] == "validation"
+
+
+def test_ablation_and_robustness_params(tmp_path: Path) -> None:
+    from cyberlab_data import prepare, write_fixture
+    from cyberlab_tabular.templates import run_experiment
+
+    write_fixture(tmp_path / "raw", rows_per_class=60)
+    prep = prepare(tmp_path, SplitSpec())
+    base = dict(
+        project_id="proj",
+        protocol_version=1,
+        protocol_sha256="b" * 64,
+        dataset_id="cicids2017-mlcsv-v1",
+        seed=42,
+        label_scheme="multiclass",
+        split=SplitSpec(),
+        risk_tier="T1",
+        max_minutes=5,
+    )
+    m = ExperimentManifest(
+        experiment_id="p1-rf_ab-s42",
+        model=ModelSpec(
+            name="rf_ab",
+            template="random_forest",
+            role="ablation",
+            params={"n_estimators": 20, "drop_features": ["Flow"], "test_noise": 0.5},
+        ),
+        **base,
+    )
+    info = run_experiment(m, prep.root, tmp_path / "o")
+    assert info["ablation_dropped_features"] and all(
+        f.startswith("Flow") for f in info["ablation_dropped_features"]
+    )
+    assert info["robustness_test_noise_sd"] == 0.5 and info["run_label"] == "confirmatory"
