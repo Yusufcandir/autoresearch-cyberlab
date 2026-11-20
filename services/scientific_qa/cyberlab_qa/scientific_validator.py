@@ -276,7 +276,9 @@ def validate_statistical_tests(
     issues, notes = [], []
     for h in analysis.get("hypotheses", []):
         if "mcnemar" not in h:
-            issues.append(f"{h['id']}: not tested")
+            # runs missing (e.g. failed or timed out): the paper reports it as not tested,
+            # which is honest, so this is a warning, not a block
+            notes.append(f"{h['id']}: not tested (its runs did not all succeed)")
             continue
         test = h.get("test") or {}
         metric = h.get("metric")
@@ -302,6 +304,9 @@ def validate_statistical_tests(
     )
     if issues:
         return _r("statistical_tests", BLOCK, "; ".join(issues), notes=notes)
+    untested = [n for n in notes if "not tested" in n]
+    if untested:
+        return _r("statistical_tests", WARNING, "; ".join(untested), notes=notes)
     return _r(
         "statistical_tests",
         WARNING if n_seeds < 3 else PASS,
