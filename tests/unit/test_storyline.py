@@ -129,3 +129,11 @@ def test_citation_reference_checks_and_levels() -> None:
     assert refs["cited_but_unverified"] == ["C"] and refs["cited_not_in_reference_list"] == ["C"]
     assert refs["listed_but_not_cited"] == ["D"] and ["A", "D"] in refs["duplicate_references"]
     assert r["status"] == "BLOCK" and r["claim_support_counts"]["contradicted"] == 1
+
+
+def test_tables_numbered_and_refs_resolved() -> None:
+    from cyberlab_manuscript.builder import resolve_refs
+
+    md = "*Table 1. A*\n\n*Figure 2. Recall per class and model*\nSee {{ref:table_main}} and {{ref:figure_recall}}, {{ref:nope}}."
+    out = resolve_refs(md, ["table_classes", "table_main"])
+    assert "See Table 2 and Figure 2, the table below." in out

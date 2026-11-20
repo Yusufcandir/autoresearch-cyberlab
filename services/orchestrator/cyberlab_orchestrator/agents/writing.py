@@ -64,6 +64,9 @@ SYSTEM = (
     "instead of repeating the results list. Limitations are specific to this study.\n"
     "8. Write for the paper's readers: never mention placeholders, briefs, outlines, reviewers "
     "or internal tools.\n"
+    "9. Refer to tables and figures only with these placeholders, which become numbered "
+    "references: {{ref:table_main}}, {{ref:table_hypotheses}}, {{ref:table_per_class}}, "
+    "{{ref:table_classes}}, {{ref:figure_ci}}, {{ref:figure_recall}}, {{ref:figure_confusion}}.\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
     "discussion, limitations, conclusion (markdown strings, no headings)."
 )

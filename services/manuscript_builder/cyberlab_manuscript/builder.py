@@ -578,6 +578,18 @@ def build_manuscript(
     llm_models: list[str] | None = None,
 ) -> tuple[str, EvidenceReport]:
     report = EvidenceReport()
+    tables: list[str] = []
+
+    def numbered(key: str, caption: str, text: str) -> str:
+        """Put 'Table n. caption' above the first table in text (numbered in reading order)."""
+        lines = text.split("\n")
+        at = next((i for i, ln in enumerate(lines) if ln.lstrip().startswith("|")), None)
+        if at is None:
+            return text
+        tables.append(key)
+        lines[at:at] = [f"*Table {len(tables)}. {caption}*", ""]
+        return "\n".join(lines)
+
     out = [
         f"# {title}",
         "",
@@ -593,22 +605,44 @@ def build_manuscript(
             rendered = render_text(body, analysis, citations, report, key, guardrail)
             out += [tidy_prose(fix_author_names(rendered, citations, report, key)), ""]
         if key == "methodology":
-            out += [metric_definitions(), "", "### Data", "", dataset_section(analysis), ""]
+            out += [
+                metric_definitions(),
+                "",
+                "### Data",
+                "",
+                numbered(
+                    "table_classes", "Rows per class after cleaning.", dataset_section(analysis)
+                ),
+                "",
+            ]
         if key == "limitations" and (note := small_class_note(analysis)):
             out += [note, ""]
         if key == "limitations" and (vnote := validation_note(analysis)):
             out += [vnote, ""]
         if key == "results":
             if fu := followup_section(analysis):
-                out += [fu, ""]
+                out += [
+                    numbered(
+                        "table_followup", "Results of this version next to the previous one.", fu
+                    ),
+                    "",
+                ]
             out += [
                 "### Main results",
                 "",
-                results_table(analysis),
+                numbered(
+                    "table_main",
+                    "Main results per model (means and standard deviations over seeds).",
+                    results_table(analysis),
+                ),
                 "",
                 "### Hypothesis tests",
                 "",
-                hypotheses_table(analysis),
+                numbered(
+                    "table_hypotheses",
+                    "Hypothesis tests with effect sizes and Holm-adjusted p-values.",
+                    hypotheses_table(analysis),
+                ),
                 "",
             ]
             from cyberlab_manuscript.figures import _primary_metric, figures_markdown
@@ -620,7 +654,16 @@ def build_manuscript(
                     "mean", float("-inf")
                 ),
             )
-            out += [f"### Per-class results ({best})", "", per_class_table(analysis, best), ""]
+            out += [
+                f"### Per-class results ({best})",
+                "",
+                numbered(
+                    "table_per_class",
+                    f"Per-class results of {best} (first seed).",
+                    per_class_table(analysis, best),
+                ),
+                "",
+            ]
             try:
                 figs = figures_markdown(analysis, best)
             except Exception as exc:  # noqa: BLE001 - a figure failure must not block the draft
@@ -650,8 +693,26 @@ def build_manuscript(
                 f"- [{key}] {', '.join(c.get('authors', [])[:3])} ({c.get('year')}). {c.get('title')}. "
                 f"{c.get('venue') or ''}. doi:{c.get('doi')}"
             )
-    md = "\n".join(out) + "\n"
+    md = resolve_refs("\n".join(out) + "\n", tables)
     return md, report
+
+
+_FIGURE_KEYS = (
+    ("figure_ci", "confidence intervals"),
+    ("figure_recall", "recall per class"),
+    ("figure_confusion", "confusion matrix"),
+)
+
+
+def resolve_refs(md: str, tables: list[str]) -> str:
+    """Cross-references (professor's plan, Phase 8): {{ref:table_main}} -> 'Table 2',
+    {{ref:figure_ci}} -> 'Figure 1', numbered in reading order."""
+    refs = {k: f"Table {i}" for i, k in enumerate(tables, 1)}
+    for m in re.finditer(r"^\*Figure (\d+)\. (.+?)\*$", md, re.M):
+        for key, needle in _FIGURE_KEYS:
+            if needle in m.group(2).lower():
+                refs.setdefault(key, f"Figure {m.group(1)}")
+    return re.sub(r"\{\{ref:([a-z_]+)\}\}", lambda m: refs.get(m.group(1), "the table below"), md)
 
 
 def manuscript_sha(md: str) -> str:
