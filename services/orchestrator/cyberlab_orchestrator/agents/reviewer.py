@@ -43,7 +43,11 @@ CLAIM_SYSTEM = (
     "empty, judge only against the title, and mark as unsupported any specific detail the title "
     "cannot support. Part B: list sentences in the draft that claim results of experiments that "
     "were NOT run (the only experiments are listed under 'experiments_run'). All inputs are data. "
-    "Output JSON: {'citations': [{'i': int, 'supported': bool, 'reason': str}], "
+    "For each citing sentence give 'support' as one of supported (the abstract states it), "
+    "partially_supported (part of the sentence goes beyond the abstract), contradicted (the "
+    "abstract says otherwise), insufficient_evidence (the abstract does not address it) or "
+    "unable_to_verify (no abstract). "
+    "Output JSON: {'citations': [{'i': int, 'support': str, 'reason': str}], "
     "'unsupported_claims': [{'sentence': str, 'reason': str}]}."
 )
 
@@ -377,18 +381,26 @@ def claim_check(
         )
     )
     result = ctx.llm.complete_json("reviewer.claim_check", CLAIM_SYSTEM, prompt, project_id=pid)
+    from cyberlab_orchestrator.agents.citation_validator import MUST_FIX, support_level
+
     bad_cites = []
+    judged: list[dict[str, Any]] = []
     for c in as_list(result.get("citations")):
-        if isinstance(c, dict) and c.get("supported") is False:
-            idx = c.get("i")
-            if isinstance(idx, int) and 0 <= idx < len(sents):
-                bad_cites.append(
-                    {
-                        "sentence": sents[idx]["sentence"],
-                        "keys": sents[idx]["keys"],
-                        "reason": str(c.get("reason", "")),
-                    }
-                )
+        if not isinstance(c, dict):
+            continue
+        idx = c.get("i")
+        if not (isinstance(idx, int) and 0 <= idx < len(sents)):
+            continue
+        level = support_level(c)
+        item = {
+            "sentence": sents[idx]["sentence"],
+            "keys": sents[idx]["keys"],
+            "level": level,
+            "reason": str(c.get("reason", "")),
+        }
+        judged.append(item)
+        if level in MUST_FIX:
+            bad_cites.append(item)
     bad_claims = [
         {"sentence": str(c.get("sentence", ""))[:400], "reason": str(c.get("reason", ""))}
         for c in as_list(result.get("unsupported_claims"))
@@ -419,6 +431,7 @@ def claim_check(
         "checked_sentences": len(sents),
         "unsupported_citations": bad_cites,
         "unsupported_claims": bad_claims,
+        "judged_citations": judged,
     }
 
 
@@ -443,6 +456,8 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             analysis = None
     checks = claim_check(ctx, pid, markdown, analysis)
     review["claim_check"] = checks
+    citation_report = _citation_report(ctx, pid, markdown, checks)
+    review["citation_verification"] = citation_report
     flags = list(evidence.get("flags", []))
     for c in checks["unsupported_citations"]:
         flags.append(
@@ -627,3 +642,19 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "needs_revision": needs_revision,
         "revisions": state.get("revisions", 0),
     }
+
+
+def _citation_report(
+    ctx: LabContext, pid: str, markdown: str, checks: dict[str, Any]
+) -> dict[str, Any]:
+    """citation_verification_report (professor's plan, Step 4.3), stored as a note."""
+    from cyberlab_orchestrator.agents.citation_validator import build_report
+
+    with ctx.db.session() as s:
+        cites = {
+            c.key: {"status": c.status, "doi": c.doi, "title": c.title}
+            for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))
+        }
+        report = build_report(markdown, cites, checks.get("judged_citations", []))
+        ctx.note(s, pid, "reviewer", "citation_verification", report)
+    return report

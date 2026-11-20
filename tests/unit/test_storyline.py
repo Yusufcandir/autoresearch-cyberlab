@@ -95,3 +95,37 @@ def test_rich_lock_keeps_results_in_discussion_but_not_mechanisms() -> None:
     assert any("mechanism" in d["reason"] for d in dropped)
     abstract = out.split("## Abstract")[1].split("## Discussion")[0]
     assert abstract.count("H1 (supported)") == 1  # findings not appended twice
+
+
+def test_citation_reference_checks_and_levels() -> None:
+    from cyberlab_orchestrator.agents.citation_validator import build_report, support_level
+
+    md = (
+        "## Related Work\n\nA did X [@A]. B did Y [@B; @C].\n\n## References\n\n"
+        "- [A] a\n- [B] b\n- [D] d\n"
+    )
+    cites = {
+        "A": {"status": "Verified", "doi": "10.1/x", "title": "Paper A"},
+        "B": {"status": "Verified", "doi": "10.1/y", "title": "Paper B"},
+        "C": {"status": "Unverified", "doi": None, "title": "c"},
+        "D": {"status": "Verified", "doi": "10.1/x", "title": "Paper A copy"},
+    }
+    judged = [
+        {
+            "sentence": "A did X",
+            "keys": ["A"],
+            "level": support_level({"support": "contradicted"}),
+            "reason": "",
+        },
+        {
+            "sentence": "B did Y",
+            "keys": ["B"],
+            "level": support_level({"supported": True}),
+            "reason": "",
+        },
+    ]
+    r = build_report(md, cites, judged)
+    refs = r["reference_list"]
+    assert refs["cited_but_unverified"] == ["C"] and refs["cited_not_in_reference_list"] == ["C"]
+    assert refs["listed_but_not_cited"] == ["D"] and ["A", "D"] in refs["duplicate_references"]
+    assert r["status"] == "BLOCK" and r["claim_support_counts"]["contradicted"] == 1

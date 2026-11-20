@@ -51,6 +51,12 @@ def literature_agent(
                     found[p.doi] = p
         except httpx.HTTPError as exc:
             errors.append(f"search failed for {q!r}: {exc}")
+        try:
+            for p in ctx.scholar.search_semantic_scholar(q, limit=5):
+                if p.doi and p.doi not in found:
+                    found[p.doi] = p
+        except (httpx.HTTPError, ValueError) as exc:
+            errors.append(f"Semantic Scholar search failed for {q!r}: {exc}")
     relevant = [p for p in found.values() if relevance(p) > 0]
     if len(found) != len(relevant):
         errors.append(

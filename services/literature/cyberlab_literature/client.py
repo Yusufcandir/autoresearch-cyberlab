@@ -18,6 +18,7 @@ import httpx
 
 OPENALEX = "https://api.openalex.org/works"
 CROSSREF = "https://api.crossref.org/works/"
+SEMANTIC_SCHOLAR = "https://api.semanticscholar.org/graph/v1/paper/search"
 
 
 def normalize_doi(doi: str | None) -> str | None:
@@ -107,6 +108,38 @@ class ScholarlyClient:
         r = self.client.get(OPENALEX, params=params)
         r.raise_for_status()
         return [self._from_openalex(w) for w in r.json().get("results", [])]
+
+    def search_semantic_scholar(self, query: str, limit: int = 10) -> list[Paper]:
+        """Second search source (professor's plan, Step 4.1). Results are only candidates:
+        each is verified against Crossref/OpenAlex by its DOI like any other paper."""
+        r = self.client.get(
+            SEMANTIC_SCHOLAR,
+            params={
+                "query": query,
+                "limit": str(min(limit, 50)),
+                "fields": "title,externalIds,year,authors,venue,abstract,citationCount",
+            },
+        )
+        if r.status_code != 200:
+            return []
+        out = []
+        for w in r.json().get("data", []) or []:
+            doi = normalize_doi((w.get("externalIds") or {}).get("DOI"))
+            if not doi:
+                continue
+            out.append(
+                Paper(
+                    title=_clean(w.get("title")) or "",
+                    doi=doi,
+                    year=w.get("year"),
+                    authors=[a.get("name", "") for a in (w.get("authors") or [])[:12]],
+                    venue=_clean(w.get("venue")),
+                    abstract=_clean(w.get("abstract")),
+                    cited_by=int(w.get("citationCount") or 0),
+                    source="semantic_scholar",
+                )
+            )
+        return out
 
     @staticmethod
     def _from_openalex(w: dict[str, Any]) -> Paper:
