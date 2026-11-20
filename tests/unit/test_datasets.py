@@ -109,3 +109,29 @@ def test_phishing_text_grouped_split(tmp_path: Path) -> None:
     df = pd.read_parquet(p.clean_path)
     train_hosts = set(df.loc[df["split"] == "train", "Group"])
     assert not train_hosts & set(df.loc[df["split"] == "test", "Group"])
+
+
+def test_preprocessing_audit_accounts_for_every_row(tmp_path: Path) -> None:
+    import json
+
+    from cyberlab_data import ADAPTERS, prepare, write_fixture
+
+    write_fixture(tmp_path / "cic" / "raw", rows_per_class=60)
+    p = prepare(tmp_path / "cic", benign_cap=50)
+    audit = json.loads((p.root / "data_preprocessing_audit.json").read_text())
+    assert audit["status"] == "PASS" and audit["consistent"], audit["problems"]
+    names = [s["stage"] for s in audit["stages"]]
+    assert names[1:] == [
+        "missing or infinite values",
+        "exact duplicates",
+        "conflicting labels",
+        "class down-sampling",
+    ]
+    assert audit["total_removed"] == audit["raw_rows"] - p.manifest.n_rows_clean
+    assert audit["stages"][-1]["removed_per_class"]  # BENIGN capped
+    for key in ("ctu13", "nf_unsw_nb15_v2", "phishing_urls"):
+        a = ADAPTERS[key]
+        a.write_fixture(tmp_path / key / "raw")
+        q = a.prepare(tmp_path / key)
+        r = json.loads((q.root / "data_preprocessing_audit.json").read_text())
+        assert r["consistent"], (key, r["problems"])

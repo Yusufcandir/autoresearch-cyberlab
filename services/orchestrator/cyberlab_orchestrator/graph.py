@@ -53,6 +53,7 @@ class LabState(TypedDict, total=False):
     jobs_pending: bool
     analysis_sha256: str
     interpretation: dict[str, Any]
+    validation_blocked: bool
     manuscript_version: int
     evidence_blockers: list[dict[str, str]]
     needs_revision: bool
@@ -229,7 +230,9 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     g.add_conditional_edges(
         "check_runs", lambda s: END if s.get("blocked_reason") else "statistics"
     )
-    g.add_edge("statistics", "writing")
+    g.add_conditional_edges(
+        "statistics", lambda s: END if s.get("validation_blocked") else "writing"
+    )
     g.add_edge("writing", "reviewer")
 
     def after_review(s: LabState) -> str:

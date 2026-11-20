@@ -135,7 +135,18 @@ def load_netflow(
     )
     dropped = [c for c in (*IDENTIFIERS, "Label", "Attack") if c in df.columns]
     df = df.drop(columns=dropped)
+    in_file = int(sum(counts.values()))
     notes = {
+        "pre_stages": [
+            {
+                "stage": "seeded per-class sampling while reading",
+                "input_rows": in_file,
+                "removed_rows": in_file - len(df),
+                "remaining_rows": len(df),
+                "reason": "at most benign_cap / class_cap rows per class, read in chunks",
+                "classes_after": {str(k): int(v) for k, v in df["Class"].value_counts().items()},
+            }
+        ],
         "dropped_columns": dropped,
         "rows_in_file": int(sum(counts.values())),
         "class_counts_in_file": counts,

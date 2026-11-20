@@ -242,6 +242,65 @@ def bootstrap_diff_seeds(
     return {"metric": metric, "point": point, "low": float(lo), "high": float(hi), "n_boot": n_boot}
 
 
+def paired_permutation_test(
+    preds_a: list[pd.DataFrame],
+    preds_b: list[pd.DataFrame],
+    metric: str,
+    n_perm: int = 2000,
+    seed: int = 0,
+) -> dict[str, Any]:
+    """One-sided paired permutation test of H: metric(A) > metric(B), on the hypothesis's own
+    metric (e.g. balanced accuracy), averaged over the model seeds that both models share.
+
+    Under the null hypothesis the two models are exchangeable on every test row, so each
+    permutation swaps the two predictions of a random subset of rows (the same rows for every
+    seed pair). p = (number of permuted differences >= observed + 1) / (n_perm + 1)."""
+    if len(preds_a) != len(preds_b) or not preds_a:
+        raise ValueError("need the same number of seed predictions for both models")
+    frames = [p.sort_values("row").reset_index(drop=True) for p in [*preds_a, *preds_b]]
+    y = frames[0]["y_true"].astype(str).to_numpy()
+    if any(not (f["y_true"].astype(str).to_numpy() == y).all() for f in frames):
+        raise ValueError("predictions are not over the same test rows")
+    preds = [f["y_pred"].astype(str).to_numpy() for f in frames]
+    labels, codes = np.unique(np.concatenate([y, *preds]), return_inverse=True)
+    n, k = len(y), len(labels)
+    yc = codes[:n]
+    pcs = [codes[n * (i + 1) : n * (i + 2)] for i in range(len(preds))]
+    m = len(preds_a)
+    pa, pb = pcs[:m], pcs[m:]
+    fast = _fast_metric(metric)
+    fn = _METRIC_FN[metric]
+
+    def score(pc: np.ndarray) -> float:
+        if fast is not None:
+            return float(fast(np.bincount(yc * k + pc, minlength=k * k).reshape(k, k)))
+        return float(fn(labels[yc], labels[pc]))
+
+    def diff(swap: np.ndarray | None) -> float:
+        total = 0.0
+        for a, b in zip(pa, pb, strict=True):
+            if swap is None:
+                total += score(a) - score(b)
+            else:
+                total += score(np.where(swap, b, a)) - score(np.where(swap, a, b))
+        return total / m
+
+    observed = diff(None)
+    rng = np.random.default_rng(seed)
+    count = 0
+    for _ in range(n_perm):
+        if diff(rng.random(n) < 0.5) >= observed:
+            count += 1
+    return {
+        "method": "paired permutation test (one-sided, rows swapped between the two models)",
+        "metric": metric,
+        "observed_difference": observed,
+        "n_permutations": n_perm,
+        "n_seeds": m,
+        "p_value": (count + 1) / (n_perm + 1),
+    }
+
+
 def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
     """Exact binomial interval for a proportion such as per-class recall; honest for 9 rows."""
     if n == 0:

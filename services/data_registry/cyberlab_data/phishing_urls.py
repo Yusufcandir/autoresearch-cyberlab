@@ -90,7 +90,18 @@ def prepare(
             "Group": url.map(_host),
         }
     )
+    n_in = len(out)
     out = out[label.notna().to_numpy()]
+    pre_stages = [
+        {
+            "stage": "rows without a 0/1 label",
+            "input_rows": n_in,
+            "removed_rows": n_in - len(out),
+            "remaining_rows": len(out),
+            "reason": "label missing or not numeric",
+            "classes_after": {str(k): int(v) for k, v in out["Class"].value_counts().items()},
+        }
+    ]
     return finalize(
         out,
         root=root,
@@ -102,6 +113,7 @@ def prepare(
         benign_cap=benign_cap,
         class_cap=class_cap,
         extra_notes={
+            "pre_stages": pre_stages,
             "modality": "text",
             "text_feature": "URL",
             "engineered_columns_not_used": len(df.columns) - 2,

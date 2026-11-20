@@ -78,10 +78,21 @@ def experiments_run(ctx: LabContext, pid: str) -> str:
     return (
         f"Dataset {body.get('dataset_id')} after cleaning and de-duplication; one "
         f"{split.get('strategy', 'stratified')} split (seed {split.get('seed')}); models: {models}; "
-        f"model seeds {body.get('seeds')}; metrics on the test split, bootstrap CIs and McNemar "
-        "tests. NOT run: any experiment on non-deduplicated data or without cleaning, any other "
-        "dataset, hyper-parameter tuning, cross-validation, feature-importance or ablation studies, "
-        "runtime or efficiency measurements."
+        f"model seeds {body.get('seeds')}; metrics on the test split, bootstrap CIs and paired "
+        "permutation tests"
+        + ("; hyper-parameters tuned on the validation split" if body.get("tuning") else "")
+        + (
+            "; ablation or robustness runs"
+            if any(
+                m.get("role") == "ablation" or (m.get("params") or {}).get("test_noise")
+                for m in body.get("models", [])
+            )
+            else ""
+        )
+        + ". NOT run: any experiment on non-deduplicated data or without cleaning, "
+        "cross-validation, runtime or efficiency measurements"
+        + ("" if body.get("tuning") else ", hyper-parameter tuning")
+        + "."
     )
 
 

@@ -150,6 +150,8 @@ def finalize(
 ) -> PreparedDataset:
     """Numeric cleaning, de-duplication, label-conflict removal, caps, split, gate, manifest."""
     n_raw = len(df)
+    audit = PreprocessingAudit(list((extra_notes or {}).get("pre_stages", [])))
+    audit.start(df)
     meta = {"Class", *([group_column] if group_column else [])}
     features = [c for c in df.columns if c not in meta]
     # text features (modality 'text') are named 'text:<column>' and kept as strings
@@ -161,7 +163,12 @@ def finalize(
     for c in text:
         df[c] = df[c].astype("string").str.strip().mask(lambda v: v == "")
     n_bad = int(df[features].isna().any(axis=1).sum())
-    df = df.dropna(subset=features)
+    df = audit.step(
+        df,
+        df.dropna(subset=features),
+        "missing or infinite values",
+        "rows with an infinite or missing feature value",
+    )
     if numeric:
         df[numeric] = df[numeric].astype("float32")
     for c in text:
@@ -172,7 +179,12 @@ def finalize(
     # Keep the first copy: for an official partition the train file is read first, so a test
     # row that duplicates a training row is the one removed (no leakage, counted below).
     before = len(df)
-    df = df.drop_duplicates(subset=[*features, "Class"])
+    df = audit.step(
+        df,
+        df.drop_duplicates(subset=[*features, "Class"]),
+        "exact duplicates",
+        "same features and label as an earlier row",
+    )
     n_dups = before - len(df)
     feat_hash = pd.util.hash_pandas_object(df[features], index=False)
     conflict_mask = feat_hash.duplicated(keep=False) & (
@@ -180,7 +192,9 @@ def finalize(
         > 1
     )
     n_conflicts = int(conflict_mask.sum())
-    df = df.loc[~conflict_mask]
+    df = audit.step(
+        df, df.loc[~conflict_mask], "conflicting labels", "identical features with different labels"
+    )
 
     rng = np.random.default_rng(split.seed)
     caps: list[pd.DataFrame] = []
@@ -189,7 +203,12 @@ def finalize(
         if cap is not None and len(g) > cap:
             g = g.iloc[rng.choice(len(g), size=cap, replace=False)]
         caps.append(g)
-    df = pd.concat(caps).reset_index(drop=True)
+    df = audit.step(
+        df,
+        pd.concat(caps).reset_index(drop=True),
+        "class down-sampling",
+        f"seeded cap per class (BENIGN {benign_cap}, others {class_cap})",
+    )
     df["split"] = assign_split(df, split, rng)
 
     reasons: list[str] = []
@@ -249,6 +268,9 @@ def finalize(
         **(extra_notes or {}),
     }
     (out / "manifest.json").write_text(manifest.model_dump_json(indent=2))
+    report = audit.finish(len(df), {str(k): int(v) for k, v in df["split"].value_counts().items()})
+    notes["preprocessing_audit_ok"] = report["consistent"]
+    (out / "data_preprocessing_audit.json").write_text(json.dumps(report, indent=2))
     (out / "preprocessing_notes.json").write_text(json.dumps(notes, indent=2))
     return PreparedDataset(manifest, out)
 
@@ -294,3 +316,73 @@ def shortcut_scan(train: pd.DataFrame, features: list[str], top: int = 5) -> lis
         out.append({"feature": f, "purity": round(purity, 4), "values": int(len(counts))})
     out.sort(key=lambda r: -float(r["purity"]))
     return [r for r in out[:top] if float(r["purity"]) >= 0.99]
+
+
+class PreprocessingAudit:
+    """Stage-by-stage row accounting (professor's plan, Step 1.2): for every operation the input
+    rows, removed rows, remaining rows, the reason, and the class distribution before and after.
+    It checks input = removed + remaining at every stage and that the stages chain together;
+    an inconsistent audit blocks manuscript generation."""
+
+    def __init__(self, pre_stages: list[dict[str, Any]] | None = None) -> None:
+        self.stages: list[dict[str, Any]] = [dict(s) for s in (pre_stages or [])]
+
+    @staticmethod
+    def _classes(df: pd.DataFrame) -> dict[str, int]:
+        return {str(k): int(v) for k, v in df["Class"].value_counts().items()}
+
+    def start(self, df: pd.DataFrame) -> None:
+        self.stages.append(
+            {
+                "stage": "loaded for cleaning",
+                "input_rows": len(df),
+                "removed_rows": 0,
+                "remaining_rows": len(df),
+                "reason": "rows read from the raw files after the dataset-specific steps above",
+                "classes_after": self._classes(df),
+            }
+        )
+
+    def step(
+        self, before: pd.DataFrame, after: pd.DataFrame, stage: str, reason: str
+    ) -> pd.DataFrame:
+        cb, ca = self._classes(before), self._classes(after)
+        self.stages.append(
+            {
+                "stage": stage,
+                "input_rows": len(before),
+                "removed_rows": len(before) - len(after),
+                "remaining_rows": len(after),
+                "reason": reason,
+                "removed_per_class": {c: cb[c] - ca.get(c, 0) for c in cb if cb[c] != ca.get(c, 0)},
+                "class_distribution_changed": cb != ca,
+                "classes_after": ca,
+            }
+        )
+        return after
+
+    def finish(self, final_rows: int, split_counts: dict[str, int]) -> dict[str, Any]:
+        problems = []
+        for i, st in enumerate(self.stages):
+            if st["input_rows"] != st["removed_rows"] + st["remaining_rows"]:
+                problems.append(f"stage '{st['stage']}': input != removed + remaining")
+            if i and self.stages[i - 1]["remaining_rows"] != st["input_rows"]:
+                problems.append(
+                    f"stage '{st['stage']}' starts with {st['input_rows']} rows but the previous "
+                    f"stage ended with {self.stages[i - 1]['remaining_rows']}"
+                )
+        if self.stages and self.stages[-1]["remaining_rows"] != final_rows:
+            problems.append("the last stage does not end with the final row count")
+        if sum(split_counts.values()) != final_rows:
+            problems.append("train + validation + test rows do not add up to the final rows")
+        first = self.stages[0]["input_rows"] if self.stages else final_rows
+        return {
+            "status": "PASS" if not problems else "BLOCK",
+            "consistent": not problems,
+            "raw_rows": first,
+            "final_rows": final_rows,
+            "total_removed": first - final_rows,
+            "split_rows": split_counts,
+            "stages": self.stages,
+            "problems": problems,
+        }

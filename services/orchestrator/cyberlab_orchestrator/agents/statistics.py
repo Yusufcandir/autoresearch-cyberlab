@@ -37,6 +37,106 @@ def statistics_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     )
     with ctx.db.session() as s:
         ctx.note(s, pid, "statistics", "interpretation", {**interp, "label": "Proposed"})
+    report = run_validation(ctx, pid, state["protocol_version"], analysis)
+    _run_feedback(ctx, pid, state["protocol_version"], analysis, report)
+    if not report["manuscript_allowed"]:
+        blocked = [
+            f"{c['check']}: {c['detail']}" for c in report["checks"] if c["status"] == "BLOCK"
+        ]
+        ctx.set_stage(
+            pid,
+            "validation_blocked",
+            "Blocked",
+            "scientific validation blocked the manuscript: " + " | ".join(blocked)[:900],
+        )
+        return {
+            "analysis_sha256": analysis["artifact_sha256"],
+            "interpretation": interp,
+            "validation_blocked": True,
+        }
     label = "Verified" if analysis["metrics_recomputed_match"] else "Measured"
     ctx.set_stage(pid, "analyzed", label)
-    return {"analysis_sha256": analysis["artifact_sha256"], "interpretation": interp}
+    return {
+        "analysis_sha256": analysis["artifact_sha256"],
+        "interpretation": interp,
+        "validation_blocked": False,
+    }
+
+
+def _run_feedback(
+    ctx: LabContext,
+    pid: str,
+    version: int,
+    analysis: dict[str, Any],
+    report: dict[str, Any],
+) -> None:
+    """Rules A-E on the validated evidence; decisions go to the research decision log."""
+    from sqlalchemy import select
+
+    from cyberlab_common.db import Project, ProtocolVersion
+    from cyberlab_data import get_adapter
+    from cyberlab_orchestrator.agents.feedback_controller import decide, record_decisions
+
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid, ProtocolVersion.version == version
+            )
+        )
+        body = dict(pv.body) if pv else {}
+        p = s.get(Project, pid)
+        minutes = float(p.gpu_minutes_used) if p else 0.0
+    groups = list(report.get("groups") or [])
+    decisions = decide(report, analysis, body, get_adapter(body.get("dataset_id")), minutes, groups)
+    if decisions:
+        record_decisions(ctx, pid, decisions)
+
+
+def run_validation(
+    ctx: LabContext, pid: str, protocol_version: int, analysis: dict[str, Any]
+) -> dict[str, Any]:
+    """Scientific validation before writing (professor's plan, Phase 1): stored as an evidence
+    artifact and an agent note; a BLOCK stops the workflow before the manuscript."""
+    import tempfile
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from cyberlab_common.db import ProtocolVersion, RunRecord
+    from cyberlab_data import get_adapter, prepared_dir_for
+    from cyberlab_qa.scientific_validator import generate_validation_report
+    from cyberlab_schemas import SplitSpec
+
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid, ProtocolVersion.version == protocol_version
+            )
+        )
+        body = dict(pv.body) if pv else {}
+        runs = [
+            {"model": r.model_name, "seed": r.seed, "status": r.status}
+            for r in s.scalars(select(RunRecord).where(RunRecord.project_id == pid))
+            if r.experiment_id.startswith(f"p{protocol_version}-")
+        ]
+    adapter = get_adapter(body.get("dataset_id"))
+    prepared = prepared_dir_for(
+        adapter.root(ctx.settings.dataset_root), SplitSpec.model_validate(body.get("split", {}))
+    )
+    report = generate_validation_report(analysis, body, runs, prepared)
+    with tempfile.TemporaryDirectory() as tmp, ctx.db.session() as s:
+        path = Path(tmp) / "scientific_validation_report.json"
+        path.write_text(json.dumps(report, indent=2, default=str))
+        rec = ctx.store.put(s, pid, path, name="scientific_validation_report.json")
+        summary = {
+            "status": report["status"],
+            "counts": report["counts"],
+            "artifact_sha256": rec.sha256,
+            "checks": [
+                {"check": c["check"], "status": c["status"], "detail": c["detail"]}
+                for c in report["checks"]
+            ],
+        }
+        ctx.note(s, pid, "statistics", "scientific_validation", summary)
+    analysis["validation"] = summary
+    return report

@@ -110,11 +110,17 @@ def hypothesis_sentences(analysis: dict[str, Any]) -> list[str]:
         means = (
             f"; {a_mean:.4f} vs {b_mean:.4f}" if a_mean is not None and b_mean is not None else ""
         )
-        ptxt = _p((h.get("mcnemar") or {}).get("p_value"))
-        n_seeds = len(h.get("mcnemar_seeds") or [])
-        if ptxt and "p_holm" in h:
-            where = f"on each of the {_num(n_seeds)} seeds, largest " if n_seeds > 1 else ""
-            test = f" (exact McNemar test {where}{ptxt}; Holm-adjusted {_p(h['p_holm'])})"
+        tst = h.get("test") or {}
+        ptxt = _p(tst.get("p_value") if tst else (h.get("mcnemar") or {}).get("p_value"))
+        if tst and ptxt and "p_holm" in h:
+            test = (
+                f" (one-sided paired permutation test on {_metric(metric)}, {ptxt}; "
+                f"Holm-adjusted {_p(h['p_holm'])})"
+            )
+        elif ptxt and "p_holm" in h:
+            test = (
+                f" (exact McNemar test, largest over seeds {ptxt}; Holm-adjusted {_p(h['p_holm'])})"
+            )
         else:
             test = f" (exact McNemar test, {ptxt})" if ptxt else ""
         out.append(

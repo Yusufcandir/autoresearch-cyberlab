@@ -22,7 +22,7 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-_LATE_OPTIONAL = {"tuning", "min_test_support"}
+_LATE_OPTIONAL = {"tuning", "min_test_support", "followup_of"}
 
 
 def content_hash(obj: BaseModel | dict[str, Any]) -> str:
@@ -152,6 +152,8 @@ class Protocol(Versioned):
     # Small-class policy (decided before results): classes with fewer test rows are reported
     # separately with exact intervals. None = the platform default of 30.
     min_test_support: int | None = Field(default=None, ge=1)
+    # set when the feedback controller proposed this version as a follow-up experiment
+    followup_of: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
     @property

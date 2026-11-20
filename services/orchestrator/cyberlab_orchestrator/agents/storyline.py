@@ -93,7 +93,7 @@ def evidence_brief(analysis: dict[str, Any], facts: dict[str, Any]) -> dict[str,
             findings.append(
                 {
                     "id": h["id"],
-                    "kind": "tested hypothesis (McNemar on every seed, Holm-corrected)",
+                    "kind": "tested hypothesis (paired permutation test on its metric, Holm)",
                     "text": f"{pretty(a)} versus {pretty(b)} on {hm}: {{{{hyp:{h['id']}}}}}; "
                     f"means {{{{metric:{a}:{hm}}}}} and {{{{metric:{b}:{hm}}}}}; the difference "
                     "with its 95% CI and the odds ratio are in the hypothesis table",

@@ -98,6 +98,16 @@ def prepare(
         df["Group"] = _group(f, raw)
         frames.append(df)
     df = pd.concat(frames, ignore_index=True)
+    pre_stages = [
+        {
+            "stage": "background flows excluded",
+            "input_rows": len(df) + excluded,
+            "removed_rows": excluded,
+            "remaining_rows": len(df),
+            "reason": "background flows carry no verified label",
+            "classes_after": {str(k): int(v) for k, v in df["Class"].value_counts().items()},
+        }
+    ]
     vocab = {
         c: [str(v) for v in df[c].astype(str).value_counts().index[:TOP_VALUES]]
         for c in CATEGORICAL
@@ -122,6 +132,7 @@ def prepare(
         benign_cap=benign_cap,
         class_cap=class_cap,
         extra_notes={
+            "pre_stages": pre_stages,
             "background_or_unlabelled_flows_excluded": excluded,
             "one_hot_vocabulary": vocab,
             "groups": sorted(str(g) for g in df["Group"].unique()),

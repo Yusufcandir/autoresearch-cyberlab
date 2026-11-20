@@ -309,6 +309,110 @@ class Lab:
             )
         return self._invoke(project_id, Command(resume={"released": True}))
 
+    def research_decisions(self, project_id: str) -> list[dict[str, Any]]:
+        from cyberlab_common.db import AgentNote
+
+        with self.db.session() as s:
+            notes = s.scalars(
+                select(AgentNote)
+                .where(AgentNote.project_id == project_id, AgentNote.kind == "research_decision")
+                .order_by(AgentNote.id.desc())
+            )
+            return [{"note_id": n.id, **n.content} for n in notes]
+
+    def start_followup(self, principal: Principal, project_id: str, note_id: int) -> dict[str, Any]:
+        """The PI approves a feedback-controller decision: its protocol change becomes a new
+        protocol version, which still needs gate A before anything runs (professor's plan,
+        Step 3.3: human approval for protocol changes, capped number of cycles)."""
+        import json as _json
+
+        from cyberlab_common.db import AgentNote, ProtocolVersion
+        from cyberlab_orchestrator.agents.feedback_controller import MAX_FOLLOWUPS
+        from cyberlab_schemas import Protocol
+
+        state = self.graph.get_state(self._config(project_id))
+        if not state.values.get("analysis_sha256"):
+            raise GateError("there are no analysed results to follow up yet")
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "pi")
+            if p.stage == "released":
+                raise GateError("the study was released; start a new study for further experiments")
+            note = s.get(AgentNote, note_id)
+            if note is None or note.project_id != project_id or note.kind != "research_decision":
+                raise GateError("decision not found")
+            decision = dict(note.content)
+            change = decision.get("protocol_change")
+            if not change or decision.get("approval_status") != "pending_pi":
+                raise GateError("this decision has no pending experiment to approve")
+            done = len(
+                list(
+                    s.scalars(
+                        select(ProtocolVersion).where(
+                            ProtocolVersion.project_id == project_id,
+                            ProtocolVersion.created_by == "feedback_controller",
+                        )
+                    )
+                )
+            )
+            if done >= MAX_FOLLOWUPS:
+                raise GateError(f"the limit of {MAX_FOLLOWUPS} follow-up cycles is reached")
+            latest = s.scalar(
+                select(ProtocolVersion)
+                .where(ProtocolVersion.project_id == project_id)
+                .order_by(ProtocolVersion.version.desc())
+            )
+            assert latest is not None
+            body = dict(latest.body)
+            if "split" in change:
+                body["split"] = {**(body.get("split") or {}), **change["split"]}
+            if "seeds" in change:
+                body["seeds"] = change["seeds"]
+            body["version"] = latest.version + 1
+            body["followup_of"] = {
+                "version": latest.version,
+                "decision_id": decision["decision_id"],
+                "rule": decision["rule"],
+                "reason": decision["identified_problem"],
+                "change": change,
+            }
+            protocol = Protocol.model_validate(_json.loads(_json.dumps(body, default=str)))
+            s.add(
+                ProtocolVersion(
+                    project_id=project_id,
+                    version=protocol.version,
+                    sha256=protocol.sha256,
+                    body=protocol.model_dump(mode="json"),
+                    rationale=f"Follow-up ({decision['rule']}): {decision['proposed_action']}",
+                    created_by="feedback_controller",
+                )
+            )
+            decision["approval_status"] = "approved"
+            decision["final_outcome"] = f"protocol version {protocol.version} created"
+            note.content = decision
+            audit(
+                s,
+                principal.username,
+                "followup.approved",
+                project_id,
+                {"decision_id": decision["decision_id"], "version": protocol.version},
+            )
+        self.graph.update_state(
+            self._config(project_id),
+            {
+                "protocol_version": protocol.version,
+                "protocol_sha256": protocol.sha256,
+                "gate_a": None,
+                "revisions": 0,
+                "review_feedback": [],
+                "needs_revision": False,
+                "validation_blocked": False,
+                "blocked_reason": None,
+                "compile_error": None,
+            },
+            as_node="revise_protocol",
+        )
+        return self._invoke(project_id, None)
+
     def redraft(self, principal: Principal, project_id: str) -> dict[str, Any]:
         """Write the paper again (e.g. after the writer improved).
 

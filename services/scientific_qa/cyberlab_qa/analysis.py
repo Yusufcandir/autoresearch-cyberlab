@@ -24,6 +24,7 @@ from cyberlab_qa.metrics import (
     holm,
     leakage_audit,
     mcnemar,
+    paired_permutation_test,
     recompute_matches,
 )
 from cyberlab_schemas import EvidenceClaim, Protocol, StatusLabel
@@ -149,6 +150,14 @@ def analyze_project(
                 "mcnemar_seeds": common,
                 "mcnemar_p_by_seed": {str(sd): t["p_value"] for sd, t in by_seed.items()},
                 "mcnemar": by_seed[worst],
+                # primary test on the hypothesis's own metric (McNemar only checks paired
+                # per-row correctness, which is not the same as a balanced-accuracy difference)
+                "test": paired_permutation_test(
+                    [preds[(a, sd)] for sd in common],
+                    [preds[(b, sd)] for sd in common],
+                    h.primary_metric,
+                    n_perm=1000,
+                ),
                 "effect": bootstrap_diff_seeds(
                     [preds[(a, sd)] for sd in common],
                     [preds[(b, sd)] for sd in common],
@@ -159,7 +168,7 @@ def analyze_project(
         )
     # Holm-Bonferroni correction across all tested hypotheses of the protocol
     tested = [hr for hr in hypotheses if "mcnemar" in hr]
-    for hr, p_adj in zip(tested, holm([hr["mcnemar"]["p_value"] for hr in tested]), strict=True):
+    for hr, p_adj in zip(tested, holm([hr["test"]["p_value"] for hr in tested]), strict=True):
         hr["p_holm"] = p_adj
         hr["result"] = (
             "supported" if hr["a_mean"] > hr["b_mean"] and p_adj < 0.05 else "not supported"
@@ -188,6 +197,7 @@ def analyze_project(
         "models": models,
         "hypotheses": hypotheses,
         "min_test_support": protocol.min_test_support,
+        "followup": _followup_comparison(s, store, project_id, protocol),
         "tuning": protocol.tuning.model_dump() if protocol.tuning else None,
         "metrics_recomputed_match": recompute_ok,
         "qa_flags": [f.__dict__ for f in flags],
@@ -264,3 +274,36 @@ def _with_exact_intervals(per_class: dict[str, Any]) -> dict[str, Any]:
         v["recall_ci"] = list(clopper_pearson(k, n))
         out[c] = v
     return out
+
+
+def _followup_comparison(
+    s: Session, store: ArtifactStore, project_id: str, protocol: Protocol
+) -> dict[str, Any] | None:
+    """For a follow-up protocol: each model's metric means under the previous version, so the
+    paper can show what the stricter experiment changed (feedback-controller cycle)."""
+    f = protocol.followup_of
+    if not f:
+        return None
+    prev = int(f["version"])
+    runs = [
+        r
+        for r in s.scalars(
+            select(RunRecord).where(
+                RunRecord.project_id == project_id, RunRecord.status == "succeeded"
+            )
+        )
+        if r.experiment_id.startswith(f"p{prev}-")
+    ]
+    by_model: dict[str, list[dict[str, Any]]] = {}
+    for r in runs:
+        path = store.path_for(s, project_id, r.receipt["artifacts"]["predictions.csv"])
+        by_model.setdefault(r.model_name, []).append(compute_metrics(pd.read_csv(path)))
+    previous = {
+        name: {
+            k: statistics.fmean(m[k] for m in ms)
+            for k in ("macro_f1", "balanced_accuracy", "accuracy")
+            if all(k in m for m in ms)
+        }
+        for name, ms in by_model.items()
+    }
+    return {**f, "previous_version": prev, "previous_means": previous}

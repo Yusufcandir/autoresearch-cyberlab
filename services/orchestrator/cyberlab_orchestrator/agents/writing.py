@@ -196,10 +196,16 @@ def method_facts(
         "Confidence intervals are percentile bootstrap intervals (facts.bootstrap_resamples "
         "resamples) over test rows, stratified by class; each resample is scored on every "
         "model seed's predictions and averaged, so the interval belongs to the reported mean.",
-        "Hypotheses were tested with an exact McNemar test on per-row correctness of the two "
-        "models on each seed; the largest p-value over seeds is used and corrected across "
-        "hypotheses with the Holm-Bonferroni method (supported only if the adjusted p is "
-        "below 0.05 and the mean favours the stated model).",
+        "Each hypothesis was tested on its own metric with a one-sided paired permutation test "
+        "(1,000 permutations): the predictions of the two models were swapped on random test "
+        "rows, the metric difference was averaged over the model seeds, and the p-value is the "
+        "share of permuted differences at least as large as the observed one. P-values were "
+        "corrected across hypotheses with the Holm-Bonferroni method; a hypothesis is "
+        "supported only if the adjusted p is below 0.05 and the observed difference favours "
+        "the stated model.",
+        "Three sources of uncertainty are reported separately: test-sample uncertainty (the "
+        "bootstrap intervals), model-initialisation variability (the standard deviation over "
+        "seeds), and data-partition variability, which a single fixed split cannot measure.",
         "All metrics were recomputed from stored per-row predictions; numbers in the paper are "
         "inserted from these stored results.",
     ]
@@ -274,6 +280,7 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         }
     verified_keys = [k for k, c in cites.items() if c["status"] == "Verified"]
     analysis["artifact_sha256"] = state["analysis_sha256"]
+    analysis["validation"] = _validation_summary(ctx, pid)
     facts, prose = method_facts(ctx, pid, analysis)
     analysis["facts"] = facts
     context = {
@@ -308,6 +315,11 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     }
     # Writing pipeline v2: evidence brief -> outline -> sections -> referee -> revision
     brief = evidence_brief(analysis, facts)
+    brief["validation_warnings"] = [
+        {"check": c["check"], "status": c["status"], "detail": c["detail"]}
+        for c in (analysis.get("validation") or {}).get("checks", [])
+        if c["status"] in ("WARNING", "NOT_EVALUATED")
+    ]
     context["evidence_brief"] = brief
     context["related_work_themes"] = related_themes(cites, _evidence_matrix(ctx, pid))
     context["outline"] = outline(ctx, pid, brief, context)
@@ -388,6 +400,18 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
 def _load_analysis(ctx: LabContext, pid: str, sha: str) -> dict[str, Any]:
     with ctx.db.session() as s:
         return dict(json.loads(ctx.store.path_for(s, pid, sha).read_text()))
+
+
+def _validation_summary(ctx: LabContext, pid: str) -> dict[str, Any]:
+    from cyberlab_common.db import AgentNote
+
+    with ctx.db.session() as s:
+        note = s.scalar(
+            select(AgentNote)
+            .where(AgentNote.project_id == pid, AgentNote.kind == "scientific_validation")
+            .order_by(AgentNote.id.desc())
+        )
+        return dict(note.content) if note else {}
 
 
 def _evidence_matrix(ctx: LabContext, pid: str) -> dict[str, dict[str, Any]]:

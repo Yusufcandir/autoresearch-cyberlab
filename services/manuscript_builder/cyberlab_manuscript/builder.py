@@ -421,7 +421,7 @@ def per_class_table(analysis: dict[str, Any], model: str) -> str:
 def hypotheses_table(analysis: dict[str, Any]) -> str:
     rows = [
         "| Hypothesis | Comparison | Means | Difference (95% CI) | Odds ratio | "
-        "McNemar p (largest over seeds) | Holm-adjusted p | Result |",
+        "Paired test p (one-sided) | Holm-adjusted p | Result |",
         "|---|---|---|---|---|---|---|---|",
     ]
     for h in analysis["hypotheses"]:
@@ -439,7 +439,7 @@ def hypotheses_table(analysis: dict[str, Any]) -> str:
         odds_txt = f"{odds:.2f}" if odds is not None else "-"
         rows.append(
             f"| {h['id']} | {h['a']} > {h['b']} ({h['metric']}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
-            f"{diff} | {odds_txt} | {_fmt_p(h['mcnemar']['p_value'])} | {holm_p} | {h['result']} |"
+            f"{diff} | {odds_txt} | {_fmt_p((h.get('test') or h['mcnemar'])['p_value'])} | {holm_p} | {h['result']} |"
         )
     return "\n".join(rows)
 
@@ -477,6 +477,81 @@ SECTION_ORDER = [
     "limitations",
     "conclusion",
 ]
+
+
+# Plain-language limitation sentences for the scientific validator's warnings (Principle 4:
+# the system states where its evidence is insufficient).
+_VALIDATION_SENTENCES = {
+    "near_duplicate_flows": "Many test rows lie close to training rows in feature space, so the "
+    "test set may be easier than traffic from a new network.",
+    "capture_groups": "The random split places traffic from the same capture period or source in "
+    "both training and test; a group-aware split would give a stricter test.",
+    "temporal_leakage": "Training and test traffic come from the same capture days, so the "
+    "results do not show how the models handle traffic from later days.",
+    "label_revealing_features": "Some single features almost determine the class on their own, "
+    "which suggests the dataset contains shortcuts that may not exist in other networks.",
+    "preprocessing_fitted_on_test": "The list of categorical values was taken from all rows "
+    "(without labels) rather than from the training rows only.",
+    "session_identifiers": "Overlap between training and test at the level of network sessions "
+    "could not be evaluated, because the dataset has no session identifiers.",
+    "result_consistency": "Some results vary noticeably between seeds or exceed the baselines by "
+    "an unusually large margin, so they should be confirmed on further data.",
+}
+
+
+def validation_note(analysis: dict[str, Any]) -> str:
+    checks = (analysis.get("validation") or {}).get("checks") or []
+    out = [
+        _VALIDATION_SENTENCES[c["check"]]
+        for c in checks
+        if c.get("status") in ("WARNING", "NOT_EVALUATED")
+        and c.get("check") in _VALIDATION_SENTENCES
+    ]
+    if not out:
+        return ""
+    return (
+        "The automatic scientific validation also found: "
+        + " ".join(out)
+        + (
+            " Variation from re-partitioning the data was not measured, because one fixed split was "
+            "used."
+        )
+    )
+
+
+def followup_section(analysis: dict[str, Any]) -> str:
+    """Results of a follow-up experiment next to the version it revisits."""
+    f = analysis.get("followup")
+    if not f:
+        return ""
+    metric = next(
+        (h.get("metric") for h in analysis.get("hypotheses", []) if h.get("metric")), "macro_f1"
+    )
+    change = f.get("change") or {}
+    what = (
+        f"a {change['split']['strategy'].replace('_', ' ')} split"
+        if "split" in change
+        else f"{len(change['seeds'])} seeds"
+        if "seeds" in change
+        else "a revised protocol"
+    )
+    rows = [
+        f"### Follow-up to protocol version {f['previous_version']}",
+        "",
+        f"The scientific validation of version {f['previous_version']} found that "
+        f"{str(f.get('reason', '')).rstrip('.')}. This version repeats the experiments with {what} "
+        f"(decision {f.get('decision_id')}, rule {f.get('rule')}, approved by the PI).",
+        "",
+        f"| Model | {metric} (version {f['previous_version']}) | {metric} (this version) | Change |",
+        "|---|---|---|---|",
+    ]
+    for name, m in analysis.get("models", {}).items():
+        now = (m.get("aggregate", {}).get(metric) or {}).get("mean")
+        before = (f.get("previous_means") or {}).get(name, {}).get(metric)
+        if now is None or before is None:
+            continue
+        rows.append(f"| {name} | {_fmt(before)} | {_fmt(now)} | {now - before:+.4f} |")
+    return "\n".join(rows)
 
 
 def disclosure(models: list[str]) -> str:
@@ -521,7 +596,11 @@ def build_manuscript(
             out += [metric_definitions(), "", "### Data", "", dataset_section(analysis), ""]
         if key == "limitations" and (note := small_class_note(analysis)):
             out += [note, ""]
+        if key == "limitations" and (vnote := validation_note(analysis)):
+            out += [vnote, ""]
         if key == "results":
+            if fu := followup_section(analysis):
+                out += [fu, ""]
             out += [
                 "### Main results",
                 "",
