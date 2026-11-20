@@ -313,13 +313,28 @@ def metric_definitions() -> str:
 
 
 def small_class_note(analysis: dict[str, Any]) -> str:
+    """Small-class policy: classes under the protocol's minimum test support (default 30) are
+    named with an exact (Clopper-Pearson) interval for the best model's recall."""
+    threshold = int(analysis.get("min_test_support") or 30)
     small: dict[str, int] = {}
     for m in analysis.get("models", {}).values():
         for cls, pc in (m.get("per_class") or {}).items():
-            if pc.get("support", 0) < 30:
+            if pc.get("support", 0) < threshold:
                 small[cls] = int(pc["support"])
     if not small:
         return ""
+    best = max(
+        analysis.get("models", {}).items(),
+        key=lambda kv: (kv[1].get("aggregate", {}).get("macro_f1") or {}).get("mean", 0.0),
+    )
+    exact = []
+    for c in sorted(small):
+        pc = (best[1].get("per_class") or {}).get(c) or {}
+        ci = pc.get("recall_ci")
+        if ci:
+            exact.append(
+                f"{c}: recall {pc.get('recall', 0):.4f}, 95% exact interval [{ci[0]:.4f}, {ci[1]:.4f}]"
+            )
     listed = ", ".join(f"{c} ({n:,} test rows)" for c, n in sorted(small.items()))
     return (
         f"Some classes have very few test rows: {listed}. Their per-class scores, and the "
@@ -327,7 +342,23 @@ def small_class_note(analysis: dict[str, Any]) -> str:
         "interval understates this: when a model detects all (or none) of a tiny class, every "
         "resample does too, so the interval can look narrow although a few more rows could "
         "change the score a lot."
+        + (
+            f" Exact binomial intervals for {_pretty_model(best[0])} show the real uncertainty ("
+            + "; ".join(exact)
+            + ")."
+            if exact
+            else ""
+        )
     )
+
+
+def _pretty_model(name: str) -> str:
+    return {
+        "logistic_regression": "logistic regression",
+        "random_forest": "random forest",
+        "xgboost": "XGBoost",
+        "mlp": "the MLP",
+    }.get(name, name)
 
 
 def _ci_label(m: dict[str, Any]) -> str:
@@ -371,17 +402,26 @@ def per_class_table(analysis: dict[str, Any], model: str) -> str:
 
 def hypotheses_table(analysis: dict[str, Any]) -> str:
     rows = [
-        "| Hypothesis | Comparison | Means | McNemar p (largest over seeds) | Holm-adjusted p | Result |",
-        "|---|---|---|---|---|---|",
+        "| Hypothesis | Comparison | Means | Difference (95% CI) | Odds ratio | "
+        "McNemar p (largest over seeds) | Holm-adjusted p | Result |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for h in analysis["hypotheses"]:
         if "mcnemar" not in h:
-            rows.append(f"| {h['id']} | - | - | - | - | {h['result']} |")
+            rows.append(f"| {h['id']} | - | - | - | - | - | - | {h['result']} |")
             continue
         holm_p = _fmt_p(h["p_holm"]) if "p_holm" in h else "-"
+        eff = h.get("effect") or {}
+        diff = (
+            f"{eff['point']:+.4f} [{eff['low']:+.4f}, {eff['high']:+.4f}]"
+            if {"point", "low", "high"} <= set(eff)
+            else "-"
+        )
+        odds = h["mcnemar"].get("odds_ratio")
+        odds_txt = f"{odds:.2f}" if odds is not None else "-"
         rows.append(
             f"| {h['id']} | {h['a']} > {h['b']} ({h['metric']}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
-            f"{_fmt_p(h['mcnemar']['p_value'])} | {holm_p} | {h['result']} |"
+            f"{diff} | {odds_txt} | {_fmt_p(h['mcnemar']['p_value'])} | {holm_p} | {h['result']} |"
         )
     return "\n".join(rows)
 

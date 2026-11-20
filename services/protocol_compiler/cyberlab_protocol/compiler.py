@@ -116,6 +116,7 @@ def compile_protocol(
             risk_tier=protocol.risk_tier,
             max_minutes=min(protocol.gpu_budget_minutes, max_job_minutes),
             use_gpu=use_gpu and m.template in GPU_TEMPLATES,
+            tuning=protocol.tuning,
         )
         for m in protocol.models
         for seed in protocol.seeds

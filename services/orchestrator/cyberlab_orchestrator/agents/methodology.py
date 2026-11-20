@@ -16,11 +16,14 @@ from cyberlab_protocol import default_protocol
 from cyberlab_protocol.intent import (
     PRETTY,
     hypothesis_statement,
+    min_support_from_text,
     research_intent,
+    seeds_from_text,
     split_from_goal,
     testable_questions,
+    tuning_from_text,
 )
-from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec, SplitSpec
+from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec, SplitSpec, TuningSpec
 
 SYSTEM = (
     "You are a methodology design agent. Design the experimental protocol for THIS study's "
@@ -66,6 +69,8 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     problems += fixed
     protocol, enforced = _enforce_intent(protocol, intent, goal, adapter.split_strategies)
     problems += enforced
+    protocol, design = _design_from_text(protocol, " ".join([goal, *constraints, feedback or ""]))
+    problems += design
     with ctx.db.session() as s:
         version = (
             s.scalar(
@@ -204,6 +209,32 @@ def _enforce_intent(
         notes.append(
             f"split {protocol.split.strategy} not available for this dataset; default used"
         )
+    updated = protocol.model_copy(update=update)
+    return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
+
+
+def _design_from_text(protocol: Protocol, text: str) -> tuple[Protocol, list[str]]:
+    """Tuning, number of seeds and the small-class threshold, when the researcher (goal,
+    constraints) or the PI (review comment) asks for them. Decided before any result exists."""
+    notes: list[str] = []
+    update: dict[str, Any] = {}
+    trials = tuning_from_text(text)
+    metric = protocol.hypotheses[0].primary_metric if protocol.hypotheses else "macro_f1"
+    if trials:
+        update["tuning"] = TuningSpec(trials=trials, metric=metric)
+        if protocol.split.val_fraction <= 0:
+            update["split"] = protocol.split.model_copy(update={"val_fraction": 0.1})
+        notes.append(f"tuning on the validation split: {trials} trials per model, {metric}")
+    seeds = seeds_from_text(text) or (5 if trials else None)
+    if seeds and seeds != len(protocol.seeds):
+        update["seeds"] = [42 + i for i in range(max(1, min(seeds, 10)))]
+        notes.append(f"{len(update['seeds'])} seeds")
+    support = min_support_from_text(text)
+    if support:
+        update["min_test_support"] = support
+        notes.append(f"classes under {support} test rows reported separately with exact intervals")
+    if not update:
+        return protocol, notes
     updated = protocol.model_copy(update=update)
     return Protocol.model_validate(json.loads(updated.model_dump_json())), notes
 

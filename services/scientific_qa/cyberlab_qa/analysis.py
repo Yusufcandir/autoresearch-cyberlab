@@ -18,6 +18,8 @@ from cyberlab_evidence import ArtifactStore
 from cyberlab_qa.metrics import (
     QAFlag,
     bootstrap_ci_seeds,
+    bootstrap_diff_seeds,
+    clopper_pearson,
     compute_metrics,
     holm,
     leakage_audit,
@@ -59,8 +61,26 @@ def analyze_project(
         raise ValueError("no successful runs to analyze")
 
     preds: dict[tuple[str, int], pd.DataFrame] = {}
+    run_info: dict[str, dict[str, Any]] = {}
     recompute_ok = True
     for r in runs:
+        arts = r.receipt.get("artifacts", {})
+        if r.model_name not in run_info and "model_info.json" in arts:
+            info = json.loads(store.path_for(s, project_id, arts["model_info.json"]).read_text())
+            if "tuning.json" in arts:
+                tj = json.loads(store.path_for(s, project_id, arts["tuning.json"]).read_text())
+                info["tuning"] = {
+                    k: tj.get(k)
+                    for k in (
+                        "metric",
+                        "trials_requested",
+                        "trials_run",
+                        "tuning_rows",
+                        "best_value",
+                        "label",
+                    )
+                }
+            run_info[r.model_name] = info
         path = store.path_for(s, project_id, r.receipt["artifacts"]["predictions.csv"])
         df = pd.read_csv(path)
         preds[(r.model_name, r.seed)] = df
@@ -86,7 +106,9 @@ def analyze_project(
         models[m.name] = {
             "role": m.role,
             "template": m.template,
-            "params": dict(m.params),
+            "params": dict(run_info.get(m.name, {}).get("params") or m.params),
+            "tuned": bool(run_info.get(m.name, {}).get("tuned")),
+            "tuning": run_info.get(m.name, {}).get("tuning"),
             "seeds": seeds,
             "aggregate": agg,
             "ci_seed": seeds[0],
@@ -97,7 +119,7 @@ def analyze_project(
                 else f"seed {seeds[0]}"
             ),
             "macro_f1_ci": bootstrap_ci_seeds(seed_preds, "macro_f1", n_boot=500),
-            "per_class": first["per_class"],
+            "per_class": _with_exact_intervals(first["per_class"]),
             "confusion_matrix": first["confusion_matrix"],
         }
         # CIs also for every metric a hypothesis is tested on (e.g. balanced accuracy)
@@ -127,6 +149,12 @@ def analyze_project(
                 "mcnemar_seeds": common,
                 "mcnemar_p_by_seed": {str(sd): t["p_value"] for sd, t in by_seed.items()},
                 "mcnemar": by_seed[worst],
+                "effect": bootstrap_diff_seeds(
+                    [preds[(a, sd)] for sd in common],
+                    [preds[(b, sd)] for sd in common],
+                    h.primary_metric,
+                    n_boot=300,
+                ),
             }
         )
     # Holm-Bonferroni correction across all tested hypotheses of the protocol
@@ -155,6 +183,8 @@ def analyze_project(
         "dataset": ds.manifest if ds else None,
         "models": models,
         "hypotheses": hypotheses,
+        "min_test_support": protocol.min_test_support,
+        "tuning": protocol.tuning.model_dump() if protocol.tuning else None,
         "metrics_recomputed_match": recompute_ok,
         "qa_flags": [f.__dict__ for f in flags],
         "run_ids": sorted(r.id for r in runs),
@@ -218,3 +248,15 @@ def _publish_claims(s: Session, project_id: str, analysis: dict[str, Any], sha: 
                 status=claim.status.value,
             )
         )
+
+
+def _with_exact_intervals(per_class: dict[str, Any]) -> dict[str, Any]:
+    """Add a Clopper-Pearson 95% interval to each class's recall (exact for tiny classes)."""
+    out: dict[str, Any] = {}
+    for c, v in per_class.items():
+        v = dict(v)
+        n = int(v.get("support", 0))
+        k = round(float(v.get("recall", 0.0)) * n)
+        v["recall_ci"] = list(clopper_pearson(k, n))
+        out[c] = v
+    return out

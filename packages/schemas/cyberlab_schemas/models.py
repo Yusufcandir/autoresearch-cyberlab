@@ -22,10 +22,16 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+_LATE_OPTIONAL = {"tuning", "min_test_support"}
+
+
 def content_hash(obj: BaseModel | dict[str, Any]) -> str:
     """Stable SHA-256 of a model's content, ignoring volatile bookkeeping fields."""
     data = obj.model_dump(mode="json") if isinstance(obj, BaseModel) else obj
     data = {k: v for k, v in data.items() if k not in {"created_at", "content_sha256"}}
+    # Fields added after protocols were first approved are hashed only when set, so an
+    # existing approval keeps matching its protocol.
+    data = {k: v for k, v in data.items() if not (k in _LATE_OPTIONAL and v is None)}
     raw = json.dumps(data, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -97,6 +103,17 @@ def _default_tests() -> list[StatTest]:
     return ["bootstrap_ci", "mcnemar"]
 
 
+class TuningSpec(Versioned):
+    """Hyper-parameter search on the validation split only (spec 7.5: the test set stays
+    frozen). Every model gets the same number of trials, so the comparison stays fair."""
+
+    trials: int = Field(default=30, ge=1, le=200)
+    metric: Literal["macro_f1", "accuracy", "balanced_accuracy", "mcc"] = "macro_f1"
+    max_train_rows: int = Field(default=200_000, ge=1_000)
+    sampler_seed: int = 0
+    timeout_minutes: int = Field(default=60, ge=1, le=24 * 60)
+
+
 class Protocol(Versioned):
     project_id: str
     version: int = Field(ge=1)
@@ -110,6 +127,10 @@ class Protocol(Versioned):
     statistical_tests: list[StatTest] = Field(default_factory=_default_tests)
     gpu_budget_minutes: int = Field(default=480, ge=1)
     risk_tier: Literal["T0", "T1", "T2", "T3"] = "T1"
+    tuning: TuningSpec | None = None
+    # Small-class policy (decided before results): classes with fewer test rows are reported
+    # separately with exact intervals. None = the platform default of 30.
+    min_test_support: int | None = Field(default=None, ge=1)
     created_at: datetime = Field(default_factory=utcnow)
 
     @property
@@ -150,6 +171,7 @@ class ExperimentManifest(Versioned):
     risk_tier: Literal["T0", "T1", "T2", "T3"]
     max_minutes: int = Field(ge=1)
     use_gpu: bool = False
+    tuning: TuningSpec | None = None
 
 
 class JobState(StrEnum):

@@ -333,6 +333,7 @@ class Broker:
             **os.environ,
             "CUDA_VISIBLE_DEVICES": "0" if manifest.use_gpu else "",
             "CYBERLAB_N_JOBS": str(self.threads_per_job),
+            "CYBERLAB_TUNING_CACHE": str(self.settings.data_dir / "tuning"),
         }
         proc = subprocess.Popen(
             cmd, stdout=(work / "stdout.log").open("w"), stderr=subprocess.STDOUT, env=env
@@ -371,7 +372,7 @@ class Broker:
             assert job is not None
             artifacts: dict[str, str] = {}
             run_id = None
-            for name in ("predictions.csv", "model_info.json", "error.json"):
+            for name in ("predictions.csv", "model_info.json", "tuning.json", "error.json"):
                 if (out / name).exists():
                     rec = self.store.put(s, manifest.project_id, out / name, name=name)
                     artifacts[name] = rec.sha256

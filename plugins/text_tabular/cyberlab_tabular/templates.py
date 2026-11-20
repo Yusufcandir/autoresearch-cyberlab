@@ -58,9 +58,7 @@ def _check_params(template: str, params: dict[str, Any]) -> None:
 def _logreg(p: dict[str, Any], seed: int, gpu: bool) -> Any:
     return make_pipeline(
         StandardScaler(),
-        LogisticRegression(
-            C=p.get("C", 1.0), max_iter=p.get("max_iter", 400), random_state=seed, n_jobs=_N_JOBS
-        ),
+        LogisticRegression(C=p.get("C", 1.0), max_iter=p.get("max_iter", 400), random_state=seed),
     )
 
 
@@ -113,6 +111,141 @@ TEMPLATES: dict[str, Callable[[dict[str, Any], int, bool], Any]] = {
 }
 
 
+# Reviewed search spaces (part of the platform, not chosen by an agent). Each returns the
+# params for one Optuna trial; every key must be in ALLOWED_PARAMS.
+def _space_logreg(t: Any) -> dict[str, Any]:
+    return {"C": t.suggest_float("C", 1e-3, 1e2, log=True), "max_iter": 600}
+
+
+def _space_rf(t: Any) -> dict[str, Any]:
+    return {
+        "n_estimators": t.suggest_int("n_estimators", 100, 500, step=50),
+        "max_depth": t.suggest_categorical("max_depth", [None, 12, 20, 32]),
+        "min_samples_leaf": t.suggest_int("min_samples_leaf", 1, 8),
+    }
+
+
+def _space_xgb(t: Any) -> dict[str, Any]:
+    return {
+        "n_estimators": t.suggest_int("n_estimators", 100, 800, step=50),
+        "max_depth": t.suggest_int("max_depth", 3, 12),
+        "learning_rate": t.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "subsample": t.suggest_float("subsample", 0.6, 1.0),
+    }
+
+
+def _space_mlp(t: Any) -> dict[str, Any]:
+    width = t.suggest_categorical("width", [64, 128, 256])
+    depth = t.suggest_int("depth", 1, 3)
+    return {
+        "hidden_layer_sizes": [max(16, width // (2**i)) for i in range(depth)],
+        "alpha": t.suggest_float("alpha", 1e-6, 1e-2, log=True),
+        "max_iter": 80,
+    }
+
+
+SEARCH_SPACES: dict[str, Callable[[Any], dict[str, Any]]] = {
+    "logistic_regression": _space_logreg,
+    "random_forest": _space_rf,
+    "xgboost": _space_xgb,
+    "mlp": _space_mlp,
+}
+
+
+def score(metric: str, y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    from sklearn.metrics import (
+        accuracy_score,
+        balanced_accuracy_score,
+        f1_score,
+        matthews_corrcoef,
+    )
+
+    if metric == "accuracy":
+        return float(accuracy_score(y_true, y_pred))
+    if metric == "balanced_accuracy":
+        return float(balanced_accuracy_score(y_true, y_pred))
+    if metric == "mcc":
+        return float(matthews_corrcoef(y_true, y_pred))
+    return float(f1_score(y_true, y_pred, average="macro"))
+
+
+def _subsample(
+    x: pd.DataFrame, y: np.ndarray, n: int, seed: int
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Stratified subsample used only to speed up tuning; small classes keep their rows."""
+    if len(x) <= n:
+        return x, y
+    rng = np.random.default_rng(seed)
+    keep: list[int] = []
+    for c in np.unique(y):
+        idx = np.flatnonzero(y == c)
+        k = max(min(len(idx), 50), round(n * len(idx) / len(x)))
+        keep.extend(rng.choice(idx, size=min(k, len(idx)), replace=False).tolist())
+    keep.sort()
+    return x.iloc[keep], y[keep]
+
+
+def tune(
+    manifest: ExperimentManifest,
+    x_train: pd.DataFrame,
+    y_train: np.ndarray,
+    x_val: pd.DataFrame,
+    y_val: np.ndarray,
+) -> dict[str, Any]:
+    """Optuna TPE search on the validation split; the test split is never touched here.
+
+    Cached per (protocol, model), so the other seeds of the same model reuse the same tuned
+    settings instead of searching again."""
+    import optuna
+
+    spec = manifest.tuning
+    assert spec is not None
+    tmpl = manifest.model.template
+    cache_dir = os.environ.get("CYBERLAB_TUNING_CACHE")
+    key = (
+        f"{manifest.project_id}-p{manifest.protocol_version}-"
+        f"{manifest.protocol_sha256[:12]}-{manifest.model.name}"
+    )
+    cache = Path(cache_dir) / f"{key}.json" if cache_dir else None
+    if cache is not None and cache.exists():
+        return {**json.loads(cache.read_text()), "reused": True}
+    xs, ys = _subsample(x_train, y_train, spec.max_train_rows, spec.sampler_seed)
+    trials: list[dict[str, Any]] = []
+
+    def objective(t: Any) -> float:
+        params = SEARCH_SPACES[tmpl](t)
+        _check_params(tmpl, params)
+        t0 = time.monotonic()
+        m = TEMPLATES[tmpl](params, spec.sampler_seed, manifest.use_gpu)
+        m.fit(xs.to_numpy(), ys)
+        value = score(spec.metric, y_val, m.predict(x_val.to_numpy()))
+        trials.append(
+            {"params": params, "value": round(value, 6), "seconds": round(time.monotonic() - t0, 2)}
+        )
+        return value
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    study = optuna.create_study(
+        direction="maximize", sampler=optuna.samplers.TPESampler(seed=spec.sampler_seed)
+    )
+    study.optimize(objective, n_trials=spec.trials, timeout=spec.timeout_minutes * 60)
+    result = {
+        "label": "exploratory",
+        "metric": spec.metric,
+        "split": "validation",
+        "trials_requested": spec.trials,
+        "trials_run": len(trials),
+        "tuning_rows": len(xs),
+        "best_params": trials[study.best_trial.number]["params"],
+        "best_value": round(float(study.best_value), 6),
+        "trials": trials,
+    }
+    if cache is not None:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(result, indent=2, default=str))
+    return {**result, "reused": False}
+
+
 def run_experiment(
     manifest: ExperimentManifest, prepared_dir: Path, out_dir: Path
 ) -> dict[str, Any]:
@@ -124,7 +257,16 @@ def run_experiment(
     x_test, y_test = load_split(prepared_dir, "test", manifest.label_scheme)
     enc = LabelEncoder().fit(pd.concat([y_train, y_test]))
     np.random.seed(manifest.seed)
-    model = TEMPLATES[tmpl](manifest.model.params, manifest.seed, manifest.use_gpu)
+    params = dict(manifest.model.params)
+    tuning: dict[str, Any] | None = None
+    if manifest.tuning is not None:
+        x_val, y_val = load_split(prepared_dir, "val", manifest.label_scheme)
+        if len(x_val) == 0:
+            raise ValueError("tuning needs a validation split (val_fraction > 0)")
+        tuning = tune(manifest, x_train, enc.transform(y_train), x_val, enc.transform(y_val))
+        params = tuning["best_params"]
+        (out_dir / "tuning.json").write_text(json.dumps(tuning, indent=2, default=str))
+    model = TEMPLATES[tmpl](params, manifest.seed, manifest.use_gpu)
 
     t0 = time.monotonic()
     model.fit(x_train.to_numpy(), enc.transform(y_train))
@@ -144,7 +286,9 @@ def run_experiment(
     info = {
         "experiment_id": manifest.experiment_id,
         "template": tmpl,
-        "params": manifest.model.params,
+        "params": params,
+        "tuned": tuning is not None,
+        "tuning_best_value": tuning["best_value"] if tuning else None,
         "seed": manifest.seed,
         "classes": classes,
         "n_train": len(x_train),

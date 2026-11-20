@@ -196,6 +196,88 @@ def bootstrap_ci_seeds(
     }
 
 
+def bootstrap_diff_seeds(
+    preds_a: list[pd.DataFrame],
+    preds_b: list[pd.DataFrame],
+    metric: str = "macro_f1",
+    n_boot: int = 500,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> dict[str, Any]:
+    """CI for (mean metric of A) minus (mean metric of B) over the same resampled test rows:
+    the effect size of a hypothesis, reported beside its p-value."""
+    frames = [p.sort_values("row").reset_index(drop=True) for p in [*preds_a, *preds_b]]
+    y = frames[0]["y_true"].astype(str).to_numpy()
+    if any(not (f["y_true"].astype(str).to_numpy() == y).all() for f in frames):
+        raise ValueError("predictions are not over the same test rows")
+    preds = [f["y_pred"].astype(str).to_numpy() for f in frames]
+    labels, codes = np.unique(np.concatenate([y, *preds]), return_inverse=True)
+    n, k = len(y), len(labels)
+    yc = codes[:n]
+    pcs = [codes[n * (i + 1) : n * (i + 2)] for i in range(len(preds))]
+    na = len(preds_a)
+    groups = [np.flatnonzero(yc == c) for c in np.unique(yc)]
+    fast = _fast_metric(metric)
+    fn = _METRIC_FN[metric]
+
+    def score(idx: np.ndarray, pc: np.ndarray) -> float:
+        if fast is not None:
+            cm = np.bincount(yc[idx] * k + pc[idx], minlength=k * k).reshape(k, k)
+            return float(fast(cm))
+        return float(fn(labels[yc[idx]], labels[pc[idx]]))
+
+    full = np.arange(n)
+    point = float(
+        np.mean([score(full, pc) for pc in pcs[:na]])
+        - np.mean([score(full, pc) for pc in pcs[na:]])
+    )
+    rng = np.random.default_rng(seed)
+    vals = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = np.concatenate([g[rng.integers(0, len(g), size=len(g))] for g in groups])
+        vals[b] = np.mean([score(idx, pc) for pc in pcs[:na]]) - np.mean(
+            [score(idx, pc) for pc in pcs[na:]]
+        )
+    lo, hi = np.quantile(vals, [alpha / 2, 1 - alpha / 2])
+    return {"metric": metric, "point": point, "low": float(lo), "high": float(hi), "n_boot": n_boot}
+
+
+def clopper_pearson(k: int, n: int, alpha: float = 0.05) -> tuple[float, float]:
+    """Exact binomial interval for a proportion such as per-class recall; honest for 9 rows."""
+    if n == 0:
+        return 0.0, 1.0
+    lo = 0.0 if k == 0 else float(stats.beta.ppf(alpha / 2, k, n - k + 1))
+    hi = 1.0 if k == n else float(stats.beta.ppf(1 - alpha / 2, k + 1, n - k))
+    return lo, hi
+
+
+def friedman_nemenyi(scores: dict[str, dict[str, float]], alpha: float = 0.05) -> dict[str, Any]:
+    """Friedman test over datasets (rows) x models (columns) plus the Nemenyi critical
+    difference of average ranks (Demsar 2006). Needs at least 2 datasets and 3 models."""
+    datasets = sorted(scores)
+    models = sorted({m for d in datasets for m in scores[d]})
+    models = [m for m in models if all(m in scores[d] for d in datasets)]
+    n, k = len(datasets), len(models)
+    if n < 2 or k < 3:
+        return {"applicable": False, "reason": "needs at least 2 datasets and 3 models"}
+    mat = np.array([[scores[d][m] for m in models] for d in datasets])
+    ranks = np.vstack([stats.rankdata(-row) for row in mat])  # 1 = best
+    avg = ranks.mean(axis=0)
+    stat, p = stats.friedmanchisquare(*mat.T)
+    # Nemenyi: q_alpha from the studentized range distribution divided by sqrt(2)
+    q = float(stats.studentized_range.ppf(1 - alpha, k, np.inf) / np.sqrt(2))
+    cd = q * float(np.sqrt(k * (k + 1) / (6 * n)))
+    return {
+        "applicable": True,
+        "datasets": datasets,
+        "models": models,
+        "average_rank": dict(zip(models, avg.round(4).tolist(), strict=True)),
+        "friedman_statistic": float(stat),
+        "p_value": float(p),
+        "critical_difference": cd,
+    }
+
+
 def holm(p_values: list[float]) -> list[float]:
     """Holm-Bonferroni adjusted p-values (same order as the input)."""
     m = len(p_values)
@@ -220,7 +302,9 @@ def mcnemar(preds_a: pd.DataFrame, preds_b: pd.DataFrame) -> dict[str, float]:
     n10 = int((~ca & cb).sum())
     n = n01 + n10
     pval = 1.0 if n == 0 else float(stats.binomtest(min(n01, n10), n, 0.5).pvalue)
-    return {"a_only_correct": n01, "b_only_correct": n10, "p_value": pval}
+    # effect size: odds of 'only A right' versus 'only B right' (Haldane-corrected)
+    odds = (n01 + 0.5) / (n10 + 0.5)
+    return {"a_only_correct": n01, "b_only_correct": n10, "p_value": pval, "odds_ratio": odds}
 
 
 def recompute_matches(stored: dict[str, Any], preds: pd.DataFrame, tol: float = 1e-9) -> bool:

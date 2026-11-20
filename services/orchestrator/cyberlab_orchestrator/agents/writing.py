@@ -145,8 +145,13 @@ def method_facts(
             ]
         ),
         "The model seeds (facts.seeds) change only the randomness of model training, not the split.",
-        "Every model was trained on the training split and evaluated once on the test split; no "
-        "hyper-parameter tuning was performed (fixed, documented defaults).",
+        (
+            "Every model was trained on the training split with the settings selected on the "
+            "validation split, and evaluated once on the test split."
+            if body.get("tuning")
+            else "Every model was trained on the training split and evaluated once on the test "
+            "split; no hyper-parameter tuning was performed (fixed, documented defaults)."
+        ),
         "Metrics are reported as mean and standard deviation over the model seeds.",
         "Confidence intervals are percentile bootstrap intervals (facts.bootstrap_resamples "
         "resamples) over test rows, stratified by class; each resample is scored on every "

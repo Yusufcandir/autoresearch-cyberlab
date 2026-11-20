@@ -139,3 +139,38 @@ def split_from_goal(goal: str) -> dict[str, Any] | None:
     if not days:
         return None
     return {"strategy": "by_day", "test_days": days}
+
+
+_TUNE = re.compile(
+    r"\b(?:tun(?:e|ed|ing)|hyper-?parameter (?:search|optimi[sz]ation|tuning)|optuna)\b", re.I
+)
+_TRIALS = re.compile(r"\b(\d{1,3})\s+(?:tuning\s+)?trials?\b", re.I)
+_SEEDS = re.compile(r"\b(\d{1,2}|three|five|ten)\s+(?:random\s+)?seeds?\b", re.I)
+_SUPPORT = re.compile(
+    r"(?:fewer than|less than|under|minimum of|at least)\s+(\d{1,4})\s+test\s+rows", re.I
+)
+_WORDS = {"three": 3, "five": 5, "ten": 10}
+
+
+def tuning_from_text(text: str) -> int | None:
+    """Number of tuning trials asked for ('tune with 50 trials'), 30 if tuning is asked for
+    without a number, None if the text does not ask for tuning ('no tuning' -> None)."""
+    if not _TUNE.search(text) or re.search(
+        r"\b(?:no|without)\s+(?:hyper-?parameter\s+)?tuning\b", text, re.I
+    ):
+        return None
+    m = _TRIALS.search(text)
+    return max(1, min(200, int(m.group(1)))) if m else 30
+
+
+def seeds_from_text(text: str) -> int | None:
+    m = _SEEDS.search(text)
+    if not m:
+        return None
+    v = m.group(1).lower()
+    return _WORDS.get(v) or int(v)
+
+
+def min_support_from_text(text: str) -> int | None:
+    m = _SUPPORT.search(text)
+    return int(m.group(1)) if m else None

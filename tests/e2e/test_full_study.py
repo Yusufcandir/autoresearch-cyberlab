@@ -168,3 +168,35 @@ def test_full_study_on_unsw_nb15(lab: Lab) -> None:
     assert "CIC-IDS2017" not in body and "Fwd Header" not in body
     assert "official" in md and "[citation needed]" not in md
     assert report["release_ready"], report["flags"]
+
+
+def test_full_study_with_tuning(lab: Lab) -> None:
+    """Tuning requested in the goal: validation-only search, tuned settings in the paper."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Tuned intrusion detection models on CIC-IDS2017",
+        goal="Compare classical and gradient boosted classifiers on CIC-IDS2017 with macro-F1. "
+        "Tune every model with 3 trials on the validation split and use three seeds.",
+    )
+    pid = lab.create_project(pi, spec)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None and pv.body["tuning"]["trials"] == 3
+        assert len(pv.body["seeds"]) == 3
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md, report = ms.markdown, ms.evidence_report
+    assert "tuned with Optuna" in md and "Difference (95% CI)" in md
+    assert "no hyper-parameter tuning was performed" not in md
+    assert report["release_ready"], report["flags"]

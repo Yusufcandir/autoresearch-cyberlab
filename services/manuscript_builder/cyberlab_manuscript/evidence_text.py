@@ -352,7 +352,20 @@ def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str
             for n, m in models.items()
             if m.get("params")
         ]
-        if settings:
+        tuned = [m for m in models.values() if m.get("tuned") and m.get("tuning")]
+        if settings and tuned:
+            t = tuned[0]["tuning"]
+            statements.append(
+                "Hyper-parameters were tuned with Optuna (TPE sampler) on the validation split, "
+                f"maximising {_metric(str(t.get('metric', 'macro_f1')))}, with the same budget of "
+                f"{t.get('trials_requested')} trials for every model and at most "
+                f"{int(t.get('tuning_rows') or 0):,} training rows per trial; the test split was "
+                "used once, after tuning. Tuning runs are exploratory; only the final test "
+                "evaluation is confirmatory. The selected settings were: "
+                + "; ".join(settings)
+                + "."
+            )
+        elif settings:
             statements.append(
                 "All models used fixed, reviewed settings (no tuning on the test split): "
                 + "; ".join(settings)

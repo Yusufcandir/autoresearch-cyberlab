@@ -16,10 +16,12 @@ from cyberlab_schemas.models import (
     RunReceipt,
     SplitSpec,
     StatusLabel,
+    TuningSpec,
     content_hash,
 )
 
 __all__ = [
+    "TuningSpec",
     "SCHEMA_VERSION",
     "Approval",
     "ApprovalGate",
