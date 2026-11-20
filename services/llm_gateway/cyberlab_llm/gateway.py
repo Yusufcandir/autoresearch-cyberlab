@@ -60,7 +60,7 @@ def report_status(message: str) -> None:
     fn = getattr(_status, "fn", None)
     if fn is not None:
         suffix = getattr(_status, "suffix", "")
-        if suffix and "Gemini" in message and "local model" not in message:
+        if suffix and ("Gemini" in message or "Claude" in message) and "local model" not in message:
             message = f"{message}. {suffix}"
         try:
             fn(message)
@@ -84,6 +84,7 @@ class LLMResult:
     prompt_tokens: int = 0
     output_tokens: int = 0
     seconds: float = 0.0
+    usd: float = 0.0  # spend estimate (0 for free tiers and local models)
 
     @property
     def total_tokens(self) -> int:
@@ -222,6 +223,104 @@ class GeminiProvider:
         raise LLMError("gemini failed: " + "; ".join(problems[-6:]))
 
 
+# US dollars per million tokens (input, output, cache read). Anthropic list prices; update this
+# table and PRICE_TABLE_VERSION when prices change (spec 14.3: the ledger records the version).
+PRICE_TABLE_VERSION = "anthropic-2026-11"
+CLAUDE_PRICES: dict[str, tuple[float, float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.10),
+    "claude-haiku-5-5": (0.10, 0.50, 0.01),
+}
+
+
+def claude_cost_usd(
+    model: str, inp: int, out: int, cache_read: int = 0, cache_write: int = 0
+) -> float:
+    """Spend estimate for one request. Cache writes are billed at 1.25x input."""
+    pin, pout, pread = CLAUDE_PRICES.get(model, CLAUDE_PRICES["claude-opus-5-5"])
+    return (inp * pin + cache_write * pin * 1.25 + cache_read * pread + out * pout) / 1e6
+
+
+class ClaudeProvider:
+    """Anthropic Claude through the official SDK.
+
+    Streaming (long drafts must not hit HTTP timeouts), adaptive thinking (always on for
+    Claude Opus 5.5; depth is set with `effort`), automatic prompt caching, and server-side
+    refusal fallbacks so a policy decline is retried on a fallback model in the same call.
+    """
+
+    name = "claude"
+    local = False
+    BETAS = ["server-side-fallback-2026-07-01"]
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-opus-5-5",
+        effort: str = "high",
+        timeout: float = 600,
+        max_tokens: int = 32000,
+        client: Any = None,
+    ):
+        import anthropic
+
+        self.model = model
+        self.effort = effort
+        self.max_tokens = max_tokens
+        self._anthropic = anthropic
+        self.client: Any = client or anthropic.Anthropic(
+            api_key=api_key, timeout=timeout, max_retries=3
+        )
+
+    def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
+        # `temperature` is not sent: current Claude models reject sampling parameters.
+        a = self._anthropic
+        t0 = time.monotonic()
+        try:
+            with self.client.beta.messages.stream(
+                model=self.model,
+                max_tokens=self.max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+                output_config={"effort": self.effort},
+                cache_control={"type": "ephemeral"},
+                betas=self.BETAS,
+                fallbacks="default",
+            ) as stream:
+                msg = stream.get_final_message()
+        except a.AuthenticationError as exc:
+            raise LLMError("Claude rejected the API key (ANTHROPIC_API_KEY)") from exc
+        except a.RateLimitError as exc:
+            raise LLMError("Claude rate limit reached (HTTP 429)") from exc
+        except a.APIStatusError as exc:
+            raise LLMError(
+                f"Claude HTTP {exc.status_code}: {redact(str(exc.message))[:200]}"
+            ) from exc
+        except a.APIConnectionError as exc:
+            raise LLMError(f"Claude unreachable: {type(exc).__name__}") from exc
+        if msg.stop_reason == "refusal":
+            cat = getattr(msg.stop_details, "category", None) if msg.stop_details else None
+            raise LLMError(f"Claude declined the request (category: {cat})")
+        if msg.stop_reason == "max_tokens":
+            raise LLMError(f"Claude reply cut off at max_tokens={self.max_tokens}")
+        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+        u = msg.usage
+        cache_read = int(getattr(u, "cache_read_input_tokens", 0) or 0)
+        cache_write = int(getattr(u, "cache_creation_input_tokens", 0) or 0)
+        result = LLMResult(
+            text=text,
+            provider=self.name,
+            model=str(msg.model or self.model),
+            prompt_tokens=int(u.input_tokens) + cache_read + cache_write,
+            output_tokens=int(u.output_tokens),
+            seconds=time.monotonic() - t0,
+        )
+        result.usd = claude_cost_usd(
+            result.model, int(u.input_tokens), int(u.output_tokens), cache_read, cache_write
+        )
+        return result
+
+
 class OllamaProvider:
     name = "ollama"
     local = True
@@ -318,6 +417,8 @@ class LLMGateway:
     local: Provider | None = None
     budget_lookup: Callable[[str], tuple[int, int]] | None = None  # project -> (used, limit)
     charge: Callable[[str, int], None] | None = None
+    # (project_id, usd, model, price_table_version) for the money ledger (spec 14.3)
+    charge_usd: Callable[[str, float, str, str], None] | None = None
     # project -> True if the study's data must stay on the host (local model only)
     private_lookup: Callable[[str], bool] | None = None
     # (project_id, task, message): live status such as 'Gemini busy, retrying'
@@ -359,6 +460,7 @@ class LLMGateway:
         if project_id and self.private_lookup and self.private_lookup(project_id):
             sensitive = True
         provider = self._route(sensitive)
+        label = "Claude" if provider.name == "claude" else "Gemini"
         if project_id and self.budget_lookup:
             used, limit = self.budget_lookup(project_id)
             if limit and used >= limit:
@@ -377,8 +479,8 @@ class LLMGateway:
                     provider = self.local
                     until = datetime.now() + timedelta(seconds=left)
                     report_status(
-                        f"Gemini unavailable; using the local model {self.local.model} "
-                        f"until {until:%H:%M}, then Gemini is tried again"
+                        f"{label} unavailable; using the local model {self.local.model} "
+                        f"until {until:%H:%M}, then {label} is tried again"
                     )
                 elif self.handover_seconds > 0 and self._local_ready():
                     _status.deadline = time.monotonic() + self.handover_seconds
@@ -393,7 +495,7 @@ class LLMGateway:
             if provider is self.primary and self.local is not None and self.local is not provider:
                 self._trip_breaker()
                 report_status(
-                    f"Gemini unavailable; writing with the local model {self.local.model} on this server"
+                    f"{label} unavailable; writing with the local model {self.local.model} on this server"
                 )
                 try:
                     result = self.local.generate(
@@ -411,12 +513,15 @@ class LLMGateway:
         _status.suffix = ""
         if project_id and self.charge:
             self.charge(project_id, result.total_tokens)
+        if project_id and self.charge_usd and result.usd:
+            self.charge_usd(project_id, result.usd, result.model, PRICE_TABLE_VERSION)
         self.log.append(
             {
                 "task": task,
                 "provider": result.provider,
                 "model": result.model,
                 "tokens": result.total_tokens,
+                "usd": round(result.usd, 6),
                 "seconds": round(result.seconds, 2),
                 "sensitive": sensitive,
             }
@@ -459,6 +564,20 @@ def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
         )
         gw = LLMGateway(primary, ollama, **hooks)
         gw.handover_seconds = settings.gemini_handover_seconds
+        gw.cooldown_seconds = settings.gemini_cooldown_seconds
+        return gw
+    if provider == "claude":
+        if settings.anthropic_api_key is None:
+            raise LLMError("LLM_PROVIDER=claude but ANTHROPIC_API_KEY is not set")
+        claude = ClaudeProvider(
+            settings.anthropic_api_key.get_secret_value(),
+            settings.claude_model,
+            settings.claude_effort,
+            max(settings.llm_timeout_seconds, 600),
+        )
+        gw = LLMGateway(claude, ollama, **hooks)
+        # Claude retries inside the SDK; hand over to Ollama only on a real failure.
+        gw.handover_seconds = 0
         gw.cooldown_seconds = settings.gemini_cooldown_seconds
         return gw
     if provider == "ollama":

@@ -209,3 +209,87 @@ def test_slow_gemini_request_is_capped_by_the_handover_deadline(monkeypatch) -> 
     res = LLMGateway(g, o, handover_seconds=20).complete("t", "s", "p")
     assert res.provider == "ollama"
     assert seen and seen[0] is not None and seen[0] <= 20.5
+
+
+class _FakeStream:
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get_final_message(self):
+        return self.msg
+
+
+class _FakeAnthropic:
+    def __init__(self, msg):
+        from types import SimpleNamespace
+
+        self.kwargs = {}
+        outer = self
+
+        def stream(**kw):
+            outer.kwargs = kw
+            return _FakeStream(msg)
+
+        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=stream))
+
+
+def _msg(stop="end_turn", text='{"ok": true}'):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        stop_reason=stop,
+        stop_details=SimpleNamespace(category="cyber") if stop == "refusal" else None,
+        content=[
+            SimpleNamespace(type="thinking", thinking=""),
+            SimpleNamespace(type="text", text=text),
+        ],
+        usage=SimpleNamespace(
+            input_tokens=1000,
+            output_tokens=500,
+            cache_read_input_tokens=2000,
+            cache_creation_input_tokens=0,
+        ),
+        model="claude-opus-5-5",
+    )
+
+
+def test_claude_provider_request_and_cost() -> None:
+    from cyberlab_llm.gateway import ClaudeProvider
+
+    fake = _FakeAnthropic(_msg())
+    p = ClaudeProvider("k", client=fake)
+    r = p.generate("sys", "prompt", True, 0.2)
+    assert r.json() == {"ok": True} and r.provider == "claude"
+    assert "temperature" not in fake.kwargs and fake.kwargs["fallbacks"] == "default"
+    assert fake.kwargs["output_config"] == {"effort": "high"}
+    # 1000*4 + 2000*0.2 + 500*20 per million
+    assert abs(r.usd - (4000 + 400 + 10000) / 1e6) < 1e-12
+    assert r.prompt_tokens == 3000 and r.output_tokens == 500
+
+
+def test_claude_refusal_and_cutoff_are_errors() -> None:
+    import pytest
+
+    from cyberlab_llm.gateway import ClaudeProvider, LLMError
+
+    for stop in ("refusal", "max_tokens"):
+        with pytest.raises(LLMError):
+            ClaudeProvider("k", client=_FakeAnthropic(_msg(stop))).generate("s", "p", False, 0.2)
+
+
+def test_build_gateway_claude_needs_key(tmp_path) -> None:
+    import pytest
+
+    from cyberlab_common.config import Settings
+    from cyberlab_llm.gateway import LLMError, build_gateway
+
+    with pytest.raises(LLMError):
+        build_gateway(Settings(_env_file=None, llm_provider="claude"))
+    gw = build_gateway(Settings(_env_file=None, llm_provider="claude", anthropic_api_key="x"))
+    assert gw.primary.name == "claude" and gw.handover_seconds == 0

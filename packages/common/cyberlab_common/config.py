@@ -39,8 +39,13 @@ class Settings(BaseSettings):
     artifact_store_uri: str | None = None
 
     # LLM gateway
-    llm_provider: str | None = None  # "gemini", "ollama" or "fake"
+    llm_provider: str | None = None  # "claude", "gemini", "ollama" or "fake"
     llm_token_budget: int = Field(default=0, ge=0)
+    anthropic_api_key: SecretStr | None = None
+    claude_model: str = "claude-opus-5-5"
+    claude_effort: str = Field(default="high", pattern="^(low|medium|high|xhigh|max)$")
+    # Per-study LLM spending limit in US dollars (0 = no limit); warnings at 50/80/100%.
+    llm_usd_budget: float = Field(default=10.0, ge=0)
     gemini_api_key: SecretStr | None = None
     gemini_model: str = "gemini-3.8-flash"
     # Tried in order when the main model is overloaded (HTTP 503/429) or times out.

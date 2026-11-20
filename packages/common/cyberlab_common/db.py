@@ -67,6 +67,7 @@ class Project(Base):
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
     llm_tokens_used: Mapped[int] = mapped_column(Integer, default=0)
+    llm_usd_used: Mapped[float | None] = mapped_column(Float, nullable=True, default=0.0)
     gpu_minutes_used: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -226,6 +227,18 @@ class AuditEvent(Base):
     project_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(60))
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class CostRecord(Base):
+    """Money ledger (spec 14.3): one row per paid LLM request."""
+
+    __tablename__ = "cost_ledger"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(36), index=True)
+    model: Mapped[str] = mapped_column(String(80))
+    usd: Mapped[float] = mapped_column(Float)
+    price_table: Mapped[str] = mapped_column(String(40))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
 class OutboxEvent(Base):

@@ -55,6 +55,7 @@ class Lab:
         store = ArtifactStore(settings.artifact_root)
         gateway = llm or build_gateway(settings)
         gateway.budget_lookup, gateway.charge = self._budget, self._charge
+        gateway.charge_usd = self._charge_usd
         gateway.private_lookup = self._private
         gateway.on_status = self._llm_status
         self.ctx = LabContext(
@@ -84,6 +85,9 @@ class Lab:
             p = s.get(Project, project_id)
             if p is None:
                 return 0, 0
+            usd_limit = float(p.spec.get("llm_usd_budget", self.settings.llm_usd_budget) or 0)
+            if usd_limit and (p.llm_usd_used or 0.0) >= usd_limit:
+                return 1, 1  # dollar limit reached: the gateway refuses further paid calls
             return p.llm_tokens_used, int(p.spec.get("llm_token_budget", 0))
 
     def _llm_status(self, project_id: str, task: str, message: str) -> None:
@@ -101,6 +105,28 @@ class Lab:
         with self.db.session() as s:
             p = s.get(Project, project_id)
             return p is None or not bool(p.spec.get("data_may_leave_host", False))
+
+    def _charge_usd(self, project_id: str, usd: float, model: str, table: str) -> None:
+        """Record spend; warn once at 50, 80 and 100% of the study's dollar budget."""
+        from cyberlab_common.db import CostRecord
+
+        with self.db.session() as s:
+            p = s.get(Project, project_id)
+            if p is None:
+                return
+            before = p.llm_usd_used or 0.0
+            p.llm_usd_used = before + usd
+            s.add(CostRecord(project_id=project_id, model=model, usd=usd, price_table=table))
+            limit = float(p.spec.get("llm_usd_budget", self.settings.llm_usd_budget) or 0)
+            for share in (0.5, 0.8, 1.0):
+                if limit and before < share * limit <= p.llm_usd_used:
+                    audit(
+                        s,
+                        "llm_gateway",
+                        "budget.threshold_reached",
+                        project_id,
+                        {"share": share, "usd_used": round(p.llm_usd_used, 4), "usd_limit": limit},
+                    )
 
     def _charge(self, project_id: str, tokens: int) -> None:
         with self.db.session() as s:
@@ -177,6 +203,7 @@ class Lab:
                 "blocked_reason": p.blocked_reason,
                 "paused": p.paused,
                 "llm_tokens_used": p.llm_tokens_used,
+                "llm_usd_used": round(p.llm_usd_used or 0.0, 4),
                 "gpu_minutes_used": round(p.gpu_minutes_used, 2),
             }
         info["pending"] = self.pending(project_id)
