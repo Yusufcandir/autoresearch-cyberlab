@@ -311,12 +311,66 @@ class Broker:
         finally:
             self.lock.release(job_id)
 
+    def _reuse(self, job_id: str, manifest: ExperimentManifest, prepared: Path) -> bool:
+        """Research memory (professor's plan, Step 7.2): if this study already ran an
+        experiment with the same fingerprint (data and split, model and settings, seed, tuning,
+        code and environment), reuse its verified artifacts instead of running it again."""
+        fp = _fingerprint(manifest, prepared)
+        with self.db.session() as s:
+            prior = next(
+                (
+                    r
+                    for r in s.scalars(
+                        select(RunRecord).where(
+                            RunRecord.project_id == manifest.project_id,
+                            RunRecord.status == "succeeded",
+                        )
+                    )
+                    if (r.receipt or {}).get("fingerprint") == fp
+                ),
+                None,
+            )
+            if prior is None:
+                return False
+            job = s.get(JobRecord, job_id)
+            assert job is not None
+            receipt = {
+                **prior.receipt,
+                "job_id": job_id,
+                "experiment_id": manifest.experiment_id,
+                "reused_from_run": prior.id,
+                "reused_at": datetime.now(UTC).isoformat(),
+            }
+            s.add(
+                RunRecord(
+                    job_id=job_id,
+                    project_id=manifest.project_id,
+                    experiment_id=manifest.experiment_id,
+                    model_name=manifest.model.name,
+                    seed=manifest.seed,
+                    status="succeeded",
+                    receipt=receipt,
+                    metrics=dict(prior.metrics),
+                )
+            )
+            job.state, job.updated_at = "succeeded", now()
+            audit(
+                s,
+                "broker",
+                "job.reused",
+                manifest.project_id,
+                {"job_id": job_id, "reused_from_run": prior.id, "fingerprint": fp},
+            )
+        return True
+
     def _execute(
         self, job_id: str, manifest: ExperimentManifest, prepared_dir: Path | None
     ) -> None:
         prepared = prepared_dir or prepared_dir_for(
             get_adapter(manifest.dataset_id).root(self.settings.dataset_root), manifest.split
         )
+        if self._reuse(job_id, manifest, prepared):
+            return
         work = self.work_root / job_id
         work.mkdir(parents=True, exist_ok=True)
         (work / "manifest.json").write_text(manifest.model_dump_json())
@@ -521,6 +575,7 @@ def _lineage(
     if prepared is not None and (prepared / "preprocessing_notes.json").exists():
         notes = json.loads((prepared / "preprocessing_notes.json").read_text())
     return {
+        "fingerprint": _fingerprint(manifest, prepared),
         "code_commit": _full_commit(),
         "environment_digest": _sha256(lock) if lock.exists() else "",
         "dataset_manifest_sha256": (
@@ -574,3 +629,27 @@ def _log_mlflow(
                     mlflow.log_artifact(str(out / name))
     except Exception:  # noqa: BLE001 - MLflow is optional
         logging.getLogger(__name__).warning("MLflow logging failed", exc_info=True)
+
+
+def _fingerprint(manifest: ExperimentManifest, prepared: Path | None) -> str:
+    """Experiment fingerprint: everything that determines the result, nothing that does not
+    (job ids, experiment names and protocol versions are left out on purpose)."""
+    import hashlib
+
+    notes: dict[str, Any] = {}
+    if prepared is not None and (prepared / "preprocessing_notes.json").exists():
+        notes = json.loads((prepared / "preprocessing_notes.json").read_text())
+    lock = _REPO / "uv.lock"
+    key = {
+        "dataset": manifest.dataset_id,
+        "split": manifest.split.model_dump(mode="json"),
+        "data": notes.get("clean_parquet_sha256", ""),
+        "template": manifest.model.template,
+        "params": manifest.model.params,
+        "seed": manifest.seed,
+        "labels": manifest.label_scheme,
+        "tuning": manifest.tuning.model_dump(mode="json") if manifest.tuning else None,
+        "code": _full_commit(),
+        "environment": _sha256(lock) if lock.exists() else "",
+    }
+    return hashlib.sha256(json.dumps(key, sort_keys=True, default=str).encode()).hexdigest()

@@ -353,3 +353,56 @@ def test_feedback_controller_improvement_cycle(lab: Lab) -> None:
     assert f"Follow-up to protocol version {version}" in ms.markdown
     approved = [d for d in lab.research_decisions(pid) if d["approval_status"] == "approved"]
     assert approved and "created" in approved[0]["final_outcome"]
+
+
+def test_identical_experiments_are_reused(lab: Lab) -> None:
+    """Research memory: a follow-up that only adds seeds reruns only the new seeds."""
+    from cyberlab_common.db import AgentNote
+
+    pi, _ = _users(lab)
+    pid = lab.create_project(pi, SPEC)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    with lab.db.session() as s:
+        note = AgentNote(
+            project_id=pid,
+            agent="feedback_controller",
+            kind="research_decision",
+            content={
+                "decision_id": "D-test",
+                "rule": "D",
+                "identified_problem": "performance varies between seeds",
+                "proposed_action": "add a fourth seed",
+                "protocol_change": {"seeds": [42, 43, 44, 45]},
+                "approval_status": "pending_pi",
+            },
+        )
+        s.add(note)
+        s.flush()
+        note_id = note.id
+    lab.start_followup(pi, pid, note_id)
+    with lab.db.session() as s:
+        v2 = s.scalar(
+            select(ProtocolVersion)
+            .where(ProtocolVersion.project_id == pid)
+            .order_by(ProtocolVersion.version.desc())
+        )
+        assert v2 is not None
+        v2v, v2sha = v2.version, v2.sha256
+    lab.approve_protocol(pi, pid, v2v, v2sha, "approved")
+    for _ in range(18):
+        lab.worker_tick(wait=True)
+    with lab.db.session() as s:
+        runs = [
+            r
+            for r in s.scalars(select(RunRecord).where(RunRecord.project_id == pid))
+            if r.experiment_id.startswith(f"p{v2v}-")
+        ]
+    reused = [r for r in runs if r.receipt.get("reused_from_run")]
+    assert len(runs) == 16 and len(reused) == 12  # only the 4 runs with seed 45 were trained
