@@ -16,12 +16,23 @@ METRICS: list[tuple[str, str]] = [
     (r"\bmcc\b|matthews", "mcc"),
     (r"(?<!balanced )\baccuracy\b", "accuracy"),
 ]
+# Regular expressions (case-insensitive) naming each template in plain words.
 MODEL_ALIASES: dict[str, tuple[str, ...]] = {
-    "logistic_regression": ("logistic regression", "logistic_regression"),
-    "random_forest": ("random forest", "random_forest"),
-    "xgboost": ("xgboost", "gradient boosting", "gradient-boosting", "gbdt"),
-    "mlp": ("mlp", "neural network", "multi-layer perceptron", "multilayer perceptron"),
+    "logistic_regression": (r"logistic[ _]regression",),
+    "random_forest": (r"random[ _]forests?",),
+    "xgboost": (r"xgboost", r"gradient[- ]boost(?:ing|ed)(?! machine)", r"\bgbdt\b"),
+    "lightgbm": (r"light ?gbm",),
+    "mlp": (
+        r"(?<!resnet[- ])\bmlp\b",
+        r"multi-?layer perceptron",
+        r"(?<!graph )(?<!deep )\bneural network\b",
+    ),
+    "resnet_mlp": (r"resnet[- _]?mlp", r"\bresnet\b"),
+    "ft_transformer": (r"ft[- _]?transformer", r"feature[- ]tokeni[sz]er transformer"),
+    "cnn1d": (r"\b1d[- ]?cnn\b", r"\bcnn1d\b", r"one-dimensional (?:cnn|convolutional)"),
+    "tabnet": (r"\btabnet\b",),
 }
+BASELINES = {"logistic_regression", "random_forest"}
 # Things no experiment on this platform measures.
 UNTESTABLE = re.compile(
     r"real[- ]time|scalab|latency|runtime|run time|inference time|training time|deploy|"
@@ -56,8 +67,17 @@ def _models_in(text: str) -> list[tuple[int, str]]:
     found = []
     for name, aliases in MODEL_ALIASES.items():
         for a in aliases:
-            found += [(m.start(), name) for m in re.finditer(re.escape(a), text, re.I)]
+            found += [(m.start(), name) for m in re.finditer(a, text, re.I)]
     return sorted(set(found))
+
+
+def models_named(goal: str) -> list[str]:
+    """Templates the goal names, in order of first mention."""
+    out: list[str] = []
+    for _pos, name in _models_in(goal):
+        if name not in out:
+            out.append(name)
+    return out
 
 
 def stated_hypotheses(goal: str, default_metric: str) -> list[tuple[str, str, str]]:
@@ -98,6 +118,11 @@ PRETTY = {
     "random_forest": "random forest",
     "xgboost": "XGBoost",
     "mlp": "the MLP",
+    "lightgbm": "LightGBM",
+    "resnet_mlp": "the ResNet-MLP",
+    "ft_transformer": "the FT-Transformer",
+    "cnn1d": "the 1D-CNN",
+    "tabnet": "TabNet",
     "balanced_accuracy": "balanced accuracy",
     "macro_f1": "macro-F1",
     "mcc": "MCC",

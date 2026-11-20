@@ -83,7 +83,17 @@ class Hypothesis(Versioned):
 
 class ModelSpec(Versioned):
     name: str = Field(pattern=r"^[a-z0-9_]+$")
-    template: Literal["logistic_regression", "random_forest", "xgboost", "mlp"]
+    template: Literal[
+        "logistic_regression",
+        "random_forest",
+        "xgboost",
+        "mlp",
+        "lightgbm",
+        "resnet_mlp",
+        "ft_transformer",
+        "cnn1d",
+        "tabnet",
+    ]
     params: dict[str, Any] = Field(default_factory=dict)
     role: Literal["baseline", "candidate", "ablation"] = "baseline"
 

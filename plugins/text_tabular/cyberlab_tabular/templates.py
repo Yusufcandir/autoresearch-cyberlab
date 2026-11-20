@@ -31,12 +31,21 @@ from cyberlab_schemas import ExperimentManifest
 
 _N_JOBS = int(os.environ.get("CYBERLAB_N_JOBS", "-1"))
 
+_TRAIN = {"lr", "weight_decay", "epochs", "batch_size", "class_weight"}
+
 ALLOWED_PARAMS: dict[str, set[str]] = {
     "logistic_regression": {"C", "max_iter"},
     "random_forest": {"n_estimators", "max_depth", "min_samples_leaf"},
     "xgboost": {"n_estimators", "max_depth", "learning_rate", "subsample"},
     "mlp": {"hidden_layer_sizes", "alpha", "max_iter"},
+    "lightgbm": {"n_estimators", "num_leaves", "learning_rate", "subsample", "colsample_bytree"},
+    # deep templates (PyTorch, cyberlab_tabular.deep); shared training settings first
+    "resnet_mlp": {"d", "n_blocks", "dropout", *_TRAIN},
+    "ft_transformer": {"d_token", "n_blocks", "n_heads", "dropout", *_TRAIN},
+    "cnn1d": {"channels", "n_layers", "kernel_size", "dropout", *_TRAIN},
+    "tabnet": {"n_d", "n_steps", "gamma", *_TRAIN},
 }
+DEEP_TEMPLATES = {"resnet_mlp", "ft_transformer", "cnn1d", "tabnet"}
 
 
 # Reviewed, documented settings used for every study (spec 7.4: no silent tuning). The protocol
@@ -46,6 +55,56 @@ DEFAULT_PARAMS: dict[str, dict[str, Any]] = {
     "random_forest": {"n_estimators": 200, "max_depth": None, "min_samples_leaf": 1},
     "xgboost": {"n_estimators": 300, "max_depth": 8, "learning_rate": 0.1, "subsample": 0.9},
     "mlp": {"hidden_layer_sizes": [128, 64], "alpha": 0.0001, "max_iter": 60},
+    "lightgbm": {
+        "n_estimators": 400,
+        "num_leaves": 63,
+        "learning_rate": 0.05,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+    },
+    # Defaults from Gorishniy et al. (2021) and Arik and Pfister (2021), scaled for 48 GB.
+    "resnet_mlp": {
+        "d": 256,
+        "n_blocks": 4,
+        "dropout": 0.1,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "epochs": 30,
+        "batch_size": 1024,
+        "class_weight": "none",
+    },
+    "ft_transformer": {
+        "d_token": 96,
+        "n_blocks": 3,
+        "n_heads": 8,
+        "dropout": 0.1,
+        "lr": 1e-4,
+        "weight_decay": 1e-5,
+        "epochs": 30,
+        "batch_size": 1024,
+        "class_weight": "none",
+    },
+    "cnn1d": {
+        "channels": 32,
+        "n_layers": 3,
+        "kernel_size": 3,
+        "dropout": 0.1,
+        "lr": 1e-3,
+        "weight_decay": 1e-5,
+        "epochs": 30,
+        "batch_size": 1024,
+        "class_weight": "none",
+    },
+    "tabnet": {
+        "n_d": 32,
+        "n_steps": 4,
+        "gamma": 1.5,
+        "lr": 2e-3,
+        "weight_decay": 1e-5,
+        "epochs": 30,
+        "batch_size": 2048,
+        "class_weight": "none",
+    },
 }
 
 
@@ -103,11 +162,42 @@ def _mlp(p: dict[str, Any], seed: int, gpu: bool) -> Any:
     )
 
 
+def _lgbm(p: dict[str, Any], seed: int, gpu: bool) -> Any:
+    from lightgbm import LGBMClassifier
+
+    return LGBMClassifier(
+        n_estimators=p.get("n_estimators", 400),
+        num_leaves=p.get("num_leaves", 63),
+        learning_rate=p.get("learning_rate", 0.05),
+        subsample=p.get("subsample", 0.9),
+        subsample_freq=1,
+        colsample_bytree=p.get("colsample_bytree", 0.9),
+        random_state=seed,
+        n_jobs=_N_JOBS,
+        verbose=-1,
+    )
+
+
+def _deep(arch: str) -> Callable[[dict[str, Any], int, bool], Any]:
+    def build(p: dict[str, Any], seed: int, gpu: bool) -> Any:
+        from cyberlab_tabular.deep import TorchTabularClassifier
+
+        full = {**DEFAULT_PARAMS[arch], **p}
+        train = {
+            k: full.pop(k) for k in ("lr", "weight_decay", "epochs", "batch_size", "class_weight")
+        }
+        return TorchTabularClassifier(arch, full, seed, gpu, **train)
+
+    return build
+
+
 TEMPLATES: dict[str, Callable[[dict[str, Any], int, bool], Any]] = {
     "logistic_regression": _logreg,
     "random_forest": _rf,
     "xgboost": _xgb,
     "mlp": _mlp,
+    "lightgbm": _lgbm,
+    **{arch: _deep(arch) for arch in DEEP_TEMPLATES},
 }
 
 
@@ -144,7 +234,68 @@ def _space_mlp(t: Any) -> dict[str, Any]:
     }
 
 
+def _space_lgbm(t: Any) -> dict[str, Any]:
+    return {
+        "n_estimators": t.suggest_int("n_estimators", 100, 800, step=50),
+        "num_leaves": t.suggest_int("num_leaves", 15, 255, log=True),
+        "learning_rate": t.suggest_float("learning_rate", 0.01, 0.3, log=True),
+        "subsample": t.suggest_float("subsample", 0.6, 1.0),
+        "colsample_bytree": t.suggest_float("colsample_bytree", 0.5, 1.0),
+    }
+
+
+def _train_space(t: Any, lr: tuple[float, float]) -> dict[str, Any]:
+    return {
+        "lr": t.suggest_float("lr", *lr, log=True),
+        "weight_decay": t.suggest_float("weight_decay", 1e-6, 1e-3, log=True),
+        "class_weight": t.suggest_categorical("class_weight", ["none", "balanced"]),
+    }
+
+
+def _space_resnet(t: Any) -> dict[str, Any]:
+    return {
+        "d": t.suggest_categorical("d", [128, 256, 512]),
+        "n_blocks": t.suggest_int("n_blocks", 2, 6),
+        "dropout": t.suggest_float("dropout", 0.0, 0.3),
+        **_train_space(t, (1e-4, 3e-3)),
+    }
+
+
+def _space_ft(t: Any) -> dict[str, Any]:
+    return {
+        "d_token": t.suggest_categorical("d_token", [64, 96, 128]),
+        "n_blocks": t.suggest_int("n_blocks", 1, 4),
+        "n_heads": 8,
+        "dropout": t.suggest_float("dropout", 0.0, 0.3),
+        **_train_space(t, (3e-5, 1e-3)),
+    }
+
+
+def _space_cnn(t: Any) -> dict[str, Any]:
+    return {
+        "channels": t.suggest_categorical("channels", [16, 32, 64]),
+        "n_layers": t.suggest_int("n_layers", 2, 4),
+        "kernel_size": t.suggest_categorical("kernel_size", [3, 5]),
+        "dropout": t.suggest_float("dropout", 0.0, 0.3),
+        **_train_space(t, (1e-4, 3e-3)),
+    }
+
+
+def _space_tabnet(t: Any) -> dict[str, Any]:
+    return {
+        "n_d": t.suggest_categorical("n_d", [16, 32, 64]),
+        "n_steps": t.suggest_int("n_steps", 3, 6),
+        "gamma": t.suggest_float("gamma", 1.0, 2.0),
+        **_train_space(t, (5e-4, 2e-2)),
+    }
+
+
 SEARCH_SPACES: dict[str, Callable[[Any], dict[str, Any]]] = {
+    "lightgbm": _space_lgbm,
+    "resnet_mlp": _space_resnet,
+    "ft_transformer": _space_ft,
+    "cnn1d": _space_cnn,
+    "tabnet": _space_tabnet,
     "logistic_regression": _space_logreg,
     "random_forest": _space_rf,
     "xgboost": _space_xgb,
@@ -303,6 +454,15 @@ def run_experiment(
             "pandas": pd.__version__,
         },
     }
+    if hasattr(model, "history"):  # deep templates: learning curve and device, as evidence
+        import torch
+
+        info["training_curve"] = model.history
+        info["epochs_run"] = getattr(model, "epochs_run_", None)
+        info["device"] = str(model.device)
+        env: dict[str, Any] = info["environment"]  # type: ignore[assignment]
+        env["torch"] = str(torch.__version__)
+        env["cuda"] = torch.version.cuda
     if hasattr(model, "feature_importances_"):
         imp = dict(
             zip(x_train.columns, np.asarray(model.feature_importances_).tolist(), strict=True)

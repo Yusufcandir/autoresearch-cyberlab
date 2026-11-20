@@ -200,3 +200,39 @@ def test_full_study_with_tuning(lab: Lab) -> None:
     assert "tuned with Optuna" in md and "Difference (95% CI)" in md
     assert "no hyper-parameter tuning was performed" not in md
     assert report["release_ready"], report["flags"]
+
+
+def test_full_study_with_deep_models(lab: Lab) -> None:
+    """Models named in the goal (including deep templates) become the protocol's line-up."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Deep versus tree models on CIC-IDS2017",
+        goal="Compare logistic regression, random forest, the FT-Transformer and a ResNet-MLP "
+        "on CIC-IDS2017. Test whether the FT-Transformer achieves higher macro-F1 than "
+        "logistic regression. Use three seeds.",
+    )
+    pid = lab.create_project(pi, spec)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        names = [m["name"] for m in pv.body["models"]]
+        assert names == ["logistic_regression", "random_forest", "ft_transformer", "resnet_mlp"]
+        assert pv.body["hypotheses"][0]["comparison"] == "ft_transformer > logistic_regression"
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(16):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        runs = list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))
+        assert all(r.status == "succeeded" for r in runs), [r.receipt.get("error") for r in runs]
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md, report = ms.markdown, ms.evidence_report
+    assert "FT-Transformer" in md and "| ft_transformer |" in md
+    assert report["release_ready"], report["flags"]

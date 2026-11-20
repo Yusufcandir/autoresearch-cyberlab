@@ -18,8 +18,18 @@ from cyberlab_schemas import (
     SplitSpec,
 )
 
-ALLOWED_TEMPLATES = {"logistic_regression", "random_forest", "xgboost", "mlp"}
-GPU_TEMPLATES = {"xgboost"}
+ALLOWED_TEMPLATES = {
+    "logistic_regression",
+    "random_forest",
+    "xgboost",
+    "mlp",
+    "lightgbm",
+    "resnet_mlp",
+    "ft_transformer",
+    "cnn1d",
+    "tabnet",
+}
+GPU_TEMPLATES = {"xgboost", "resnet_mlp", "ft_transformer", "cnn1d", "tabnet"}
 
 
 class CompileError(ValueError):

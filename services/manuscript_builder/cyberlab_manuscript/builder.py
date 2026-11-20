@@ -358,6 +358,11 @@ def _pretty_model(name: str) -> str:
         "random_forest": "random forest",
         "xgboost": "XGBoost",
         "mlp": "the MLP",
+        "lightgbm": "LightGBM",
+        "resnet_mlp": "the ResNet-MLP",
+        "ft_transformer": "the FT-Transformer",
+        "cnn1d": "the 1D-CNN",
+        "tabnet": "TabNet",
     }.get(name, name)
 
 

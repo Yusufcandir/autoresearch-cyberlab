@@ -14,9 +14,11 @@ from cyberlab_orchestrator.context import LabContext
 from cyberlab_orchestrator.datasets import project_adapter
 from cyberlab_protocol import default_protocol
 from cyberlab_protocol.intent import (
+    BASELINES,
     PRETTY,
     hypothesis_statement,
     min_support_from_text,
+    models_named,
     research_intent,
     seeds_from_text,
     split_from_goal,
@@ -28,10 +30,11 @@ from cyberlab_schemas import Hypothesis, ModelSpec, Protocol, ResearchSpec, Spli
 SYSTEM = (
     "You are a methodology design agent. Design the experimental protocol for THIS study's "
     "research goal: its research questions and hypotheses must test what the goal asks, with "
-    "the goal's primary metric. You may only use model templates: logistic_regression, "
-    "random_forest, xgboost, mlp. Allowed params: logistic_regression{C,max_iter}, "
-    "random_forest{n_estimators,max_depth,min_samples_leaf}, xgboost{n_estimators,max_depth,"
-    "learning_rate,subsample}, mlp{hidden_layer_sizes,alpha,max_iter}. Hypotheses compare model "
+    "the goal's primary metric. You may only use these model templates (settings are fixed "
+    "by the platform or tuned on the validation split, so leave params empty): "
+    "logistic_regression, random_forest, xgboost, lightgbm, mlp (classical); resnet_mlp, "
+    "ft_transformer, cnn1d, tabnet (deep, PyTorch). Use the models the goal names; if it names "
+    "none, use logistic_regression, random_forest, xgboost and mlp. Hypotheses compare model "
     "names with '>' and give primary_metric in macro_f1, accuracy, balanced_accuracy, mcc. "
     "Only ask research questions these experiments can answer (no runtime, scalability, "
     "deployment or other-dataset questions). Output JSON: {'research_questions': [str], "
@@ -154,6 +157,39 @@ def _enforce_intent(
     """The researcher's own hypotheses and primary metric win over the agent's proposal, and
     research questions no experiment can answer are removed."""
     notes: list[str] = []
+    named = models_named(goal)
+    if len(named) >= 2 and sorted(named) != sorted(m.name for m in protocol.models):
+        # the researcher's own model line-up wins over the agent's proposal
+        from cyberlab_tabular.templates import DEFAULT_PARAMS
+
+        models = [
+            ModelSpec(
+                name=n,
+                template=n,
+                params=dict(DEFAULT_PARAMS[n]),
+                role="baseline" if n in BASELINES else "candidate",
+            )
+            for n in named
+        ]
+        keep = [
+            h
+            for h in protocol.hypotheses
+            if all(x.strip() in named for x in h.comparison.split(">"))
+        ]
+        if not keep:
+            base = next((n for n in named if n in BASELINES), named[-1])
+            cand = next(n for n in named if n != base)
+            m0 = intent.get("primary_metric") or "macro_f1"
+            keep = [
+                Hypothesis(
+                    id="H1",
+                    statement=hypothesis_statement(cand, base, m0),
+                    comparison=f"{cand} > {base}",
+                    primary_metric=m0,
+                )
+            ]
+        protocol = protocol.model_copy(update={"models": models, "hypotheses": keep})
+        notes.append(f"models taken from the research goal: {', '.join(named)}")
     names = {m.name for m in protocol.models}
     metric = intent.get("primary_metric")
     stated = [h for h in intent.get("hypotheses", []) if h[0] in names and h[1] in names]
