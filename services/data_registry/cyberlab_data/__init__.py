@@ -11,7 +11,7 @@ from cyberlab_data.common import (
     manifest_summary,
     prepared_dir_for,
 )
-from cyberlab_data.registry import ADAPTERS, DatasetAdapter, get_adapter
+from cyberlab_data.registry import ADAPTERS, DatasetAdapter, get_adapter, prepare_split
 
 __all__ = [
     "ADAPTERS",
@@ -27,5 +27,6 @@ __all__ = [
     "manifest_summary",
     "prepared_dir_for",
     "prepare",
+    "prepare_split",
     "write_fixture",
 ]

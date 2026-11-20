@@ -36,7 +36,7 @@ BASELINES = {"logistic_regression", "random_forest"}
 # Things no experiment on this platform measures.
 UNTESTABLE = re.compile(
     r"real[- ]time|scalab|latency|runtime|run time|inference time|training time|deploy|"
-    r"efficien|energy|throughput|memory use|other datasets?|cross[- ]dataset|explainab|"
+    r"efficien|energy|throughput|memory use|explainab|"
     r"interpretab|adversarial|robustness to attack",
     re.I,
 )
@@ -152,9 +152,25 @@ _OFFICIAL = re.compile(
 )
 
 
+_NF = r"NF[- ](?:UNSW[- ]NB15|CSE[- ]CIC[- ]IDS[- ]?2018|ToN[- ]IoT|BoT[- ]IoT)[- ]v2"
+_CROSS = re.compile(rf"\btest(?:ed|ing)?\s+on\s+(?:the\s+)?(?P<test>{_NF})", re.I)
+_GROUPS = re.compile(
+    r"\btest(?:ed|ing)?\s+on\s+(?:the\s+)?(?:capture\s+)?scenarios?\s+"
+    r"(?P<g>\d{1,2}(?:\s*(?:,|and|&)\s*\d{1,2})*)",
+    re.I,
+)
+
+
 def split_from_goal(goal: str) -> dict[str, Any] | None:
-    """The official partition when the goal asks for it (UNSW-NB15), or a by-day split with
-    the test days it names ('train on Monday to Wednesday and test on Thursday and Friday')."""
+    """The split the goal asks for: cross-dataset ('train on NF-UNSW-NB15-v2 and test on
+    NF-ToN-IoT-v2'), held-out capture scenarios ('test on scenarios 10 and 11', CTU-13), the
+    official partition (UNSW-NB15), or a by-day split with the test days it names."""
+    m = _CROSS.search(goal)
+    if m:
+        return {"strategy": "cross_dataset", "test_days": [m.group("test")]}
+    m = _GROUPS.search(goal)
+    if m:
+        return {"strategy": "by_group", "test_days": re.findall(r"\d{1,2}", m.group("g"))}
     if _OFFICIAL.search(goal):
         return {"strategy": "official"}
     if not _TEMPORAL.search(goal) and not re.search(r"\btest(?:ed|ing)? on (?:\w+day)", goal, re.I):

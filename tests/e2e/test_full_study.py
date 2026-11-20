@@ -236,3 +236,37 @@ def test_full_study_with_deep_models(lab: Lab) -> None:
         md, report = ms.markdown, ms.evidence_report
     assert "FT-Transformer" in md and "| ft_transformer |" in md
     assert report["release_ready"], report["flags"]
+
+
+def test_cross_dataset_study(lab: Lab) -> None:
+    """Train on one NetFlow-v2 dataset, test on another: binary labels, shared features."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Cross-dataset generalisation of NetFlow intrusion detectors",
+        goal="Train logistic regression, random forest and XGBoost on NF-UNSW-NB15-v2 and test "
+        "on NF-ToN-IoT-v2. Test whether XGBoost achieves higher macro-F1 than logistic "
+        "regression.",
+        dataset_hint="NF-UNSW-NB15-v2",
+    )
+    pid = lab.create_project(pi, spec)
+    lab.start(pid)
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        assert pv.body["split"]["strategy"] == "cross_dataset"
+        assert pv.body["label_scheme"] == "binary"
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    assert lab.status(pid)["pending"]["gate"] == "D", lab.status(pid)
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md, report = ms.markdown, ms.evidence_report
+    assert "Cross-dataset evaluation" in md and "NF-ToN-IoT-v2" in md
+    assert report["release_ready"], report["flags"]

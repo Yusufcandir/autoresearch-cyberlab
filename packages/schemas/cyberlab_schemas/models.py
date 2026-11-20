@@ -99,7 +99,11 @@ class ModelSpec(Versioned):
 
 
 class SplitSpec(Versioned):
-    strategy: Literal["stratified_dedup", "by_day", "official"] = "stratified_dedup"
+    # by_group (e.g. CTU-13 capture scenarios) lists its test groups in `test_days`, so older
+    # split definitions keep their hashes; cross_dataset tests on `test_days[0]` (a dataset).
+    strategy: Literal["stratified_dedup", "by_day", "official", "by_group", "cross_dataset"] = (
+        "stratified_dedup"
+    )
     test_fraction: float = Field(default=0.2, gt=0.05, lt=0.5)
     val_fraction: float = Field(default=0.1, ge=0.0, lt=0.4)
     seed: int = 42

@@ -12,7 +12,13 @@ from typing import Any
 from sqlalchemy import select
 
 from cyberlab_common.db import ApprovalRecord, DatasetRecord, ProtocolVersion, audit
-from cyberlab_data import DatasetBlocked, dataset_record_id, get_adapter, is_default_split
+from cyberlab_data import (
+    DatasetBlocked,
+    dataset_record_id,
+    get_adapter,
+    is_default_split,
+    prepare_split,
+)
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_protocol import CompileError, compile_protocol
 from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol
@@ -29,8 +35,9 @@ def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str 
             return None
     try:
         adapter = get_adapter(protocol.dataset_id)
-        prepared = adapter.prepare(
-            adapter.root(ctx.settings.dataset_root),
+        prepared = prepare_split(
+            adapter,
+            ctx.settings.dataset_root,
             protocol.split,
             benign_cap=ctx.extra.get("benign_cap", 400_000),
         )

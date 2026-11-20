@@ -236,6 +236,10 @@ def _enforce_intent(
     if wanted_split and wanted_split["strategy"] in split_strategies:
         update["split"] = SplitSpec(**wanted_split)
         notes.append(f"split taken from the research goal: {wanted_split}")
+        if wanted_split["strategy"] == "cross_dataset":
+            # attack families differ between datasets: compare attack versus benign
+            update["label_scheme"] = "binary"
+            notes.append("cross-dataset test: binary labels (attack versus BENIGN)")
     elif wanted_split:
         notes.append(
             f"split in the goal not available for this dataset: {wanted_split['strategy']}"

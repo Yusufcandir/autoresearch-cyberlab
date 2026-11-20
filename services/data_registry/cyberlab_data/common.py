@@ -82,7 +82,14 @@ def _test_mask(df: pd.DataFrame, split: SplitSpec) -> np.ndarray | None:
         if not test_days:
             raise DatasetBlocked(["by_day split needs test_days"])
         return df["Day"].isin(test_days).to_numpy()
-    if split.strategy == "official":
+    if split.strategy == "by_group":
+        if "Group" not in df.columns:
+            raise DatasetBlocked(["this dataset has no capture groups"])
+        groups = {str(g) for g in split.test_days}
+        if not groups:
+            raise DatasetBlocked(["by_group split needs the test groups (test_days)"])
+        return df["Group"].astype(str).isin(groups).to_numpy()
+    if split.strategy in ("official", "cross_dataset"):
         if "Part" not in df.columns:
             raise DatasetBlocked(["this dataset has no official train/test partition"])
         return (df["Part"] == "test").to_numpy()
@@ -165,7 +172,7 @@ def finalize(
         reasons.append(f"{overlap} test rows also appear in train (leakage)")
     test_counts = df.loc[df["split"] == "test", "Class"].value_counts()
     missing = sorted(set(df["Class"]) - set(test_counts.index))
-    if split.strategy in ("by_day", "official"):
+    if split.strategy in ("by_day", "official", "by_group", "cross_dataset"):
         # A fixed external test set (unseen days, official partition) may lack some classes:
         # that is part of the design and recorded in the manifest. Only a one-class test blocks.
         if len(test_counts) < 2:

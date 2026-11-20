@@ -51,3 +51,48 @@ def test_official_split_from_goal() -> None:
         "strategy": "official"
     }
     assert split_from_goal("Compare models with macro-F1.") is None
+
+
+def test_netflow_adapter_drops_identifiers(tmp_path: Path) -> None:
+    from cyberlab_data import ADAPTERS
+
+    a = ADAPTERS["nf_unsw_nb15_v2"]
+    a.write_fixture(tmp_path / "raw")
+    m = a.prepare(tmp_path).manifest
+    assert m.status == "verified", m.blocked_reasons
+    assert not any(f in m.features for f in ("IPV4_SRC_ADDR", "L4_SRC_PORT", "Label", "Attack"))
+    assert "BENIGN" in m.class_counts and "DDoS" in m.class_counts
+
+
+def test_ctu13_by_scenario(tmp_path: Path) -> None:
+    import json
+
+    from cyberlab_data import ADAPTERS
+
+    a = ADAPTERS["ctu13"]
+    a.write_fixture(tmp_path / "raw")
+    p = a.prepare(tmp_path, SplitSpec(strategy="by_group", test_days=["3"]))
+    assert p.manifest.status == "verified", p.manifest.blocked_reasons
+    assert set(p.manifest.class_counts) == {"BENIGN", "Botnet"}  # background excluded
+    df = pd.read_parquet(p.clean_path)
+    assert set(df.loc[df["split"] == "test", "Group"]) == {"3"}
+    notes = json.loads((p.root / "preprocessing_notes.json").read_text())
+    assert notes["background_or_unlabelled_flows_excluded"] > 0
+
+
+def test_cross_dataset_split(tmp_path: Path) -> None:
+    from cyberlab_data import ADAPTERS, DatasetBlocked, prepare_split
+
+    for key in ("nf_unsw_nb15_v2", "nf_ton_iot_v2"):
+        ADAPTERS[key].write_fixture(tmp_path / key / "raw")
+    split = SplitSpec(strategy="cross_dataset", test_days=["NF-ToN-IoT-v2"])
+    p = prepare_split(ADAPTERS["nf_unsw_nb15_v2"], tmp_path, split)
+    assert p.manifest.status == "verified", p.manifest.blocked_reasons
+    df = pd.read_parquet(p.clean_path)
+    assert set(df.loc[df["split"] == "test", "Part"]) == {"test"}
+    assert p.manifest.split_overlap_rows == 0
+    # CIC-IDS2017 has a different feature format: refused, not silently substituted
+    import pytest
+
+    with pytest.raises(DatasetBlocked):
+        prepare_split(ADAPTERS["cicids2017"], tmp_path, split)

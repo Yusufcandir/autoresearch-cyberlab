@@ -58,6 +58,44 @@ SYSTEM = (
 )
 
 
+def split_prose(strategy: str, notes: dict[str, Any]) -> list[str]:
+    """True sentences about how the test set was formed, one variant per split strategy."""
+    if strategy == "by_day":
+        return [
+            "Test rows are all flows from the test days (facts.test_days); training and "
+            "validation rows come only from the other days, so the models never see traffic "
+            "from the test days. Duplicates were removed before splitting and no test row "
+            "also appears in training."
+        ]
+    if strategy == "official":
+        return [
+            "The dataset's official partition was used: test rows come only from the "
+            "official testing file and training and validation rows only from the official "
+            "training file. Rows of the testing file that duplicate a training row were "
+            "removed before evaluation, so no test row also appears in training."
+        ]
+    if strategy == "by_group":
+        return [
+            "Test rows are all flows from the held-out capture scenarios (facts.test_days); "
+            "training and validation rows come only from the other scenarios, so the test "
+            "botnets were never seen in training. No test row also appears in training."
+        ]
+    if strategy == "cross_dataset":
+        return [
+            f"Cross-dataset evaluation: models were trained on {notes.get('train_dataset')} and "
+            f"tested on {notes.get('test_dataset')}, using only the "
+            f"{notes.get('shared_features')} features both datasets share. Labels were reduced "
+            "to attack versus BENIGN because the attack families differ between the datasets. "
+            "Test rows identical to a training row were removed, so no test row also appears "
+            "in training."
+        ]
+    return [
+        "One stratified train/validation/test split was made with a single fixed seed "
+        "(facts.split_seed) after de-duplication; the same split is used for every model and "
+        "seed. No test row also appears in training."
+    ]
+
+
 def method_facts(
     ctx: LabContext, pid: str, analysis: dict[str, Any]
 ) -> tuple[dict[str, Any], list[str]]:
@@ -123,27 +161,13 @@ def method_facts(
             and (ds.get("class_counts") or {}).get("BENIGN", 0) >= notes["benign_cap"]
             else []
         ),
-        *(
-            [
-                "Test rows are all flows from the test days (facts.test_days); training and "
-                "validation rows come only from the other days, so the models never see traffic "
-                "from the test days. Duplicates were removed before splitting and no test row "
-                "also appears in training.",
-            ]
-            if split_spec.strategy == "by_day"
-            else [
-                "The dataset's official partition was used: test rows come only from the "
-                "official testing file and training and validation rows only from the official "
-                "training file. Rows of the testing file that duplicate a training row were "
-                "removed before evaluation, so no test row also appears in training.",
-            ]
-            if split_spec.strategy == "official"
-            else [
-                "One stratified train/validation/test split was made with a single fixed seed "
-                "(facts.split_seed) after de-duplication; the same split is used for every model and seed. "
-                "No test row also appears in training.",
-            ]
+        (
+            "The traffic was captured on a real network (externally observed data)."
+            if adapter.observed
+            else "The traffic was generated in a laboratory testbed (synthetic data), so results "
+            "may not transfer directly to production networks."
         ),
+        *split_prose(split_spec.strategy, notes),
         "The model seeds (facts.seeds) change only the randomness of model training, not the split.",
         (
             "Every model was trained on the training split with the settings selected on the "
