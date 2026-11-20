@@ -100,6 +100,9 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
 
     def gate_a(state: LabState) -> dict[str, Any]:
         pid, version = state["project_id"], state["protocol_version"]
+        from cyberlab_orchestrator.agents.methodology import validate_drafted
+
+        validate_drafted(ctx, pid, version)
         ctx.set_stage(pid, "awaiting_protocol_approval", "Proposed")
         answer = interrupt(
             {

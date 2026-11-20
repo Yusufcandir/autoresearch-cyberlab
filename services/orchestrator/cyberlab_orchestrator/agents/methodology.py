@@ -392,3 +392,30 @@ def _fit_modality(protocol: Protocol, adapter: Any, base: Protocol) -> tuple[Pro
     return Protocol.model_validate(json.loads(updated.model_dump_json())), [
         f"models that do not fit the {adapter.modality} dataset were removed"
     ]
+
+
+def validate_drafted(ctx: LabContext, pid: str, version: int) -> dict[str, Any]:
+    """Protocol validation (professor's plan, Step 2.2) once the protocol and the dataset check
+    are both done; stored as a note the PI sees beside the protocol."""
+    from cyberlab_common.db import DatasetRecord
+    from cyberlab_protocol.protocol_validator import validate_protocol
+
+    with ctx.db.session() as s:
+        pv = s.scalar(
+            select(ProtocolVersion).where(
+                ProtocolVersion.project_id == pid, ProtocolVersion.version == version
+            )
+        )
+        project = s.get(Project, pid)
+        if pv is None or project is None:
+            return {}
+        spec = ResearchSpec.model_validate(project.spec)
+        ds = s.get(DatasetRecord, pv.body.get("dataset_id"))
+        result = validate_protocol(
+            dict(pv.body),
+            " ".join([spec.goal, *spec.constraints]),
+            dict(ds.manifest) if ds else None,
+            spec.gpu_budget_minutes,
+        )
+        ctx.note(s, pid, "methodology", "protocol_validation", {"version": version, **result})
+    return result

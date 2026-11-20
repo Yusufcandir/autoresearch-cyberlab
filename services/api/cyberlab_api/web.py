@@ -370,6 +370,7 @@ def project_page(
         status=status,
         decisions=lab.research_decisions(pid),
         validation=_latest_note(lab, pid, "scientific_validation"),
+        protocol_check=_latest_note(lab, pid, "protocol_validation"),
         protocol=protocol,
         cites=cites,
         verified=verified,
