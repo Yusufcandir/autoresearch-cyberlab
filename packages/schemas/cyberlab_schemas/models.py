@@ -72,6 +72,11 @@ class ResearchSpec(Versioned):
     )
     gpu_budget_minutes: int = Field(default=480, ge=1, le=7 * 24 * 60)
     llm_token_budget: int = Field(default=1_000_000, ge=0)
+    # FR-001 intake fields
+    llm_usd_budget: float = Field(default=10.0, ge=0, le=10_000)
+    deadline: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    language: str = Field(default="en", pattern=r"^[a-z]{2}$")
+    output_format: Literal["markdown", "latex", "word"] = "latex"
 
 
 class Hypothesis(Versioned):

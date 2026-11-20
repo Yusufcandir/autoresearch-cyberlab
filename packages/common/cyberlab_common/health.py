@@ -19,7 +19,8 @@ import httpx
 
 from cyberlab_common.config import Settings
 
-DISK_WARN, DISK_STOP = 0.85, 0.95  # spec 3.4: warning at 85%, emergency at 95%
+# spec 3.4: warning at 70%, no new large jobs at 85%, emergency stop for writes at 95%
+DISK_NOTICE, DISK_WARN, DISK_STOP = 0.70, 0.85, 0.95
 
 
 def _check(name: str, ok: bool, detail: str, level: str = "error") -> dict[str, Any]:
@@ -31,9 +32,17 @@ def disk(path: Path) -> dict[str, Any]:
     u = shutil.disk_usage(path)
     used = u.used / u.total
     level = "error" if used >= DISK_STOP else "warning"
-    return _check(
-        "disk", used < DISK_WARN, f"{used:.0%} used, {u.free / 2**30:.0f} GiB free at {path}", level
+    stage = (
+        "emergency: stop writes"
+        if used >= DISK_STOP
+        else "no new large jobs"
+        if used >= DISK_WARN
+        else "warning"
+        if used >= DISK_NOTICE
+        else ""
     )
+    detail = f"{used:.0%} used, {u.free / 2**30:.0f} GiB free at {path}"
+    return _check("disk", used < DISK_NOTICE, f"{detail} ({stage})" if stage else detail, level)
 
 
 def gpu() -> dict[str, Any]:

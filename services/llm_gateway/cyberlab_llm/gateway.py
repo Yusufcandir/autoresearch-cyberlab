@@ -518,6 +518,7 @@ class LLMGateway:
         self.log.append(
             {
                 "task": task,
+                "project_id": project_id,
                 "provider": result.provider,
                 "model": result.model,
                 "tokens": result.total_tokens,

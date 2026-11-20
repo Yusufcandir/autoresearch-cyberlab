@@ -38,6 +38,14 @@ class GateError(ValueError):
     """The requested gate action does not match the current state (stale or wrong gate)."""
 
 
+# Release review checklist (spec Step 22): science, ethics and security.
+REVIEW_ITEMS: dict[str, str] = {
+    "science": "every claim and number checked against the Results and Evidence",
+    "ethics": "dataset licences, citations and the AI-use disclosure checked",
+    "security": "no private data, credentials or host details in the paper",
+}
+
+
 class Lab:
     def __init__(
         self,
@@ -252,7 +260,20 @@ class Lab:
             )
         return self._invoke(project_id, Command(resume={"decision": decision, "comment": comment}))
 
-    def release(self, principal: Principal, project_id: str, version: int) -> dict[str, Any]:
+    def release(
+        self,
+        principal: Principal,
+        project_id: str,
+        version: int,
+        checklist: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        """PI release (gate D). Spec Step 22: the science, ethics and security review items
+        must all be confirmed; a missing item blocks the RELEASED transition."""
+        missing = [k for k in REVIEW_ITEMS if not (checklist or {}).get(k)]
+        if missing:
+            raise GateError(
+                "release needs the review checklist: " + "; ".join(REVIEW_ITEMS[k] for k in missing)
+            )
         pend = self.pending(project_id)
         if not pend or pend.get("gate") != "D" or pend.get("manuscript_version") != version:
             raise GateError("this manuscript version is not awaiting release")
@@ -276,6 +297,7 @@ class Lab:
                     subject_sha256=ms.sha256,
                     approver_id=principal.id,
                     decision="approved",
+                    comment="review checklist: " + ", ".join(sorted(REVIEW_ITEMS)),
                 )
             )
             audit(
@@ -283,7 +305,7 @@ class Lab:
                 principal.username,
                 "manuscript.released",
                 project_id,
-                {"version": version, "sha256": ms.sha256},
+                {"version": version, "sha256": ms.sha256, "checklist": dict(checklist or {})},
             )
         return self._invoke(project_id, Command(resume={"released": True}))
 

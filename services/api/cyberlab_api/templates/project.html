@@ -135,7 +135,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
     {% if pend.evidence_blockers %}<p class="error">Release is blocked by {{ pend.evidence_blockers|length }} evidence problem(s). See the <a href="#verification" data-tab-link>Verification</a> tab.</p>
     {% elif role == 'pi' %}
     <p>Draft v{{ pend.manuscript_version }} passed every evidence check. Read it in the <a href="#manuscript" data-tab-link>Manuscript</a> tab. Releasing records your approval; it does not submit or send anything.</p>
-    <form method="post" action="/projects/{{ project.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.manuscript_version }}"><div class="actions"><button>✓ Release manuscript v{{ pend.manuscript_version }}</button></div></form>
+    <form method="post" action="/projects/{{ project.id }}/release"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="version" value="{{ pend.manuscript_version }}"><p class="muted">Review checklist (all three are required before release):</p><label><input type="checkbox" name="check_science" required> Science: every claim and number checked against the Results and Evidence</label><br><label><input type="checkbox" name="check_ethics" required> Ethics: dataset licences, citations and the AI-use disclosure checked</label><br><label><input type="checkbox" name="check_security" required> Security: no private data, credentials or host details in the paper</label><div class="actions"><button>✓ Release manuscript v{{ pend.manuscript_version }}</button></div></form>
     {% else %}<p class="muted">Only the PI can release.</p>{% endif %}
   {% endif %}
 </div>
@@ -283,7 +283,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 {% if manuscripts %}{% set ms = manuscripts[0] %}
 <div class="chips" style="margin-bottom:14px"><span class="chip">Draft <b>v{{ ms.version }}</b></span><span class="chip">Status <b>{{ ms.status }}</b></span>
   {% if ms.evidence_report.release_ready %}<span class="pill good">✓ evidence checks passed</span>{% else %}<span class="label Unverified">evidence problems</span>{% endif %}
-  <a class="chip" href="/manuscripts/{{ ms.id }}/download/md">⬇ Markdown</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/tex">⬇ LaTeX (zip)</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/bib">⬇ BibTeX</a><a class="chip" href="/manuscripts/{{ ms.id }}/print" target="_blank">⎙ PDF</a>
+  <a class="chip" href="/manuscripts/{{ ms.id }}/download/md">⬇ Markdown</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/tex">⬇ LaTeX (zip)</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/docx">⬇ Word</a><a class="chip" href="/manuscripts/{{ ms.id }}/download/bib">⬇ BibTeX</a><a class="chip" href="/manuscripts/{{ ms.id }}/print" target="_blank">⎙ PDF</a><a class="chip" href="/projects/{{ project.id }}/diff/manuscript" target="_blank">⇄ Compare drafts</a><a class="chip" href="/projects/{{ project.id }}/diff/protocol" target="_blank">⇄ Compare protocols</a>
   {% if role in ['pi','researcher'] and ms.status != 'released' and pend and pend.gate == 'D' %}<form method="post" action="/projects/{{ project.id }}/redraft" style="display:inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small" title="Write the paper again: statistics are recomputed from the stored predictions; experiments are not repeated">↻ Rewrite draft</button></form>{% endif %}</div>
 {% if ms.review %}<details style="margin-bottom:14px"><summary>Reviewer agent: {{ ms.review.recommendation|text }} <span class="label Proposed">Proposed</span></summary>
 <p class="muted">{% for k, v in (ms.review.scores if ms.review.scores is mapping else {}).items() %}{{ k.replace('_',' ') }} {{ v }}/5 · {% endfor %}</p>
@@ -392,8 +392,27 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
     } catch (e) { pill()?.classList.add("off"); }
     finally { busy = false; }
   }
-  tick();
-  setInterval(tick, 3000);
+  // Server-sent events tell the page when the study changed; polling is the fallback.
+  let polling = null;
+  function startPolling() { if (!polling) { tick(); polling = setInterval(tick, 3000); } }
+  if (window.EventSource) {
+    const es = new EventSource(`/projects/${root.dataset.pid}/events`);
+    es.addEventListener("change", async (ev) => {
+      if (stamp !== null && ev.data !== stamp) {
+        const el = document.activeElement;
+        if (!(el && (el.tagName === "TEXTAREA" || el.tagName === "INPUT"))) {
+          const html = await (await fetch(location.pathname, {credentials: "same-origin"})).text();
+          const fresh = new DOMParser().parseFromString(html, "text/html").getElementById("live-root");
+          if (fresh) patch(root, fresh);
+        }
+      }
+      stamp = ev.data;
+      pill()?.classList.remove("off");
+    });
+    es.onerror = () => { pill()?.classList.add("off"); if (es.readyState === EventSource.CLOSED) startPolling(); };
+  } else {
+    startPolling();
+  }
   // Elapsed-time counters tick every second on their own.
   function fmt(s) { return s < 60 ? s + "s" : s < 3600 ? Math.floor(s/60) + "m " + String(s%60).padStart(2,"0") + "s" : Math.floor(s/3600) + "h " + String(Math.floor(s%3600/60)).padStart(2,"0") + "m"; }
   setInterval(() => document.querySelectorAll(".elapsed[data-since]").forEach(el => {

@@ -20,6 +20,8 @@ from cyberlab_orchestrator.lab import GateError, Lab
 from cyberlab_schemas import ResearchSpec
 from tests.fixtures.fakes import FAKE_DOI, fake_gateway, fake_scholar, make_settings
 
+CHECKS = {"science": True, "ethics": True, "security": True}
+
 SPEC = ResearchSpec(
     title="Duplicate-aware evaluation of IDS models on CIC-IDS2017",
     goal="Compare classical and gradient boosted classifiers for multiclass intrusion detection.",
@@ -89,8 +91,10 @@ def test_full_study(lab: Lab) -> None:
     assert report["release_ready"], report["flags"]
 
     with pytest.raises(Forbidden):
-        lab.release(outsider_as_member(lab, pid, outsider), pid, mversion)
-    final = lab.release(pi, pid, mversion)
+        lab.release(outsider_as_member(lab, pid, outsider), pid, mversion, CHECKS)
+    with pytest.raises(GateError):  # spec Step 22: no release without the review checklist
+        lab.release(pi, pid, mversion)
+    final = lab.release(pi, pid, mversion, CHECKS)
     assert final["stage"] == "released"
     audit_lines = (lab.settings.data_dir.parent / "audit.jsonl").read_text().splitlines()
     assert any(json.loads(line)["code"] == "ALLOWED" for line in audit_lines)

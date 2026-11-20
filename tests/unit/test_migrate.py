@@ -28,3 +28,17 @@ def test_every_stored_id_fits_its_column_on_postgresql(tmp_path: Path) -> None:
 
     longest = "6bc046c9:logistic_regression.false_positive_rate"
     assert len(longest) <= ClaimRecord.__table__.c.id.type.length  # type: ignore[attr-defined]
+
+
+def test_db_upgrade_stamps_existing_and_creates_new(tmp_path) -> None:
+    from cyberlab_common.db import Database
+    from cyberlab_common.migrate_schema import upgrade
+
+    old = Database(f"sqlite:///{(tmp_path / 'old.db').as_posix()}")
+    old.create_all()  # created before migrations existed
+    assert upgrade(old) == "0001_baseline"
+    new = Database(f"sqlite:///{(tmp_path / 'new.db').as_posix()}")
+    assert upgrade(new) == "0001_baseline"
+    from sqlalchemy import inspect
+
+    assert "projects" in inspect(new.engine).get_table_names()

@@ -15,46 +15,56 @@ from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_manuscript.evidence_text import lock_evidence
+from cyberlab_orchestrator.agents.storyline import (
+    evidence_brief,
+    outline,
+    referee,
+    related_themes,
+    revise,
+    sameness_flags,
+)
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_schemas import ResearchSpec, SplitSpec
 
 MAX_REVISIONS = 1
+REFEREE_ROUNDS = 2
 
 SYSTEM = (
-    "You are a scientific writing agent drafting an intrusion-detection paper. Rules, strictly:\n"
-    "1. NEVER type a number yourself (no percentages, counts, scores or sizes). Use only "
-    "placeholders: {{metric:MODEL:METRIC}} (METRIC in macro_f1, accuracy, balanced_accuracy, mcc, "
-    "false_positive_rate, detection_rate), {{ci:MODEL:macro_f1}} (the system replaces it with the full interval text including '95% CI' and the seed, so never write '95%', 'CI', brackets or a seed around it, and never write an interval yourself), {{fact:NAME}} for any method "
-    "detail listed under 'facts', and {{hyp:H1}} which renders as 'H1 (supported)' or 'H1 (not supported)', so write e.g. 'the results support {{hyp:H1}}'. MODEL must "
-    "be a real model name from 'models'.\n"
-    "2. Describe the method ONLY with what is in 'method_facts' and 'facts'. Do not invent "
-    "procedures (cross-validation, per-seed splits, tuning) that are not listed.\n"
-    "3. Do not claim comparisons that were not run. There was NO experiment on non-deduplicated "
-    "data, so do not say that de-duplication changed or lowered the scores.\n"
-    "4. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'. Say about a "
-    "paper only what its title and abstract support; name authors exactly as in 'authors'. In related_work, cite every paper at least once.\n"
-    "5. Be precise and modest; mention the dataset's known limitations.\n"
-    "6. Compare two models (outperforms, better than, comparable to, superior) ONLY for the "
-    "pairs listed in 'tested_comparisons'. Never call one model the best overall unless every "
-    "pair was tested. Describe other models by their own scores, without comparing.\n"
-    "7. To state a hypothesis result write only {{hyp:H1}}; never add your own 'not', "
-    "'rejected' or 'supported' next to it, because the placeholder already says the result.\n"
-    "8. Never put {{metric:...}} or {{ci:...}} in introduction, related_work or methodology; "
-    "in methodology name models in words (logistic regression, random forest, ...).\n"
-    "9. Use {{fact:NAME}} only with a NAME exactly as listed in 'facts'. The split was checked "
-    "and has zero train/test overlap rows, so do not suggest data leakage.\n"
-    "10. 'statistician_notes' are Proposed readings, not findings. Say 'high accuracy hides weak "
-    "minority-class performance' (or 'simplistic decision boundaries') only about models listed "
-    "in 'models_where_accuracy_exceeds_balanced_accuracy', and name them.\n"
-    "11. The 95% CI is a bootstrap over test rows for one seed; variation across seeds is the "
-    "± sd. Do not describe the CI as variation across seeds.\n"
-    "12. The abstract and conclusion must state the main findings with {{hyp:...}} and "
-    "{{metric:...}} placeholders; never write a bare H1/H2 with your own verdict.\n"
-    "13. Write for readers of the paper: never mention 'statistician notes', 'reviewer "
-    "feedback', placeholders or other internal tools. Every number must say which metric it "
-    "is (e.g. 'a macro-F1 of {{metric:xgboost:macro_f1}}').\n"
+    "You are an experienced researcher writing a paper on network intrusion detection for a "
+    "peer-reviewed venue. Write connected, precise prose: each paragraph makes one point and "
+    "leads to the next; vary sentence structure; prefer concrete statements about THIS study "
+    "over generic ones. Never use filler such as 'in today's digital landscape', 'plays a "
+    "crucial role', 'this paper aims to', 'it is worth noting', 'in conclusion'. Follow the "
+    "story outline you are given.\n"
+    "Facts, strictly:\n"
+    "1. NEVER type a number (no percentages, counts, scores, sizes or p-values). Numbers appear "
+    "only through placeholders: {{metric:MODEL:METRIC}} (METRIC in macro_f1, accuracy, "
+    "balanced_accuracy, mcc, false_positive_rate, detection_rate; renders as mean ± sd over "
+    "seeds), {{ci:MODEL:METRIC}} (renders the full 95% bootstrap interval text; do not add "
+    "'95%', 'CI' or brackets yourself), {{recall:MODEL:CLASS}} (per-class recall with its exact "
+    "interval and the number of test rows), {{fact:NAME}} for a name listed under 'facts', and "
+    "{{hyp:H1}} (renders as 'H1 (supported)' or 'H1 (not supported)'; never add your own verdict "
+    "next to it). MODEL must be a name from 'models'.\n"
+    "2. Describe the method only with 'method_facts' and 'facts'; never invent procedures.\n"
+    "3. Compare two models (better, outperforms, comparable) only for the pairs in "
+    "'tested_comparisons'; describe other models by their own scores. Never call a model the "
+    "best overall unless every pair was tested.\n"
+    "4. Do not explain WHY a model did better (its architecture, decision boundaries, ability to "
+    "capture interactions): the experiments measured scores, not causes. You may relate a "
+    "result to what cited papers report.\n"
+    "5. Cite with {{cite:KEY}} or {{cite:KEY1, KEY2}} using only keys in 'papers'; say about a "
+    "paper only what its title and abstract support. In related_work, organise the papers by "
+    "the themes in 'related_work_themes', compare their approaches with each other and with "
+    "this study, and cite every paper.\n"
+    "6. The split has zero train/test overlap rows: do not suggest data leakage.\n"
+    "7. The abstract and conclusion report the tested hypotheses with {{hyp:...}} and the "
+    "key numbers with placeholders. The discussion interprets the findings in 'evidence_brief' "
+    "(what they mean for practice, which result is surprising, how it relates to prior work) "
+    "instead of repeating the results list. Limitations are specific to this study.\n"
+    "8. Write for the paper's readers: never mention placeholders, briefs, outlines, reviewers "
+    "or internal tools.\n"
     "Output JSON with keys abstract, introduction, related_work, methodology, results, "
-    "discussion, limitations, conclusion (markdown strings)."
+    "discussion, limitations, conclusion (markdown strings, no headings)."
 )
 
 
@@ -296,12 +306,34 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         "statistician_notes": state.get("interpretation", {}),
         "reviewer_feedback": state.get("review_feedback", []),
     }
+    # Writing pipeline v2: evidence brief -> outline -> sections -> referee -> revision
+    brief = evidence_brief(analysis, facts)
+    context["evidence_brief"] = brief
+    context["related_work_themes"] = related_themes(cites, _evidence_matrix(ctx, pid))
+    context["outline"] = outline(ctx, pid, brief, context)
     sections = write_sections(ctx, pid, context)
+    corpus = _earlier_papers(ctx, pid)
+    for _round in range(REFEREE_ROUNDS):
+        issues = referee(ctx, pid, sections, brief) + sameness_flags(sections, corpus)
+        if not issues:
+            break
+        sections = revise(ctx, pid, SYSTEM, sections, issues, context)
+        with ctx.db.session() as s:
+            ctx.note(s, pid, "writing", "referee_round", {"round": _round + 1, "issues": issues})
     # Final revision: the deterministic guardrail removes anything still unsupported.
     final = state.get("revisions", 0) >= MAX_REVISIONS
-    md, report = build_manuscript(spec.title, sections, analysis, cites, "", guardrail=final)
+    models = sorted(
+        {
+            str(e["model"])
+            for e in ctx.llm.log
+            if e.get("project_id") == pid and e.get("provider") not in ("fake", None)
+        }
+    )
+    md, report = build_manuscript(
+        spec.title, sections, analysis, cites, "", guardrail=final, llm_models=models
+    )
     # Evidence statements are generated, never written by the model (see evidence_text).
-    md, dropped = lock_evidence(md, analysis, facts, prose)
+    md, dropped = lock_evidence(md, analysis, facts, prose, rich=True)
     if dropped:
         report.flag(
             "warning",
@@ -356,3 +388,31 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
 def _load_analysis(ctx: LabContext, pid: str, sha: str) -> dict[str, Any]:
     with ctx.db.session() as s:
         return dict(json.loads(ctx.store.path_for(s, pid, sha).read_text()))
+
+
+def _evidence_matrix(ctx: LabContext, pid: str) -> dict[str, dict[str, Any]]:
+    from cyberlab_common.db import AgentNote
+
+    with ctx.db.session() as s:
+        note = s.scalar(
+            select(AgentNote)
+            .where(AgentNote.project_id == pid, AgentNote.kind == "evidence_matrix")
+            .order_by(AgentNote.id.desc())
+        )
+        rows = (note.content.get("matrix") if note else None) or []
+    return {r["key"]: r for r in rows if isinstance(r, dict) and r.get("key")}
+
+
+def _earlier_papers(ctx: LabContext, pid: str, limit: int = 20) -> list[str]:
+    """Latest draft of other studies, for the sameness check."""
+    with ctx.db.session() as s:
+        rows = s.scalars(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id != pid)
+            .order_by(ManuscriptRecord.created_at.desc())
+            .limit(200)
+        )
+        latest: dict[str, str] = {}
+        for r in rows:
+            latest.setdefault(r.project_id, r.markdown)
+    return list(latest.values())[:limit]

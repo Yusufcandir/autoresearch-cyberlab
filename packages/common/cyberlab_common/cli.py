@@ -122,6 +122,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--alert", action="store_true", help="post problems to ALERT_WEBHOOK")
     p.set_defaults(func=_health_check)
 
+    p = sub.add_parser("db-upgrade", help="apply database schema migrations (Alembic)")
+    p.set_defaults(func=_db_upgrade)
+
     p = sub.add_parser(
         "migrate-db", help="copy every table from DATABASE_URL into another (empty) database"
     )
@@ -223,6 +226,13 @@ def _health_check(args: argparse.Namespace) -> int:
     if problems and args.alert and settings.alert_webhook:
         alert(settings.alert_webhook, problems, socket.gethostname())
     return 1 if any(r["level"] == "error" for r in problems) else 0
+
+
+def _db_upgrade(args: argparse.Namespace) -> int:
+    from cyberlab_common.migrate_schema import upgrade
+
+    print(f"database schema at revision {upgrade(_db())}")
+    return 0
 
 
 def _migrate_db(args: argparse.Namespace) -> int:

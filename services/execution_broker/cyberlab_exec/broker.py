@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import socket
@@ -451,6 +452,8 @@ class Broker:
                 manifest.project_id,
                 {"job_id": job_id, "run_id": run_id, "artifacts": artifacts, "error": error},
             )
+        if self.settings.mlflow_tracking_uri and receipt.get("status") == "succeeded":
+            _log_mlflow(self.settings.mlflow_tracking_uri, manifest, metrics, info, out)
         shutil.rmtree(out, ignore_errors=True)
 
 
@@ -533,3 +536,41 @@ def _lineage(
         "run_label": info.get("run_label", "confirmatory"),
         "hardware": {"device": info.get("device", "gpu" if manifest.use_gpu else "cpu")},
     }
+
+
+def _log_mlflow(
+    uri: str,
+    manifest: ExperimentManifest,
+    metrics: dict[str, Any],
+    info: dict[str, Any],
+    out: Path,
+) -> None:
+    """Mirror a finished run to MLflow (spec 4, 8.2): parameters, metrics, tuning trials and the
+    learning curve. The platform database stays the record of truth; MLflow is for browsing,
+    so a failure here never fails the run."""
+    try:
+        import mlflow
+
+        mlflow.set_tracking_uri(uri)
+        mlflow.set_experiment(f"cyberlab-{manifest.project_id}")
+        with mlflow.start_run(run_name=manifest.experiment_id):
+            mlflow.set_tags(
+                {
+                    "project_id": manifest.project_id,
+                    "protocol_version": str(manifest.protocol_version),
+                    "template": manifest.model.template,
+                    "run_label": str(info.get("run_label", "confirmatory")),
+                }
+            )
+            params = {k: str(v)[:250] for k, v in (info.get("params") or {}).items()}
+            mlflow.log_params({**params, "seed": manifest.seed})
+            mlflow.log_metrics(
+                {k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
+            )
+            for step in info.get("training_curve") or []:
+                mlflow.log_metric("val_loss", float(step["val_loss"]), step=int(step["epoch"]))
+            for name in ("tuning.json", "model_info.json"):
+                if (out / name).exists():
+                    mlflow.log_artifact(str(out / name))
+    except Exception:  # noqa: BLE001 - MLflow is optional
+        logging.getLogger(__name__).warning("MLflow logging failed", exc_info=True)

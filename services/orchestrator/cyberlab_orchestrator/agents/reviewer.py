@@ -481,7 +481,7 @@ def reviewer_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 facts, prose = method_facts(ctx, pid, analysis)
             except Exception:  # noqa: BLE001 - the method text is optional, results are not
                 facts, prose = None, None
-            markdown, dropped = lock_evidence(markdown, analysis, facts, prose)
+            markdown, dropped = lock_evidence(markdown, analysis, facts, prose, rich=True)
             for d in dropped:
                 flags.append(
                     {

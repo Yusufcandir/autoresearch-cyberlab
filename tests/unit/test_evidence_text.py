@@ -260,3 +260,21 @@ def test_untested_mechanism_explanations_are_dropped() -> None:
     ):
         assert forbidden(s, "", known), s
     assert forbidden("Tree ensembles are widely used in intrusion detection.", "", known) is None
+
+
+def test_docx_export_and_disclosure() -> None:
+    import io
+
+    from docx import Document
+
+    from cyberlab_manuscript.builder import disclosure
+    from cyberlab_manuscript.docx_export import markdown_to_docx
+
+    md = (
+        "# Title\n\n## Results\n\nScores are **means** over seeds.\n\n"
+        "| Model | Macro-F1 |\n|---|---|\n| xgboost | 0.9 |\n\n- one\n- two\n"
+    )
+    doc = Document(io.BytesIO(markdown_to_docx(md)))
+    assert any(p.text == "Title" for p in doc.paragraphs)
+    assert doc.tables and doc.tables[0].cell(1, 0).text == "xgboost"
+    assert "claude-opus-5-5" in disclosure(["claude-opus-5-5"])

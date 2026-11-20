@@ -29,6 +29,9 @@
       </select></div>
     <div><label for="gb">GPU budget (minutes)</label><input id="gb" name="gpu_budget_minutes" type="number" value="{{ f.gpu_budget_minutes or 480 }}" min="1"></div>
     <div><label for="lb">LLM token budget</label><input id="lb" name="llm_token_budget" type="number" value="{{ f.llm_token_budget or 1000000 }}" min="0" title="Gemini free tier and the local model cost nothing; this only stops runaway loops"></div>
+    <div><label for="ub">LLM spending limit (US$)</label><input id="ub" name="llm_usd_budget" type="number" step="0.5" value="{{ f.llm_usd_budget or 10 }}" min="0" title="Claude is paid per use; warnings at 50, 80 and 100%"></div>
+    <div><label for="dl">Deadline (optional)</label><input id="dl" name="deadline" type="date" value="{{ f.deadline or '' }}"></div>
+    <div><label for="of">Paper format</label><select id="of" name="output_format">{% for v, l in [("latex","LaTeX"),("word","Word"),("markdown","Markdown")] %}<option value="{{ v }}" {% if (f.output_format or 'latex') == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
   </div>
   <p class="muted">The agents will plan, review literature, propose a protocol and check the dataset. Nothing runs on the GPU until you approve the protocol.</p>
   <button type="submit">Start study</button>

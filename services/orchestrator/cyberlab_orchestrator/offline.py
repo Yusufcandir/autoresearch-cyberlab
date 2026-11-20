@@ -92,6 +92,22 @@ def offline_responder(task: str, system: str, prompt: str) -> str:
                 "recommended_followups": ["evaluate on a by-day split"],
             }
         )
+    if task == "writing.outline":
+        return json.dumps(
+            {
+                "main_claim": "[Offline] De-duplicated evaluation changes how models compare.",
+                "contribution": "[Offline] A leakage-free comparison with tested hypotheses.",
+                "introduction": ["context", "problem", "this study"],
+                "related_work": [],
+                "discussion": ["interpret F1", "operational meaning"],
+                "limitations": ["single dataset"],
+                "conclusion": "[Offline] Summary of the tested hypotheses.",
+            }
+        )
+    if task == "writing.referee":
+        return json.dumps({"issues": [], "verdict": "accept"})
+    if task == "writing.revise":
+        return json.dumps({})
     if task == "writing.draft":
         ctx = json.loads(prompt) if prompt.strip().startswith("{") else {}
         models = ctx.get("models") or ["xgboost"]

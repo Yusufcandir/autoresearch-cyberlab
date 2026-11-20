@@ -461,14 +461,16 @@ def manuscripts_create(
 
 
 @app.post("/api/v1/manuscripts/{mid}/release")
-def release(mid: str, me: PrincipalDep, lab: LabDep) -> dict[str, Any]:
+def release(
+    mid: str, me: PrincipalDep, lab: LabDep, checklist: dict[str, bool] | None = None
+) -> dict[str, Any]:
     with lab.db.session() as s:
         m = s.get(ManuscriptRecord, mid)
         if m is None:
             raise NotFoundOrForbidden(mid)
         require_project_role(s, me, m.project_id, "pi")
         pid, version = m.project_id, m.version
-    return lab.release(me, pid, version)
+    return lab.release(me, pid, version, checklist)
 
 
 # --------------------------------------------------------------------------- audit and events

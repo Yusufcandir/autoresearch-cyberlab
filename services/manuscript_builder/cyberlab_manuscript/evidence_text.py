@@ -530,14 +530,64 @@ def _prose_and_rest(body: str) -> tuple[str, str]:
     return (body, "") if idx < 0 else (body[:idx], body[idx:])
 
 
+# Rich mode (writing pipeline v2): in these sections the writer may state results and compare
+# models, because every number comes from a placeholder (the renderer rejects typed numbers)
+# and the consistency checks reject untested comparisons and contradicted hypotheses.
+RICH_SECTIONS = {"Abstract", "Discussion", "Conclusion", "Limitations"}
+_RENDERED_HYP = re.compile(r"\bH\d+ \((?:not )?supported\)")
+_VERDICT = re.compile(
+    r"hypothes\w*[^.]{0,80}\b(?:support|confirm|reject|refut|hold|true|false|valid)\w*|"
+    r"\b(?:support|confirm|reject|refut|validat|contradict)\w*[^.]{0,40}\bhypothes|"
+    r"\bp[- ]?values?\s*(?:of|=|<|>|was|were)",
+    re.I,
+)
+
+
+def forbidden_rich(sentence: str, context: str, known: list[str]) -> str | None:
+    """Rich-mode rule: no hand-written test verdicts and no untested mechanism stories."""
+    if _VERDICT.search(_RENDERED_HYP.sub("", sentence)) and not _RENDERED_HYP.search(sentence):
+        return "states a hypothesis verdict without the evidence placeholder"
+    if _MECHANISM.search(sentence):  # 'its ability to capture...', 'attributed to its ...'
+        return "explains a result with a model mechanism the study did not test"
+    return None
+
+
+def _states_all_hypotheses(text: str, analysis: dict[str, Any]) -> bool:
+    ids = [h["id"] for h in _tested_hyps(analysis)]
+    return bool(ids) and all(
+        re.search(rf"\b{re.escape(i)} \((?:not )?supported\)", text) for i in ids
+    )
+
+
+def _missing_operational(text: str, analysis: dict[str, Any]) -> str:
+    """The false-alarm and missed-class facts, unless the writer already discussed them."""
+    keep = []
+    for s in split_sentences(operational_text(analysis)):
+        if s.startswith("The false-positive rate") and re.search(
+            r"false[- ](?:positive|alarm)", text, re.I
+        ):
+            continue
+        if s.startswith("No model detected"):
+            missed = re.findall(r"detected any (.+?) test row", s)
+            if missed and all(
+                c.strip() in text for c in re.split(r",| and ", missed[0]) if c.strip()
+            ):
+                continue
+        keep.append(s)
+    return " ".join(keep)
+
+
 def lock_evidence(
     markdown: str,
     analysis: dict[str, Any],
     facts: dict[str, Any] | None = None,
     prose: list[str] | None = None,
+    rich: bool = False,
 ) -> tuple[str, list[dict[str, str]]]:
     """Make every evidence statement generated and every LLM sentence framing-only.
 
+    rich=True (writing pipeline v2) lets Abstract, Discussion, Conclusion and Limitations state
+    results through placeholders, checked by the consistency rules.
     Returns the new markdown and a list of {section, sentence, reason} that were dropped."""
     known = list(analysis.get("models", {}))
     dropped: list[dict[str, str]] = []
@@ -588,14 +638,29 @@ def lock_evidence(
                     continue
                 if name == "Related Work" and "[@" in s:
                     continue  # statements about cited papers are checked against their abstracts
-                why = issues.get(s) or forbidden(s, ctx, known)
+                why = issues.get(s) or (
+                    forbidden_rich(s, ctx, known)
+                    if rich and name in RICH_SECTIONS
+                    else forbidden(s, ctx, known)
+                )
                 if why:
                     drop.add(s)
                     dropped.append({"section": name, "sentence": s, "reason": why})
         kept = _rebuild(prose_part, drop).strip()
 
         # 3. Evidence statements are added where the paper needs them.
-        if name == "Abstract":
+        if rich and name in ("Abstract", "Conclusion") and _states_all_hypotheses(kept, analysis):
+            pass  # the writer already reported every tested hypothesis (from placeholders)
+        elif rich and name == "Discussion":
+            lead = [
+                p
+                for p in (untested_pairs_sentence(analysis), _missing_operational(kept, analysis))
+                if p
+            ]
+            if accuracy_gap_models(analysis) and not re.search(r"balanced accuracy", kept, re.I):
+                lead.append(gap_text(analysis))
+            kept = "\n\n".join(([kept] if kept else []) + lead)
+        elif name == "Abstract":
             kept = (kept + " " + findings_text(analysis)).strip()
         elif name == "Conclusion":
             sents = split_sentences(" ".join(kept.split()))

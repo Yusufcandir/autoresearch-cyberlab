@@ -6,29 +6,39 @@ the dataset, run experiments on the lab GPU, analyse the results and draft a pap
 figures. The PI stays in charge: nothing runs on the GPU before the PI approves the protocol,
 and nothing is released without the PI.
 
-**Datasets:** CIC-IDS2017 and UNSW-NB15 (chosen per study on the New study form).
-**LLMs:** Gemini API (free tier, public data only) with automatic fallback to a local
-**Ollama** model (`qwen2.5:14b-instruct`), which is also the only model a private study may use.
+**Datasets** (chosen per study): CIC-IDS2017, UNSW-NB15, CTU-13 (real botnet traffic), the
+NetFlow-v2 family (NF-UNSW-NB15-v2, NF-CSE-CIC-IDS2018-v2, NF-ToN-IoT-v2, NF-BoT-IoT-v2, with
+cross-dataset testing) and PhiUSIIL phishing URLs (text modality).
+**Models:** logistic regression, random forest, XGBoost, LightGBM, MLP; deep PyTorch models
+(ResNet-MLP, FT-Transformer, TabNet, 1D-CNN); TF-IDF text models. Optional Optuna tuning on the
+validation split only, with equal budgets per model.
+**LLMs:** Claude (Anthropic API) or Gemini, with automatic fallback to a local **Ollama** model
+(`qwen2.5:14b-instruct`), which is also the only model a private study may use. Spend is
+tracked in US dollars per study.
 
-## Status (14 Nov 2026)
+## Status (20 Nov 2026)
 
 - Running on the lab's GPU server (RTX 6000 Ada): PostgreSQL 16 in Docker, dashboard and
   worker as systemd user services, Ollama local model.
-- Studies run end to end on real data: two on CIC-IDS2017 (one released) and one on UNSW-NB15
-  with the official train/test split.
-- 133 automated tests pass (`bash scripts/check.sh`); 21 of the 22 acceptance tests are done.
+- Studies run end to end on real data (CIC-IDS2017, UNSW-NB15). The final-version features
+  (deep models, tuning, new datasets, text modality, Claude writing pipeline) are built and
+  tested on synthetic fixtures; the flagship study runs next on the server.
+- All automated tests pass (`bash scripts/check.sh`); 21 of the 22 acceptance tests are done.
   AT-13 needs an isolated VM, which the pilot scope excludes.
 
 ## Core rules (enforced in code, not in prompts)
 
 - **No invented numbers.** Every number in a manuscript (results, tables, statistics, method
-  facts, figures) is generated from stored, hashed per-row predictions. The LLM writes only
-  framing text; sentences that state results, compare models without a test, or guess at
-  untested mechanisms are removed by deterministic checks.
+  facts, figures) is rendered from stored, hashed per-row predictions; the writer can only use
+  placeholders, and a typed number is rejected. The writer plans a story from an evidence brief,
+  a referee pass criticises the draft and it is revised; sentences that compare models without a
+  test, contradict a hypothesis result or guess at untested mechanisms are removed, and wording
+  repeated from earlier papers is rewritten.
 - **No invented references.** Every reference must resolve to a real DOI with a matching title
   (Crossref/OpenAlex); off-topic search results are dropped.
-- **The PI decides.** Approvals are bound to the exact protocol hash. Model settings are fixed,
-  reviewed defaults; only the PI's comment can change them (no tuning on the test split).
+- **The PI decides.** Approvals are bound to the exact protocol hash. Model settings are
+  reviewed defaults or tuned on the validation split only; the test split is used once. Release
+  needs the PI and a science, ethics and security checklist.
 - **Leakage-safe data.** Duplicates and conflicting labels are removed before splitting; each
   split (stratified, by capture day, official partition) gets its own audited copy, and a test
   row may never appear in training.
@@ -64,8 +74,9 @@ from the recorded preprocessing and settings), Results (means ± sd over seeds, 
 CIs, per-class table, recall on the smallest classes, hypothesis table with Holm-adjusted p),
 three figures (CI plot, per-class recall, confusion matrix), Discussion (including false-positive
 rates and classes no model detected), Limitations (small-class caveat), Conclusion, Evidence
-hashes and verified References. Exports: Markdown, LaTeX zip (with figures and BibTeX), print
-view for PDF.
+hashes, an AI-use disclosure and verified References. Exports: Markdown, LaTeX zip (with
+figures and BibTeX), Word, print view for PDF. Protocol and draft versions can be compared side
+by side.
 
 ## Layout
 
@@ -103,11 +114,12 @@ bash scripts/check.sh              # lint, types, tests
 
 | Command | Purpose |
 |---|---|
-| `cyberlab dataset prepare --name cicids2017` / `--name unsw-nb15` | clean and verify a dataset once after placing its files |
+| `cyberlab dataset prepare --name <dataset>` | clean and verify a dataset once after placing its files (cicids2017, unsw-nb15, ctu13, nf-unsw-nb15-v2, nf-cse-cic-ids2018-v2, nf-ton-iot-v2, nf-bot-iot-v2, phishing-urls) |
 | `cyberlab health-check [--alert]` | disk, GPU, database, failed jobs, local model, backup age |
 | `cyberlab llm-check` | one test prompt through Gemini/Ollama |
 | `cyberlab restore-test` | restore the newest backup and re-verify every evidence hash |
 | `cyberlab plugin-selftest [--docker]` | run the capability plugins on their fixtures |
 | `cyberlab migrate-db` | copy all data into another database (SQLite to PostgreSQL) |
+| `cyberlab db-upgrade` | apply schema migrations (Alembic) after a code update |
 | `bash scripts/install_services.sh` | install serve, worker, Ollama, health and backup as user services |
 | `bash scripts/backup.sh` | backup (database dump + evidence), retention, optional off-site copy |

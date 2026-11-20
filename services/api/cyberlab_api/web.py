@@ -207,6 +207,9 @@ def new_project_post(
     dataset: str = Form("CIC-IDS2017"),
     gpu_budget_minutes: int = Form(120),
     llm_token_budget: int = Form(200000),
+    llm_usd_budget: float = Form(10.0),
+    deadline: str = Form(""),
+    output_format: str = Form("latex"),
     csrf: str = Form(),
     me: Principal | None = Depends(web_user),
     lab: Lab = Depends(lab_dep),
@@ -223,6 +226,9 @@ def new_project_post(
             dataset_hint=get_adapter(dataset).display,
             gpu_budget_minutes=gpu_budget_minutes,
             llm_token_budget=llm_token_budget,
+            llm_usd_budget=llm_usd_budget,
+            deadline=deadline or None,
+            output_format=output_format,
         )
     except ValueError as exc:
         # keep what the user typed so a validation error does not wipe the form
@@ -234,6 +240,9 @@ def new_project_post(
             "dataset": dataset,
             "gpu_budget_minutes": gpu_budget_minutes,
             "llm_token_budget": llm_token_budget,
+            "llm_usd_budget": llm_usd_budget,
+            "deadline": deadline,
+            "output_format": output_format,
         }
         return render(
             request,
@@ -389,6 +398,11 @@ def project_live(
         raise AuthError("not signed in")
     with lab.db.session() as s:
         require_project_role(s, me, pid)
+    return {"stamp": _live_stamp(lab, pid)}
+
+
+def _live_stamp(lab: Lab, pid: str) -> str:
+    with lab.db.session() as s:
         last = s.scalar(
             select(AuditEvent.id)
             .where(AuditEvent.project_id == pid)
@@ -401,7 +415,41 @@ def project_live(
             .order_by(JobRecord.updated_at.desc())
             .limit(1)
         )
-    return {"stamp": f"{last or 0}:{running.isoformat() if running else ''}"}
+    return f"{last or 0}:{running.isoformat() if running else ''}"
+
+
+@router.get("/projects/{pid}/events")
+def project_events(
+    pid: str, me: Principal | None = Depends(web_user), lab: Lab = Depends(lab_dep)
+) -> Response:
+    """Server-sent events (spec 10.1): the page is told when the study changed, instead of
+    polling. The stream ends after ten minutes; the browser reconnects on its own."""
+    import time
+
+    from fastapi.responses import StreamingResponse
+
+    if me is None:
+        raise AuthError("not signed in")
+    with lab.db.session() as s:
+        require_project_role(s, me, pid)
+
+    def stream() -> Any:
+        last = ""
+        end = time.monotonic() + 600
+        beat = 0.0
+        while time.monotonic() < end:
+            stamp = _live_stamp(lab, pid)
+            if stamp != last:
+                last = stamp
+                yield f"event: change\ndata: {stamp}\n\n"
+            elif time.monotonic() - beat > 15:
+                yield ": keep-alive\n\n"
+                beat = time.monotonic()
+            time.sleep(2)
+
+    return StreamingResponse(
+        stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"}
+    )
 
 
 @router.post("/projects/{pid}/approve")
@@ -437,13 +485,24 @@ def release_post(
     request: Request,
     version: int = Form(),
     csrf: str = Form(),
+    check_science: str = Form(""),
+    check_ethics: str = Form(""),
+    check_security: str = Form(""),
     me: Principal | None = Depends(web_user),
     lab: Lab = Depends(lab_dep),
 ) -> Response:
     if me is None:
         return _login_redirect()
     check_csrf(request, csrf, lab)
-    lab.release(me, pid, version)
+    checklist = {
+        "science": check_science == "on",
+        "ethics": check_ethics == "on",
+        "security": check_security == "on",
+    }
+    try:
+        lab.release(me, pid, version, checklist)
+    except GateError as exc:
+        return _message("Release not possible", str(exc), f"/projects/{pid}")
     return RedirectResponse(f"/projects/{pid}", status_code=303)
 
 
@@ -569,6 +628,18 @@ def download(
                 buf.getvalue(),
                 media_type="application/zip",
                 headers={"Content-Disposition": f'attachment; filename="{stem}-latex.zip"'},
+            )
+        if kind == "docx":
+            from cyberlab_manuscript.docx_export import markdown_to_docx
+
+            return Response(
+                markdown_to_docx(m.markdown),
+                media_type=(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                ),
+                headers={
+                    "Content-Disposition": f'attachment; filename="manuscript-v{m.version}.docx"'
+                },
             )
         if kind == "bib":
             body, ext = m.bibtex, "bib"
@@ -725,3 +796,60 @@ def admin_add_user(
     with lab.db.session() as s:
         create_user(s, username, password, role)
     return RedirectResponse("/admin", status_code=303)
+
+
+@router.get("/projects/{pid}/diff/{kind}", response_class=HTMLResponse)
+def diff_view(
+    pid: str,
+    kind: str,
+    a: int | None = None,
+    b: int | None = None,
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    """Version diff before approval or release (spec Step 22: version-diff approval)."""
+    import difflib
+    import re as _re
+
+    if me is None:
+        return _login_redirect()
+    if kind not in ("protocol", "manuscript"):
+        raise NotFoundOrForbidden(kind)
+    with lab.db.session() as s:
+        require_project_role(s, me, pid)
+        if kind == "protocol":
+            rows = {
+                r.version: json.dumps(r.body, indent=2, sort_keys=True, default=str)
+                for r in s.scalars(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+            }
+        else:
+            rows = {
+                r.version: _re.sub(r"\(data:image/png;base64,[^)]+\)", "(figure)", r.markdown)
+                for r in s.scalars(
+                    select(ManuscriptRecord).where(ManuscriptRecord.project_id == pid)
+                )
+            }
+    versions = sorted(rows)
+    if len(versions) < 2:
+        return _message(
+            "Nothing to compare", f"This study has only one {kind} version.", f"/projects/{pid}"
+        )
+    b = b if b in rows else versions[-1]
+    a = (
+        a
+        if a in rows
+        else versions[versions.index(b) - 1]
+        if versions.index(b) > 0
+        else versions[0]
+    )
+    table = difflib.HtmlDiff(wrapcolumn=90).make_table(
+        rows[a].splitlines(), rows[b].splitlines(), f"version {a}", f"version {b}", context=True
+    )
+    return HTMLResponse(
+        "<!doctype html><meta charset='utf-8'><title>Compare versions</title>"
+        "<style>body{font-family:system-ui;margin:1.5rem}table.diff{font-family:monospace;"
+        "font-size:12px;border-collapse:collapse}.diff_add{background:#d7f5dd}"
+        ".diff_chg{background:#fff3c4}.diff_sub{background:#ffd8d8}td{padding:0 .3rem}</style>"
+        f"<h1>{kind.title()}: version {a} versus {b}</h1>"
+        f"<p><a href='/projects/{pid}'>Back to the study</a></p>{table}"
+    )

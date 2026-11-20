@@ -159,7 +159,7 @@ def finalize(
         df[numeric] = df[numeric].apply(pd.to_numeric, errors="coerce")
         df[numeric] = df[numeric].replace([np.inf, -np.inf], np.nan)
     for c in text:
-        df[c] = df[c].astype("string").str.strip().replace("", pd.NA)
+        df[c] = df[c].astype("string").str.strip().mask(lambda v: v == "")
     n_bad = int(df[features].isna().any(axis=1).sum())
     df = df.dropna(subset=features)
     if numeric:
@@ -279,7 +279,7 @@ def manifest_summary(m: DatasetManifest) -> dict[str, Any]:
 def shortcut_scan(train: pd.DataFrame, features: list[str], top: int = 5) -> list[dict[str, Any]]:
     """Features whose value alone almost decides the class on the training rows (a leakage
     or shortcut warning, spec 13.2). Purity = share of rows whose value maps to one class."""
-    out = []
+    out: list[dict[str, Any]] = []
     n = len(train)
     if n == 0:
         return out
@@ -292,5 +292,5 @@ def shortcut_scan(train: pd.DataFrame, features: list[str], top: int = 5) -> lis
         counts = pd.crosstab(col, train["Class"])
         purity = float(counts.max(axis=1).sum() / n)
         out.append({"feature": f, "purity": round(purity, 4), "values": int(len(counts))})
-    out.sort(key=lambda r: -r["purity"])
-    return [r for r in out[:top] if r["purity"] >= 0.99]
+    out.sort(key=lambda r: -float(r["purity"]))
+    return [r for r in out[:top] if float(r["purity"]) >= 0.99]
