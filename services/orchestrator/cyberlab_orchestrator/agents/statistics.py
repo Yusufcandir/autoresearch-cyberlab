@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from cyberlab_manuscript.consistency import accuracy_gap_models
@@ -120,9 +121,22 @@ def run_validation(
             if r.experiment_id.startswith(f"p{protocol_version}-")
         ]
     adapter = get_adapter(body.get("dataset_id"))
-    prepared = prepared_dir_for(
-        adapter.root(ctx.settings.dataset_root), SplitSpec.model_validate(body.get("split", {}))
-    )
+    split = SplitSpec.model_validate(body.get("split", {}))
+    prepared = prepared_dir_for(adapter.root(ctx.settings.dataset_root), split)
+    if prepared.exists() and not (prepared / "data_preprocessing_audit.json").exists():
+        # prepared by an older version without the stage-by-stage audit: prepare this exact
+        # split again (deterministic, same rows) so the audit can be evaluated
+        from cyberlab_data import prepare_split
+
+        try:
+            prepare_split(
+                adapter,
+                ctx.settings.dataset_root,
+                split,
+                benign_cap=ctx.extra.get("benign_cap", 400_000),
+            )
+        except Exception as exc:  # noqa: BLE001 - the report then says NOT_EVALUATED
+            logging.getLogger(__name__).warning("re-preparing for the audit failed: %s", exc)
     report = generate_validation_report(analysis, body, runs, prepared)
     with tempfile.TemporaryDirectory() as tmp, ctx.db.session() as s:
         path = Path(tmp) / "scientific_validation_report.json"

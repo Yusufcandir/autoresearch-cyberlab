@@ -155,6 +155,7 @@ def test_full_study_on_unsw_nb15(lab: Lab) -> None:
         assert pv is not None
         assert pv.body["dataset_id"] == "unsw-nb15-v1"
         assert pv.body["split"]["strategy"] == "official"
+        pv_split = dict(pv.body["split"])
         cites = {c.doi: c.status for c in s.scalars(select(CitationRecord))}
         version, sha = pv.version, pv.sha256
     assert cites["10.1109/milcis.2015.7348942"] == "Verified"
@@ -174,6 +175,20 @@ def test_full_study_on_unsw_nb15(lab: Lab) -> None:
     assert "CIC-IDS2017" not in body and "Fwd Header" not in body
     assert "official" in md and "[citation needed]" not in md
     assert report["release_ready"], report["flags"]
+
+    # A split prepared by an older version has no preprocessing audit: a rewrite prepares that
+    # exact split again, so the audit is evaluated instead of NOT_EVALUATED.
+    from cyberlab_data import get_adapter, prepared_dir_for
+    from cyberlab_schemas import SplitSpec
+
+    split = SplitSpec.model_validate(pv_split)
+    audit_file = (
+        prepared_dir_for(get_adapter("unsw-nb15-v1").root(lab.settings.dataset_root), split)
+        / "data_preprocessing_audit.json"
+    )
+    audit_file.unlink()
+    lab.redraft(pi, pid)
+    assert audit_file.exists()
 
 
 def test_full_study_with_tuning(lab: Lab) -> None:

@@ -18,6 +18,7 @@ from cyberlab_data import (
     get_adapter,
     is_default_split,
     prepare_split,
+    prepared_dir_for,
 )
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_protocol import CompileError, compile_protocol
@@ -29,9 +30,14 @@ def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str 
     if is_default_split(protocol.split):
         return None
     rec_id = dataset_record_id(protocol.dataset_id, protocol.split)
+    adapter = get_adapter(protocol.dataset_id)
+    audited = (
+        prepared_dir_for(adapter.root(ctx.settings.dataset_root), protocol.split)
+        / "data_preprocessing_audit.json"
+    ).exists()
     with ctx.db.session() as s:
         rec = s.get(DatasetRecord, rec_id)
-        if rec is not None and rec.status == "verified":
+        if rec is not None and rec.status == "verified" and audited:
             return None
     try:
         adapter = get_adapter(protocol.dataset_id)
