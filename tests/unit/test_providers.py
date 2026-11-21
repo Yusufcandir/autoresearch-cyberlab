@@ -345,3 +345,42 @@ def test_gemini_rate_limit_moves_to_next_model_without_waiting(monkeypatch) -> N
     )
     res = p.generate("s", "p", json_mode=False, temperature=0)
     assert res.model == "flash-lite-b" and len(calls) == 2 and not slept
+
+
+def test_default_tries_every_gemini_model_then_local_and_retries_gemini_next_call(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+    from cyberlab_llm import LLMGateway
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+    tried: list[str] = []
+    down = {"on": True}
+
+    def gemini(req: httpx.Request) -> httpx.Response:
+        tried.append(req.url.path.split("/")[-1])
+        if down["on"]:
+            return httpx.Response(503, json={})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "g"}]}}]})
+
+    def ollama(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen2.5:14b-instruct"}]})
+        return httpx.Response(200, json={"message": {"content": "local"}})
+
+    g = GeminiProvider(
+        "k",
+        "a",
+        client=httpx.Client(transport=httpx.MockTransport(gemini)),
+        fallback_models=["b", "c"],
+    )
+    o = OllamaProvider(
+        "http://x",
+        "qwen2.5:14b-instruct",
+        client=httpx.Client(transport=httpx.MockTransport(ollama)),
+    )
+    gate = LLMGateway(g, o)  # defaults: no early handover, no cooldown
+    assert gate.complete("t", "s", "p").text == "local"
+    assert {t.split(":")[0] for t in tried} == {"a", "b", "c"}
+    down["on"] = False
+    assert gate.complete("t", "s", "p").text == "g"  # Gemini is tried again at once

@@ -453,10 +453,10 @@ class LLMGateway:
     # The Claude model chosen on the dashboard (None = CLAUDE_MODEL from the environment).
     model_lookup: Callable[[], str | None] | None = None
     # Seconds Gemini may keep retrying before a ready local model takes over (0 = never).
-    handover_seconds: float = 20.0
+    handover_seconds: float = 0.0
     # After Gemini fails once, stay on the local model this long instead of retrying Gemini
     # on every call (circuit breaker; 0 = always try Gemini first).
-    cooldown_seconds: float = 600.0
+    cooldown_seconds: float = 0.0
     log: list[dict[str, Any]] = field(default_factory=list)
     _cooldown_until: float = field(default=0.0, repr=False)
     last_error: str = ""  # why the cloud model was last given up on (shown with the fallback)
@@ -515,7 +515,7 @@ class LLMGateway:
                     )
                 elif self.handover_seconds > 0 and self._local_ready():
                     _status.deadline = time.monotonic() + self.handover_seconds
-                elif isinstance(self.local, OllamaProvider):
+                elif isinstance(self.local, OllamaProvider) and not self._local_ready():
                     # Say why there is no fallback, instead of silently retrying Gemini.
                     _status.suffix = (
                         f"No local fallback: Ollama is not reachable at {self.local.host} "

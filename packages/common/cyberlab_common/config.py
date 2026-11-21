@@ -50,10 +50,12 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-3.8-flash"
     # Tried in order when the main model is overloaded (HTTP 503/429) or times out.
     gemini_fallback_models: str = ""
-    # If the local Ollama model is ready, it takes over after Gemini has been busy this long.
-    gemini_handover_seconds: float = Field(default=20, ge=0)
-    # Once Gemini fails, stay on the local model this long before trying Gemini again.
-    gemini_cooldown_seconds: float = Field(default=600, ge=0)
+    # 0 (default): every Gemini model is tried before the local model takes over. A value > 0
+    # hands over to a ready local model after Gemini has been busy this many seconds.
+    gemini_handover_seconds: float = Field(default=0, ge=0)
+    # 0 (default): Gemini is tried again on every call. A value > 0 keeps later calls on the
+    # local model for this many seconds after Gemini failed.
+    gemini_cooldown_seconds: float = Field(default=0, ge=0)
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b-instruct"
     llm_timeout_seconds: float = Field(default=300, gt=0)
