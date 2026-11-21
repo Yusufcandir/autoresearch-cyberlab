@@ -132,6 +132,7 @@ def test_busy_gemini_hands_over_to_ready_local_model(monkeypatch) -> None:  # ty
     assert res.provider == "ollama" and res.text == "local ok"
     # every model has its own quota, so each is tried once, without waiting, before handover
     assert gemini_calls["n"] == 3
+    assert "429" in gate.last_error  # the reason is kept and shown with the fallback
 
 
 def test_gemini_breaker_keeps_later_calls_on_local_model(monkeypatch) -> None:  # type: ignore[no-untyped-def]

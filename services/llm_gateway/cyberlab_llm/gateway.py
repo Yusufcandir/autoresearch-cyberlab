@@ -459,6 +459,7 @@ class LLMGateway:
     cooldown_seconds: float = 600.0
     log: list[dict[str, Any]] = field(default_factory=list)
     _cooldown_until: float = field(default=0.0, repr=False)
+    last_error: str = ""  # why the cloud model was last given up on (shown with the fallback)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def _local_ready(self) -> bool:
@@ -507,8 +508,9 @@ class LLMGateway:
                     # Breaker is open: do not touch Gemini, stay on the local model.
                     provider = self.local
                     until = datetime.now() + timedelta(seconds=left)
+                    why = f" (last error: {self.last_error})" if self.last_error else ""
                     report_status(
-                        f"{label} unavailable; using the local model {self.local.model} "
+                        f"{label} unavailable{why}; using the local model {self.local.model} "
                         f"until {until:%H:%M}, then {label} is tried again"
                     )
                 elif self.handover_seconds > 0 and self._local_ready():
@@ -527,9 +529,14 @@ class LLMGateway:
                 result = provider.generate(full_system, redact(prompt), json_mode, temperature)
         except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
+                self.last_error = redact(str(primary_error))[:240]
+                logging.getLogger(__name__).warning(
+                    "%s failed, falling back to %s: %s", label, self.local.model, self.last_error
+                )
                 self._trip_breaker()
                 report_status(
-                    f"{label} unavailable; writing with the local model {self.local.model} on this server"
+                    f"{label} unavailable ({self.last_error}); writing with the local model "
+                    f"{self.local.model} on this server"
                 )
                 try:
                     result = self.local.generate(
