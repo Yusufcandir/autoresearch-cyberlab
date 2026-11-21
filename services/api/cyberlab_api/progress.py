@@ -257,7 +257,7 @@ def friendly_activity(events: list[AuditEvent], limit: int = 60) -> list[dict[st
             kind = "bad" if e.action.endswith(("failed", "blocked", "denied")) else "ok"
         else:
             continue
-        out.append({"ts": e.ts.strftime("%H:%M:%S"), "actor": e.actor, "text": text, "kind": kind})
+        out.append({"ts": local_time(e.ts), "actor": e.actor, "text": text, "kind": kind})
         if len(out) >= limit:
             break
     return out
@@ -415,3 +415,10 @@ def trust_summary(
         }
     )
     return rows
+
+
+def local_time(ts: datetime) -> str:
+    """Stored times are UTC; show them in the server's local time zone (the lab's clock)."""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone().strftime("%H:%M:%S")

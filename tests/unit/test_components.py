@@ -327,3 +327,13 @@ def test_more_hypothesis_verbs_are_tidied() -> None:
     assert (
         tidy_prose("corroborating H1 (supported) and H2 (supported).") == "corroborating H1 and H2."
     )
+
+
+def test_activity_times_are_shown_in_local_time() -> None:
+    from datetime import UTC, datetime
+
+    from cyberlab_api.progress import local_time
+
+    ts = datetime(2026, 11, 21, 8, 28, 5, tzinfo=UTC)
+    assert local_time(ts) == ts.astimezone().strftime("%H:%M:%S")
+    assert local_time(ts.replace(tzinfo=None)) == local_time(ts)  # naive values are UTC
