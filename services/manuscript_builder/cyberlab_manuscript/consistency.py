@@ -321,6 +321,18 @@ def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str
     per_class = {n: (models.get(n) or {}).get("per_class") or {} for n in models}
     classes = {c for pc in per_class.values() for c in pc}
     cited = [c for c in classes if re.search(rf"\b{re.escape(c)}\b", sentence, re.I)]
+    if not cited and re.search(
+        r"\b(rare|minority|small(?:er|est)?|infrequent|under-?represented)\b[^.]{0,30}"
+        r"\b(class|classes|attacks?)\b",
+        sentence,
+        re.I,
+    ):
+        support = {
+            c: (per_class.get(subject, {}).get(c) or {}).get("support") or 0
+            for c in classes
+            if c != "BENIGN"
+        }
+        cited = sorted(support, key=lambda c: support[c])[:3]  # the three smallest classes
     wrong = []
     for c in cited:
         mine = (per_class.get(subject, {}).get(c) or {}).get("recall")

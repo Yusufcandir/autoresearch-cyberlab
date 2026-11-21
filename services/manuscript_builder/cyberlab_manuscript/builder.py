@@ -39,7 +39,7 @@ ALLOWED_PLAIN_NUMBERS = {
 
 # counts the platform itself uses and reports in the Methodology (bootstrap resamples,
 # permutations)
-METHOD_COUNTS = {"500", "1000"}
+METHOD_COUNTS = {"500", "1000", "0.05"}  # 0.05: the significance level
 
 
 # '(Finding F-acc)', '(F1)', '[C012]', 'claim C003': labels from the evidence brief
@@ -53,7 +53,10 @@ INTERNAL_ID = re.compile(
 def strip_internal_ids(text: str) -> str:
     text = INTERNAL_ID.sub("", text)
     # the writer often names the hypothesis before its placeholder: 'H1 {{hyp:H1}}'
-    text = re.sub(r"\b(H\d+)\s+(?=\1\b)", "", text)
+    text = re.sub(r"\s*\((?:validation )?warning:\s*[a-z_ ]+\)", "", text, flags=re.I)
+    text = re.sub(r"\b(H\d+):?\s+(?=\1\b)", "", text)
+    # '**Tree Ensembles and Boosting:**' on its own line reads as a slide, not a paper
+    text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
 
 

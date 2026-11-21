@@ -356,7 +356,13 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 "manuscript_critique",
                 {"round": _round + 1, "rubric": review["rubric"], "issues": issues},
             )
-        unresolved = [i for i in review["issues"] if str(i.get("severity", "")).lower() == "major"]
+        unresolved = [
+            i
+            for i in review["issues"]
+            if str(i.get("severity", "")).lower() == "major"
+            # Methodology and Results are rebuilt from the evidence afterwards
+            and str(i.get("section", "")).lower() not in ("results", "methodology")
+        ]
         if not issues or _round == REFEREE_ROUNDS:
             break
         sections = revise(ctx, pid, SYSTEM, sections, issues, context)

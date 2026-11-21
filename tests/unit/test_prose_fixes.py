@@ -133,3 +133,27 @@ def test_budget_exhaustion_is_not_reported_as_no_sections() -> None:
 
     with pytest.raises(BudgetExceeded):
         write_sections(Ctx(), "p", {})  # type: ignore[arg-type]
+
+
+def test_v10_leftovers() -> None:
+    from cyberlab_orchestrator.agents.reviewer import _lower_first
+
+    assert strip_internal_ids("leakage (Validation Warning: session_identifiers). X") == (
+        "leakage. X"
+    )
+    assert strip_internal_ids("confirms it (H1: H1 (supported)).") == "confirms it (H1 supported)."
+    assert strip_internal_ids("**Deep Learning:**\nDeep models were used.") == (
+        "Deep models were used."
+    )
+    assert _lower_first("Recasting UNSW-NB15 data").startswith("recasting")
+    assert _lower_first("Outperformed Random Forest").startswith("outperformed")
+    assert _lower_first("Grid Search tuning").startswith("Grid Search")
+    assert "0.05" in evidence_integers({})
+
+
+def test_general_rare_class_claim_is_checked_on_the_smallest_classes() -> None:
+    a = _analysis()
+    for m in a["models"].values():
+        m["per_class"]["Fuzzers"] = {"recall": 0.7, "support": 4000}
+    claim = "LightGBM exhibits better recall for rare attack classes."
+    assert class_claim_problem(claim, a, ["random_forest", "lightgbm"])  # Backdoor: RF higher

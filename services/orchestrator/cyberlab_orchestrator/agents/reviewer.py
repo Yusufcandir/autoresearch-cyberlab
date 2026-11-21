@@ -286,7 +286,7 @@ def _matrix_sentence(name: str, key: str, row: dict[str, Any]) -> str | None:
     if finding and not re.search(r"\d", finding):
         link = ("and reported that", "finding that", "and observed that")[n % 3]
         f = _lower_first(finding)
-        if re.match(r"(?:[a-z]+ed|achieves?|shows?|provides?|outperforms?|improves?)\b", f):
+        if re.match(r"(?:[a-z]+ed|achieves?|shows?|provides?|outperforms?|improves?|yields?)\b", f):
             f = "the approach " + f  # 'yielded high accuracy' has no subject of its own
         text += f" {link} {f}"
     return text + "."
@@ -306,7 +306,8 @@ def _lower_first(s: str) -> str:
     """Lower-case a leading ordinary word, never an acronym or name (SMOTE, XGBoost, Pegasos-QSVC)."""
     w, _, rest = s.partition(" ")
     nxt = rest.split(" ", 1)[0]
-    if nxt[:1].isupper():  # 'Random Forest', 'Signal-processing Feature': a name, keep it
+    verb = re.fullmatch(r"[A-Z][a-z]+(?:ing|ed|es)", w) is not None  # Recasting, Outperformed
+    if nxt[:1].isupper() and not verb:  # 'Random Forest', 'Grid Search': a name, keep it
         return s
     if len(w) > 1 and w[0].isupper() and w[1:].islower() and w.isalpha():
         return s[0].lower() + s[1:]
