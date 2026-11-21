@@ -201,7 +201,10 @@ def plan(pid: str, me: PrincipalDep, lab: LabDep, bg: BackgroundTasks) -> dict[s
 
 @app.post("/api/v1/projects/{pid}/pause")
 def pause(pid: str, me: PrincipalDep, lab: LabDep, paused: bool = True) -> dict[str, Any]:
-    lab.pause(me, pid, paused)
+    if paused:
+        lab.pause(me, pid, True)
+    else:
+        lab.resume(me, pid)
     return {"paused": paused}
 
 

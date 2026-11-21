@@ -15,7 +15,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 from sqlalchemy import select
 
-from cyberlab_common.db import ApprovalRecord, ManuscriptRecord, ProtocolVersion, RunRecord, audit
+from cyberlab_common.db import (
+    ApprovalRecord,
+    ManuscriptRecord,
+    Project,
+    ProtocolVersion,
+    RunRecord,
+    audit,
+)
 from cyberlab_orchestrator.agents import (
     coding_agent,
     dataset_agent,
@@ -68,6 +75,12 @@ def build_graph(ctx: LabContext, checkpointer: Any) -> Any:
     def node(fn: Any, step: str) -> Any:
         def run(state: LabState) -> dict[str, Any]:
             pid = state["project_id"]
+            with ctx.db.session() as s:
+                p = s.get(Project, pid)
+                paused = bool(p is not None and p.paused)
+            if paused:
+                # Pause/Stop: hold here before the step starts; Resume continues from here.
+                interrupt({"gate": "paused", "title": "Study paused", "step": step})
             with ctx.db.session() as s:
                 audit(s, step, "agent.started", pid, {"step": step}, emit=False)
             t0 = time.monotonic()

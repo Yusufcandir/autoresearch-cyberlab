@@ -470,6 +470,94 @@ class Lab:
                 s, principal.username, "project.paused" if paused else "project.resumed", project_id
             )
 
+    # ------------------------------------------------------------- study controls
+    STOP_PREFIX = "Stopped by "
+
+    def stop(self, principal: Principal, project_id: str) -> int:
+        """Stop the study now: running and queued experiments are canceled and nothing new
+        starts. Resume continues from the last checkpoint and runs the canceled experiments
+        again. Returns how many jobs were canceled."""
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "researcher")
+            if p.stage == "released":
+                raise GateError("this study was already released")
+            p.paused = True
+            p.status_label = "Blocked"
+            p.blocked_reason = (
+                f"{self.STOP_PREFIX}{principal.username}. Resume continues from the last "
+                "checkpoint and runs the canceled experiments again."
+            )
+            jobs = list(
+                s.scalars(
+                    select(JobRecord).where(
+                        JobRecord.project_id == project_id,
+                        JobRecord.state.in_(["queued", "running"]),
+                    )
+                )
+            )
+            for job in jobs:
+                self.ctx.broker.cancel(s, job.id, principal.username)
+            audit(s, principal.username, "project.stopped", project_id, {"jobs": len(jobs)})
+            return len(jobs)
+
+    def resume(self, principal: Principal, project_id: str) -> dict[str, Any]:
+        """Continue a paused or stopped study from where it was held."""
+        from cyberlab_common.db import ArtifactRecord, RunRecord
+
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "researcher")
+            stopped = (p.blocked_reason or "").startswith(self.STOP_PREFIX)
+            p.paused = False
+            requeued = 0
+            if stopped:
+                p.blocked_reason = None
+                p.status_label = "Running"
+                for job in s.scalars(
+                    select(JobRecord).where(
+                        JobRecord.project_id == project_id, JobRecord.state == "canceled"
+                    )
+                ):
+                    for run in s.scalars(
+                        select(RunRecord).where(
+                            RunRecord.job_id == job.id, RunRecord.status != "succeeded"
+                        )
+                    ):
+                        for a in s.scalars(
+                            select(ArtifactRecord).where(ArtifactRecord.run_id == run.id)
+                        ):
+                            a.run_id = None
+                        s.delete(run)
+                    job.state, job.cancel_requested, job.failure_reason = "queued", False, None
+                    requeued += 1
+            audit(s, principal.username, "project.resumed", project_id, {"requeued_jobs": requeued})
+        pend = self.pending(project_id)
+        if pend and pend.get("gate") == "paused":
+            return self._invoke(project_id, Command(resume={"paused": "resumed"}))
+        if pend is None:
+            return self.start(project_id)  # e.g. a stopped step: retry from the checkpoint
+        return self.status(project_id)  # waiting for jobs or a PI decision
+
+    def restart(self, principal: Principal, project_id: str) -> dict[str, Any]:
+        """Run the whole study again from the first step (PI only). Earlier protocol and
+        manuscript versions stay in the record; identical experiments are reused."""
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "pi")
+            if p.stage == "released":
+                raise GateError("a released study cannot be restarted; start a new study")
+            for job in s.scalars(
+                select(JobRecord).where(
+                    JobRecord.project_id == project_id,
+                    JobRecord.state.in_(["queued", "running"]),
+                )
+            ):
+                self.ctx.broker.cancel(s, job.id, principal.username)
+            p.paused = False
+            p.stage, p.status_label, p.blocked_reason = "created", "Running", None
+            audit(s, principal.username, "project.restarted", project_id)
+        with self._project_lock(project_id):
+            self.saver.delete_thread(project_id)
+        return self._invoke(project_id, {"project_id": project_id})
+
     def delete_project(self, principal: Principal, project_id: str, confirm_title: str) -> None:
         """Soft-delete a study (NFR-009). PI only; the typed title must match; released
         studies are protected records and cannot be deleted. Queued jobs are canceled and
@@ -570,7 +658,11 @@ class Lab:
                     select(Project).where(Project.stage == "running", Project.deleted_at.is_(None))
                 )
             ]
+        with self.db.session() as s:
+            held = {p.id for p in s.scalars(select(Project).where(Project.paused.is_(True)))}
         for pid in waiting:
+            if pid in held:  # paused or stopped: the PI decides when it continues
+                continue
             pend = self.pending(pid)
             if pend and pend.get("gate") == "jobs":
                 with self.db.session() as s:

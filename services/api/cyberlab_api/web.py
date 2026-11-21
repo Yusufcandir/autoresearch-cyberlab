@@ -545,15 +545,65 @@ def release_post(
 def pause_post(
     pid: str,
     request: Request,
+    bg: BackgroundTasks,
     paused: str = Form(),
     csrf: str = Form(),
     me: Principal | None = Depends(web_user),
     lab: Lab = Depends(lab_dep),
 ) -> Response:
+    """Pause: nothing new starts (no experiment, no AI step); running experiments finish.
+    Resume: continue from where the study was held (also after Stop)."""
     if me is None:
         return _login_redirect()
     check_csrf(request, csrf, lab)
-    lab.pause(me, pid, paused == "yes")
+    if paused == "yes":
+        lab.pause(me, pid, True)
+    else:
+        with lab.db.session() as s:
+            require_project_role(s, me, pid, "researcher")
+        bg.add_task(_safe, lab.resume, me, pid)
+    return RedirectResponse(f"/projects/{pid}", status_code=303)
+
+
+@router.post("/projects/{pid}/stop")
+def stop_post(
+    pid: str,
+    request: Request,
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    """Stop now: running and queued experiments are canceled; Resume runs them again."""
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    try:
+        lab.stop(me, pid)
+    except GateError as exc:
+        return _message("Cannot stop", str(exc), f"/projects/{pid}")
+    return RedirectResponse(f"/projects/{pid}", status_code=303)
+
+
+@router.post("/projects/{pid}/restart")
+def restart_post(
+    pid: str,
+    request: Request,
+    bg: BackgroundTasks,
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    """Run the whole study again from the first step (PI only)."""
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    with lab.db.session() as s:
+        p = require_project_role(s, me, pid, "pi")
+        if p.stage == "released":
+            return _message(
+                "Cannot restart", "A released study cannot be restarted.", f"/projects/{pid}"
+            )
+    bg.add_task(_safe, lab.restart, me, pid)
     return RedirectResponse(f"/projects/{pid}", status_code=303)
 
 

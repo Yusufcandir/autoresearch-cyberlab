@@ -406,3 +406,50 @@ def test_identical_experiments_are_reused(lab: Lab) -> None:
         ]
     reused = [r for r in runs if r.receipt.get("reused_from_run")]
     assert len(runs) == 16 and len(reused) == 12  # only the 4 runs with seed 45 were trained
+
+
+def test_pause_stop_resume_restart(lab: Lab) -> None:
+    pi, _ = _users(lab)
+    pid = lab.create_project(pi, SPEC)
+
+    # Pause before the study starts: the first step holds instead of running.
+    lab.pause(pi, pid, True)
+    status = lab.start(pid)
+    assert status["pending"]["gate"] == "paused", status
+    status = lab.resume(pi, pid)
+    assert status["pending"]["gate"] == "A", status
+
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+
+    # Stop: every job is canceled and the finished-jobs check does not advance the study.
+    assert lab.stop(pi, pid) == 12
+    lab.worker_tick(wait=True)
+    status = lab.status(pid)
+    assert status["paused"] and status["blocked_reason"].startswith("Stopped by prof")
+    assert status["pending"]["gate"] == "jobs"
+    with lab.db.session() as s:
+        states = {j.state for j in s.scalars(select(JobRecord).where(JobRecord.project_id == pid))}
+    assert states == {"canceled"}
+
+    # Resume: the canceled experiments run again and the study reaches the release gate.
+    lab.resume(pi, pid)
+    for _ in range(14):
+        lab.worker_tick(wait=True)
+    status = lab.status(pid)
+    assert status["pending"] and status["pending"]["gate"] == "D", status
+    with lab.db.session() as s:
+        runs = list(s.scalars(select(RunRecord).where(RunRecord.project_id == pid)))
+    assert len(runs) == 12 and all(r.status == "succeeded" for r in runs)
+
+    # Restart: back to the first step; a new protocol version waits for approval.
+    status = lab.restart(pi, pid)
+    assert status["pending"]["gate"] == "A", status
+    with lab.db.session() as s:
+        versions = list(
+            s.scalars(select(ProtocolVersion.version).where(ProtocolVersion.project_id == pid))
+        )
+    assert max(versions) == version + 1

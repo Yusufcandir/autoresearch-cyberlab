@@ -103,7 +103,22 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
   </ol>
 </div>
 
-{% if status.blocked_reason %}<div class="card" style="border-color:color-mix(in srgb,var(--blocked) 40%,var(--line))"><h2 class="error">Stopped</h2><p>{{ status.blocked_reason }}</p>
+{% if role in ['pi','researcher'] and status.stage not in ['released','created'] %}
+<div class="card" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px">
+  <strong style="margin-right:4px">Study controls</strong>
+  {% set stopped = (status.blocked_reason or '').startswith('Stopped by ') %}
+  {% if status.paused %}
+    <form method="post" action="/projects/{{ project.id }}/pause"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="small" name="paused" value="no">▶ Resume</button></form>
+  {% else %}
+    <form method="post" action="/projects/{{ project.id }}/pause"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small" name="paused" value="yes" title="Nothing new starts (no experiment, no AI step). Experiments already running finish.">⏸ Pause</button></form>
+    <form method="post" action="/projects/{{ project.id }}/stop" onsubmit="return confirm('Stop now? Running experiments are canceled. Resume runs them again.')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small" title="Cancel running and queued experiments now and hold the study.">⏹ Stop</button></form>
+  {% endif %}
+  {% if role == 'pi' %}<form method="post" action="/projects/{{ project.id }}/restart" onsubmit="return confirm('Restart the whole study from the first step? Experiments in progress are canceled. Earlier versions stay in the record.')"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small" title="Run the whole study again from the first step.">↺ Restart from the beginning</button></form>{% endif %}
+  <span class="muted">{% if stopped %}Stopped. Resume continues from the last checkpoint and reruns the canceled experiments.{% elif status.paused %}Paused: nothing new starts until you resume.{% else %}Pause holds the study before its next step; Stop also cancels running experiments.{% endif %}</span>
+</div>
+{% endif %}
+
+{% if status.blocked_reason and not status.blocked_reason.startswith('Stopped by ') %}<div class="card" style="border-color:color-mix(in srgb,var(--blocked) 40%,var(--line))"><h2 class="error">Stopped</h2><p>{{ status.blocked_reason }}</p>
   {% if 'BudgetExceeded' in status.blocked_reason %}
     <p class="muted">The study used its whole AI token budget. Gemini's free tier and the local model cost nothing; the budget only stops runaway loops. Raise it to continue.</p>
     {% if role == 'pi' %}<form method="post" action="/projects/{{ project.id }}/budget" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><input type="hidden" name="csrf" value="{{ csrf }}">
@@ -256,8 +271,6 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 <td>{{ j.manifest.max_minutes }} min</td>
 <td>{% if j.state in ['queued','running'] and role in ['pi','researcher'] %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small">Cancel</button></form>{% endif %}</td></tr>{% endfor %}</table>
 {% else %}<div class="empty"><span class="icon">⚙️</span>No experiments yet. They are created only after the PI approves the protocol.</div>{% endif %}
-{% if role in ['pi','researcher'] %}<form method="post" action="/projects/{{ project.id }}/pause" style="margin-top:14px"><input type="hidden" name="csrf" value="{{ csrf }}">
-  {% if status.paused %}<button class="secondary" name="paused" value="no">▶ Resume study</button>{% else %}<button class="secondary" name="paused" value="yes">⏸ Pause (no new jobs start)</button>{% endif %}</form>{% endif %}
 </div></section>
 
 <!-- ============================== RESULTS -->
