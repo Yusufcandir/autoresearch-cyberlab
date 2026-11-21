@@ -148,6 +148,22 @@ class GeminiProvider:
         self.model = model
         self.models = [model, *[m for m in (fallback_models or []) if m and m != model]]
         self.client = client or httpx.Client(timeout=timeout)
+        # model -> monotonic time until which it goes to the back of the line (it just failed)
+        self._rested: dict[str, float] = {}
+
+    # how long a model that just failed is tried last instead of first
+    REST_SECONDS = {429: 60.0, 500: 30.0, 503: 30.0, 0: 60.0}
+
+    def _order(self) -> list[str]:
+        """Configured order, but models that failed in the last minute go to the back, so the
+        next call starts with one that is working instead of the same busy model."""
+        now = time.monotonic()
+        fresh = [m for m in self.models if self._rested.get(m, 0.0) <= now]
+        tired = sorted(
+            (m for m in self.models if self._rested.get(m, 0.0) > now),
+            key=lambda m: self._rested[m],
+        )
+        return fresh + tired
 
     def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
         """Try the main model, then each fallback model when Gemini is overloaded or slow."""
@@ -163,8 +179,9 @@ class GeminiProvider:
         # Each model is tried once and any failure moves straight on to the next one (each has
         # its own quota and load). Only a lone model with no fallbacks is retried after a pause.
         attempts = 2 if len(self.models) == 1 else 1
-        for i, model in enumerate(self.models):
-            nxt = self.models[i + 1] if i + 1 < len(self.models) else None
+        order = self._order()
+        for i, model in enumerate(order):
+            nxt = order[i + 1] if i + 1 < len(order) else None
             r: httpx.Response | None = None
             for attempt in range(attempts):
                 try:
@@ -200,6 +217,8 @@ class GeminiProvider:
                         continue
                 break
             if r is None or r.status_code in (429, 500, 503):
+                code = 0 if r is None else r.status_code
+                self._rested[model] = time.monotonic() + self.REST_SECONDS[code]
                 if nxt:
                     why = (
                         "did not answer"

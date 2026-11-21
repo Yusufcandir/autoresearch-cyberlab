@@ -407,3 +407,26 @@ def test_busy_gemini_model_is_skipped_without_waiting(monkeypatch) -> None:  # t
     )
     res = p.generate("s", "p", json_mode=False, temperature=0)
     assert res.model == "free" and len(calls) == 3 and not slept
+
+
+def test_busy_model_goes_to_the_back_for_the_next_calls(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        model = req.url.path.split("/")[-1].split(":")[0]
+        calls.append(model)
+        if model == "a":
+            return httpx.Response(503, json={})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    p = GeminiProvider(
+        "k", "a", client=httpx.Client(transport=httpx.MockTransport(handler)), fallback_models=["b"]
+    )
+    p.generate("s", "p", json_mode=False, temperature=0)
+    assert calls == ["a", "b"]
+    calls.clear()
+    p.generate("s", "p", json_mode=False, temperature=0)
+    assert calls == ["b"]  # the busy model is not asked first again right away
