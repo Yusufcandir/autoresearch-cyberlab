@@ -157,3 +157,25 @@ def test_general_rare_class_claim_is_checked_on_the_smallest_classes() -> None:
         m["per_class"]["Fuzzers"] = {"recall": 0.7, "support": 4000}
     claim = "LightGBM exhibits better recall for rare attack classes."
     assert class_claim_problem(claim, a, ["random_forest", "lightgbm"])  # Backdoor: RF higher
+
+
+def test_v12_claims_are_checked() -> None:
+    from cyberlab_manuscript.consistency import (
+        NOVELTY,
+        OVERFIT,
+        tested_pair_called_untested,
+    )
+    from cyberlab_orchestrator.agents.reviewer import _lower_first
+
+    known = ["lightgbm", "random_forest", "resnet_mlp"]
+    tested = {frozenset(("lightgbm", "random_forest"))}
+    wrong = (
+        "LightGBM had a higher mean macro-F1 than Random Forest, but the difference was not "
+        "tested for significance."
+    )
+    assert tested_pair_called_untested(wrong, known, tested)
+    right = "LightGBM versus the ResNet-MLP was not tested for significance."
+    assert tested_pair_called_untested(right, known, tested) is None
+    assert NOVELTY.search("this study uniquely evaluates LightGBM")
+    assert OVERFIT.search("indicating overfitting to the majority class")
+    assert _lower_first("Signal-processing feature construction").startswith("signal-processing")

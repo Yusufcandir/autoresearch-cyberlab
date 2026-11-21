@@ -381,6 +381,40 @@ def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str])
     return None
 
 
+NOT_TESTED = re.compile(
+    r"\b(?:not|never)\s+(?:been\s+|statistically\s+)?tested\b|\buntested\b|"
+    r"\bno (?:significance|statistical) test\b|\bnot tested for significance\b",
+    re.I,
+)
+# 'this study uniquely evaluates', 'the first study to': a novelty claim the platform cannot check
+NOVELTY = re.compile(
+    r"\b(uniquely|for the first time|the first (?:study|work|paper|to)|novel(?:ty)?|"
+    r"no (?:prior|previous) (?:study|work)|unlike (?:all|any) (?:prior|previous))\b",
+    re.I,
+)
+# overfitting needs a train/test comparison, which a test-set accuracy gap does not show
+OVERFIT = re.compile(r"\boverfit\w*|\bover-fit\w*", re.I)
+
+
+def tested_pair_called_untested(
+    sentence: str, known: list[str], tested: set[frozenset[str]]
+) -> str | None:
+    if not NOT_TESTED.search(sentence):
+        return None
+    named = list(dict.fromkeys(n for _, n in mentions(sentence, known)))
+    hit = [
+        f"{a} vs {b}"
+        for i, a in enumerate(named)
+        for b in named[i + 1 :]
+        if frozenset((a, b)) in tested
+    ]
+    if not hit or len(named) > 2 and "not tested" not in sentence.lower():
+        return None
+    return "says a difference was not tested, but this pair was tested: " + ", ".join(hit).replace(
+        "_", " "
+    )
+
+
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
     known = list(analysis.get("models", {}))
     tested = {
@@ -442,6 +476,28 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     sent,
                     "RESULT_IN_METHOD",
                     f"a measured score appears in {name}; scores belong in Results",
+                )
+                continue
+            called_untested = tested_pair_called_untested(sent, known, tested)
+            if called_untested and name not in ("Results", "Methodology"):
+                add(name, sent, "TESTED_CALLED_UNTESTED", called_untested)
+                continue
+            if name not in ("Related Work", "Results", "Methodology") and NOVELTY.search(sent):
+                add(
+                    name,
+                    sent,
+                    "NOVELTY_CLAIM",
+                    "claims novelty ('uniquely', 'the first') that the literature search does "
+                    "not establish",
+                )
+                continue
+            if name not in ("Related Work", "Results", "Methodology") and OVERFIT.search(sent):
+                add(
+                    name,
+                    sent,
+                    "OVERFIT_CLAIM",
+                    "infers overfitting, which needs training-versus-test scores; the stored "
+                    "evidence has test scores only",
                 )
                 continue
             wrong_fpr = fpr_claim_problem(sent, analysis, known)

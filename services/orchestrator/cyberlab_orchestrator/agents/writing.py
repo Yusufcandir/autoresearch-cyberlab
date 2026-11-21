@@ -381,6 +381,20 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     # Evidence statements are generated, never written by the model (see evidence_text).
     md, dropped = lock_evidence(md, analysis, facts, prose, rich=True)
     md = link_author_year(strip_internal_ids(md), cites)
+    if unresolved:
+        # The critic read the draft before the evidence lock replaced or removed sentences;
+        # ask once more on the final text so the warning only lists problems still there.
+        from cyberlab_manuscript.consistency import sections as md_sections
+
+        final_sections = {
+            n.lower().replace(" ", "_"): b for n, b in md_sections(md.split("\n## Evidence")[0])
+        }
+        unresolved = [
+            i
+            for i in critique(ctx, pid, final_sections, brief)["issues"]
+            if str(i.get("severity", "")).lower() == "major"
+            and str(i.get("section", "")).lower() not in ("results", "methodology")
+        ]
     if unresolved:  # the critic still finds major problems: stop for the authors
         report.flag(
             "warning",

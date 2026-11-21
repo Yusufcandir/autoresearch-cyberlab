@@ -306,10 +306,13 @@ def _lower_first(s: str) -> str:
     """Lower-case a leading ordinary word, never an acronym or name (SMOTE, XGBoost, Pegasos-QSVC)."""
     w, _, rest = s.partition(" ")
     nxt = rest.split(" ", 1)[0]
-    verb = re.fullmatch(r"[A-Z][a-z]+(?:ing|ed|es)", w) is not None  # Recasting, Outperformed
+    # Recasting, Outperformed, Signal-processing: ordinary words, not names
+    verb = re.fullmatch(r"[A-Z][a-z]+(?:-[a-z]+)*(?:ing|ed|es)?", w) is not None and (
+        w.endswith(("ing", "ed", "es")) or "-" in w
+    )
     if nxt[:1].isupper() and not verb:  # 'Random Forest', 'Grid Search': a name, keep it
         return s
-    if len(w) > 1 and w[0].isupper() and w[1:].islower() and w.isalpha():
+    if len(w) > 1 and w[0].isupper() and w[1:].islower() and w.replace("-", "").isalpha():
         return s[0].lower() + s[1:]
     return s
 
