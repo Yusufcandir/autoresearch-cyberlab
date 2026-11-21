@@ -160,9 +160,13 @@ class GeminiProvider:
             body["generationConfig"]["responseMimeType"] = "application/json"
         t0 = time.monotonic()
         problems: list[str] = []
-        for model in self.models:
+        # Each model is tried once and any failure moves straight on to the next one (each has
+        # its own quota and load). Only a lone model with no fallbacks is retried after a pause.
+        attempts = 2 if len(self.models) == 1 else 1
+        for i, model in enumerate(self.models):
+            nxt = self.models[i + 1] if i + 1 < len(self.models) else None
             r: httpx.Response | None = None
-            for attempt in range(2):
+            for attempt in range(attempts):
                 try:
                     # With a local model waiting, never let one slow Gemini request outlast
                     # the handover deadline (the client's own timeout can be minutes).
@@ -180,36 +184,31 @@ class GeminiProvider:
                     problems.append(f"{model}: {type(exc).__name__}")
                     if _handover_due():
                         raise LLMError("Gemini did not answer in time") from exc
-                    report_status(f"{model} did not answer in time; retrying")
                     r = None
-                    time.sleep(3)
+                    if attempt + 1 < attempts:
+                        report_status(f"{model} did not answer in time; retrying")
+                        time.sleep(3)
                     continue
-                if r.status_code == 429:
-                    # Free-tier quotas are per model (requests per minute and per day): waiting
-                    # rarely helps, the next model has its own quota, so move on at once.
-                    problems.append(f"{model}: HTTP 429")
-                    break
-                if r.status_code in (500, 503):  # overloaded
+                if r.status_code in (429, 500, 503):
                     problems.append(f"{model}: HTTP {r.status_code}")
-                    busy = "has reached its rate limit" if r.status_code == 429 else "is busy"
-                    if _handover_due():
-                        raise LLMError(f"Gemini {model} {busy} (HTTP {r.status_code})")
-                    report_status(
-                        f"Gemini {model} {busy} (HTTP {r.status_code}); waiting and retrying"
-                    )
-                    time.sleep(5 * (attempt + 1))
-                    continue
+                    # a rate limit costs no time, so the next model is still tried
+                    if r.status_code != 429 and _handover_due():
+                        raise LLMError(f"Gemini busy ({'; '.join(problems[-3:])})")
+                    if attempt + 1 < attempts and r.status_code != 429:
+                        report_status(f"Gemini {model} is busy (HTTP {r.status_code}); retrying")
+                        time.sleep(5)
+                        continue
                 break
             if r is None or r.status_code in (429, 500, 503):
-                if r is not None and r.status_code == 429 and model != self.models[-1]:
-                    nxt = self.models[self.models.index(model) + 1]
-                    report_status(f"Gemini {model} has reached its rate limit; switching to {nxt}")
-                    continue
-                if _handover_due():
-                    raise LLMError(f"Gemini busy ({'; '.join(problems[-3:])})")
-                if model != self.models[-1]:
-                    nxt = self.models[self.models.index(model) + 1]
-                    report_status(f"Gemini {model} unavailable; switching to {nxt}")
+                if nxt:
+                    why = (
+                        "did not answer"
+                        if r is None
+                        else "has reached its rate limit"
+                        if r.status_code == 429
+                        else f"is busy (HTTP {r.status_code})"
+                    )
+                    report_status(f"Gemini {model} {why}; switching to {nxt}")
                 continue  # next model
             if r.status_code != 200:
                 problems.append(f"{model}: HTTP {r.status_code} {redact(r.text[:200])}")

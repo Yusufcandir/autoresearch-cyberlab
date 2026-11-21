@@ -384,3 +384,26 @@ def test_default_tries_every_gemini_model_then_local_and_retries_gemini_next_cal
     assert {t.split(":")[0] for t in tried} == {"a", "b", "c"}
     down["on"] = False
     assert gate.complete("t", "s", "p").text == "g"  # Gemini is tried again at once
+
+
+def test_busy_gemini_model_is_skipped_without_waiting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+
+    slept: list[float] = []
+    monkeypatch.setattr(gw.time, "sleep", slept.append)
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.path)
+        if "busy" in str(req.url):
+            return httpx.Response(503, json={})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    p = GeminiProvider(
+        "k",
+        "busy-a",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        fallback_models=["busy-b", "free"],
+    )
+    res = p.generate("s", "p", json_mode=False, temperature=0)
+    assert res.model == "free" and len(calls) == 3 and not slept
