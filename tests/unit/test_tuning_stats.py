@@ -125,3 +125,55 @@ def test_ablation_and_robustness_params(tmp_path: Path) -> None:
         f.startswith("Flow") for f in info["ablation_dropped_features"]
     )
     assert info["robustness_test_noise_sd"] == 0.5 and info["run_label"] == "confirmatory"
+
+
+def test_parallel_seeds_share_one_tuning_search(tmp_path: Path, monkeypatch) -> None:
+    """Seeds of one model start together; only one may run the search, the rest reuse it."""
+    import threading
+
+    from cyberlab_data import prepare, write_fixture
+    from cyberlab_tabular import templates
+    from cyberlab_tabular.templates import run_experiment
+
+    write_fixture(tmp_path / "raw", rows_per_class=60)
+    prep = prepare(tmp_path, SplitSpec())
+    monkeypatch.setenv("CYBERLAB_TUNING_CACHE", str(tmp_path / "tuning"))
+    searches: list[int] = []
+    real = templates._search
+
+    def counted(*a, **kw):  # type: ignore[no-untyped-def]
+        searches.append(1)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(templates, "_search", counted)
+    base = ExperimentManifest(
+        experiment_id="p1-lr-s42",
+        project_id="proj",
+        protocol_version=1,
+        protocol_sha256="c" * 64,
+        dataset_id="cicids2017-mlcsv-v1",
+        model=ModelSpec(name="lr", template="logistic_regression", role="baseline"),
+        seed=42,
+        label_scheme="multiclass",
+        split=SplitSpec(),
+        risk_tier="T1",
+        max_minutes=5,
+        tuning=TuningSpec(trials=3),
+    )
+    threads = [
+        threading.Thread(
+            target=run_experiment,
+            args=(
+                base.model_copy(update={"seed": s, "experiment_id": f"p1-lr-s{s}"}),
+                prep.root,
+                tmp_path / f"out{s}",
+            ),
+        )
+        for s in (42, 43, 44)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(searches) == 1
+    assert not list((tmp_path / "tuning").glob("*.lock"))

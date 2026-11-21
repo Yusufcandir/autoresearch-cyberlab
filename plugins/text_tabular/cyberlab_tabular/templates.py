@@ -13,7 +13,8 @@ import json
 import os
 import platform
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -409,11 +410,8 @@ def tune(
 
     Cached per (protocol, model), so the other seeds of the same model reuse the same tuned
     settings instead of searching again."""
-    import optuna
-
     spec = manifest.tuning
     assert spec is not None
-    tmpl = manifest.model.template
     cache_dir = os.environ.get("CYBERLAB_TUNING_CACHE")
     key = (
         f"{manifest.project_id}-p{manifest.protocol_version}-"
@@ -422,6 +420,54 @@ def tune(
     cache = Path(cache_dir) / f"{key}.json" if cache_dir else None
     if cache is not None and cache.exists():
         return {**json.loads(cache.read_text()), "reused": True}
+    if cache is not None:
+        # The seeds of one model start in parallel. Only the first one searches; the others
+        # wait for its result instead of each running the same search (3x the CPU, slower).
+        with _tuning_lock(cache.with_suffix(".lock"), spec.timeout_minutes * 60 + 600):
+            if cache.exists():
+                return {**json.loads(cache.read_text()), "reused": True}
+            return _search(manifest, x_train, y_train, x_val, y_val, cache)
+    return _search(manifest, x_train, y_train, x_val, y_val, None)
+
+
+@contextmanager
+def _tuning_lock(path: Path, max_wait: float) -> Iterator[None]:
+    """Exclusive lock by O_EXCL file creation. A lock older than max_wait is treated as left
+    behind by a crashed job and taken over."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(fd, str(os.getpid()).encode())
+            os.close(fd)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > max_wait:
+                    path.unlink(missing_ok=True)
+                    continue
+            except FileNotFoundError:
+                continue
+            time.sleep(2)
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _search(
+    manifest: ExperimentManifest,
+    x_train: pd.DataFrame,
+    y_train: np.ndarray,
+    x_val: pd.DataFrame,
+    y_val: np.ndarray,
+    cache: Path | None,
+) -> dict[str, Any]:
+    import optuna
+
+    spec = manifest.tuning
+    assert spec is not None
+    tmpl = manifest.model.template
     xs, ys = _subsample(x_train, y_train, spec.max_train_rows, spec.sampler_seed)
     trials: list[dict[str, Any]] = []
 
