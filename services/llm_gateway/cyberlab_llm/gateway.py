@@ -422,6 +422,9 @@ class OllamaProvider:
             ],
             "stream": False,
             "options": {"temperature": temperature, "num_ctx": self.num_ctx},
+            # reasoning models (qwen3, deepseek-r1) would otherwise put a long <think> block
+            # in front of the answer, which breaks JSON replies and costs minutes per call
+            "think": False,
         }
         if json_mode:
             body["format"] = "json"
@@ -433,8 +436,10 @@ class OllamaProvider:
         if r.status_code != 200:
             raise LLMError(f"ollama HTTP {r.status_code}: {r.text[:300]}")
         data = r.json()
+        text = data.get("message", {}).get("content", "")
+        text = re.sub(r"(?s)<think>.*?</think>\s*", "", text)  # older Ollama ignores "think"
         return LLMResult(
-            text=data.get("message", {}).get("content", ""),
+            text=text,
             provider=self.name,
             model=self.model,
             prompt_tokens=int(data.get("prompt_eval_count", 0)),

@@ -69,3 +69,23 @@ def test_ollama_sends_the_context_window() -> None:
     )
     p.generate("s", "p", False, 0.2)
     assert seen["options"]["num_ctx"] == 16384
+
+
+def test_ollama_reasoning_models_answer_without_a_think_block() -> None:
+    import json
+
+    from cyberlab_llm import OllamaProvider
+
+    sent: dict = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(req.content))
+        return httpx.Response(
+            200, json={"message": {"content": '<think>plan {x}</think>\n{"ok": true}'}}
+        )
+
+    p = OllamaProvider(
+        "http://x", "qwen3:32b", client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    res = p.generate("s", "p", True, 0.2)
+    assert sent["think"] is False and res.json() == {"ok": True}
