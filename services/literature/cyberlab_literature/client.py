@@ -69,8 +69,23 @@ def _abstract_from_index(idx: dict[str, list[int]] | None) -> str | None:
     return " ".join(words[i] for i in sorted(words))
 
 
+def _names(raw: Any) -> list[str]:
+    """Author names from a registry list; blank or missing names are dropped."""
+    return [n.strip() for n in raw if isinstance(n, str) and n.strip()][:12]
+
+
+def _first_year(date_parts: Any) -> int | None:
+    """Crossref 'date-parts' is [[year, month, day]] but may be [], [[]] or [[None]]."""
+    try:
+        year = date_parts[0][0]
+    except (IndexError, KeyError, TypeError):
+        return None
+    return year if isinstance(year, int) else None
+
+
 def citation_key(p: Paper) -> str:
-    first = p.authors[0].split()[-1] if p.authors else "anon"
+    names = _names(p.authors)
+    first = names[0].split()[-1] if names else "anon"
     word = next((w for w in _norm_title(p.title).split() if len(w) > 3), "paper")
     key = f"{first}{p.year or 'nd'}{word}"
     return re.sub(r"[^A-Za-z0-9]", "", unicodedata.normalize("NFKD", key))
@@ -132,7 +147,7 @@ class ScholarlyClient:
                     title=_clean(w.get("title")) or "",
                     doi=doi,
                     year=w.get("year"),
-                    authors=[a.get("name", "") for a in (w.get("authors") or [])[:12]],
+                    authors=_names(a.get("name") for a in (w.get("authors") or [])),
                     venue=_clean(w.get("venue")),
                     abstract=_clean(w.get("abstract")),
                     cited_by=int(w.get("citationCount") or 0),
@@ -148,9 +163,9 @@ class ScholarlyClient:
             title=_clean(w.get("display_name") or w.get("title")) or "",
             doi=normalize_doi(w.get("doi")),
             year=w.get("publication_year"),
-            authors=[
-                a.get("author", {}).get("display_name", "") for a in w.get("authorships", [])[:12]
-            ],
+            authors=_names(
+                (a.get("author") or {}).get("display_name") for a in w.get("authorships") or []
+            ),
             venue=_clean(loc.get("display_name")),
             abstract=_abstract_from_index(w.get("abstract_inverted_index")),
             cited_by=int(w.get("cited_by_count") or 0),
@@ -163,15 +178,15 @@ class ScholarlyClient:
         r = self.client.get(CROSSREF + d, params=self.params)
         if r.status_code == 200:
             m = r.json().get("message", {})
-            year = (m.get("issued", {}).get("date-parts") or [[None]])[0][0]
+            year = _first_year((m.get("issued") or {}).get("date-parts"))
             return Paper(
                 title=_clean((m.get("title") or [""])[0]) or "",
                 doi=d,
                 year=year,
-                authors=[
-                    f"{a.get('given', '')} {a.get('family', '')}".strip()
-                    for a in m.get("author", [])[:12]
-                ],
+                authors=_names(
+                    f"{a.get('given') or ''} {a.get('family') or a.get('name') or ''}"
+                    for a in m.get("author") or []
+                ),
                 venue=_clean((m.get("container-title") or [None])[0]),
                 source="crossref",
             )
