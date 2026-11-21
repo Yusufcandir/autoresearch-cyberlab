@@ -124,6 +124,43 @@ class ScholarlyClient:
         r.raise_for_status()
         return [self._from_openalex(w) for w in r.json().get("results", [])]
 
+    def snowball(self, dois: list[str], limit: int = 25) -> list[Paper]:
+        """Backward snowballing: the papers that the given papers cite (OpenAlex
+        referenced_works). Results are candidates and are verified like any other paper."""
+        ids: list[str] = []
+        for doi in dois:
+            d = normalize_doi(doi)
+            if not d:
+                continue
+            try:
+                r = self.client.get(f"{OPENALEX}/doi:{d}", params=self.params)
+            except httpx.HTTPError:
+                continue
+            if r.status_code != 200:
+                continue
+            for w in (r.json().get("referenced_works") or [])[:40]:
+                wid = str(w).rsplit("/", 1)[-1]
+                if wid and wid not in ids:
+                    ids.append(wid)
+        out: list[Paper] = []
+        for i in range(0, min(len(ids), 150), 50):
+            try:
+                r = self.client.get(
+                    OPENALEX,
+                    params={
+                        "filter": "openalex_id:" + "|".join(ids[i : i + 50]),
+                        "per-page": "50",
+                        **self.params,
+                    },
+                )
+            except httpx.HTTPError:
+                break
+            if r.status_code != 200:
+                break
+            out += [self._from_openalex(w) for w in r.json().get("results", [])]
+        out.sort(key=lambda p: -p.cited_by)
+        return out[:limit]
+
     def search_semantic_scholar(self, query: str, limit: int = 10) -> list[Paper]:
         """Second search source (professor's plan, Step 4.1). Results are only candidates:
         each is verified against Crossref/OpenAlex by its DOI like any other paper."""

@@ -221,6 +221,16 @@ def get_adapter(name_or_id: str | None) -> DatasetAdapter:
     return CIC
 
 
+def benchmark_split(dataset_id: str, split: Any) -> Any:
+    """A benchmark dataset uses the study's split when it supports it, else its own default."""
+    from cyberlab_schemas import SplitSpec
+
+    adapter = get_adapter(dataset_id)
+    if split.strategy in adapter.split_strategies and split.strategy != "cross_dataset":
+        return split
+    return SplitSpec(strategy=adapter.default_split)
+
+
 def prepare_split(
     adapter: DatasetAdapter,
     dataset_root: Path,

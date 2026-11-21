@@ -83,8 +83,16 @@ def compile_protocol(
     *,
     max_job_minutes: int,
     use_gpu: bool,
+    extra_datasets: list[tuple[str, SplitSpec, DatasetManifest | None]] | None = None,
 ) -> list[ExperimentManifest]:
+    """Benchmark protocols also get one experiment per extra dataset; their ids end in
+    '@<dataset id>' so every dataset's runs stay apart."""
     reasons: list[str] = []
+    for ds_id, _split, man in extra_datasets or []:
+        if man is None:
+            reasons.append(f"benchmark dataset {ds_id} is not prepared")
+        elif man.status != "verified":
+            reasons.append(f"benchmark dataset {ds_id} blocked: {man.blocked_reasons}")
     if approval is None:
         reasons.append("protocol has no PI approval (gate A)")
     else:
@@ -124,22 +132,25 @@ def compile_protocol(
                 reasons.append(f"{h.id} compares unknown model {side.strip()!r}")
     if reasons:
         raise CompileError(reasons)
+    targets: list[tuple[str, SplitSpec, str]] = [(protocol.dataset_id, protocol.split, "")]
+    targets += [(d, sp, f"@{d}") for d, sp, _ in extra_datasets or []]
     return [
         ExperimentManifest(
-            experiment_id=f"p{protocol.version}-{m.name}-s{seed}",
+            experiment_id=f"p{protocol.version}-{m.name}-s{seed}{suffix}",
             project_id=protocol.project_id,
             protocol_version=protocol.version,
             protocol_sha256=protocol.sha256,
-            dataset_id=protocol.dataset_id,
+            dataset_id=ds_id,
             model=m,
             seed=seed,
             label_scheme=protocol.label_scheme,
-            split=protocol.split,
+            split=split,
             risk_tier=protocol.risk_tier,
             max_minutes=min(protocol.gpu_budget_minutes, max_job_minutes),
             use_gpu=use_gpu and m.template in GPU_TEMPLATES,
             tuning=protocol.tuning,
         )
+        for ds_id, split, suffix in targets
         for m in protocol.models
         for seed in protocol.seeds
     ]

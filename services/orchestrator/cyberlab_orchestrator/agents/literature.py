@@ -12,7 +12,6 @@ from cyberlab_common.db import CitationRecord
 from cyberlab_literature import Paper, citation_key
 from cyberlab_llm.gateway import wrap_untrusted
 from cyberlab_orchestrator.context import LabContext
-from cyberlab_orchestrator.datasets import project_adapter
 
 SYSTEM = (
     "You are a literature review agent. Build an evidence matrix ONLY from the verified paper "
@@ -38,15 +37,17 @@ def relevance(p: Paper) -> int:
 
 
 def literature_agent(
-    ctx: LabContext, state: dict[str, Any], max_papers: int = 12
+    ctx: LabContext, state: dict[str, Any], max_papers: int | None = None
 ) -> dict[str, Any]:
     pid = state["project_id"]
+    max_papers = max_papers or ctx.settings.literature_max_papers
     ctx.authorize("literature", "literature_search", "T0", pid)
     found: dict[str, Paper] = {}
     errors: list[str] = []
-    for q in state.get("search_queries", [])[:5]:
+    per_query = max(10, min(25, max_papers // 2))
+    for q in state.get("search_queries", [])[:8]:
         try:
-            for p in ctx.scholar.search(q, limit=10):
+            for p in ctx.scholar.search(q, limit=per_query):
                 if p.doi and p.doi not in found:
                     found[p.doi] = p
         except httpx.HTTPError as exc:
@@ -57,6 +58,14 @@ def literature_agent(
                     found[p.doi] = p
         except (httpx.HTTPError, ValueError) as exc:
             errors.append(f"Semantic Scholar search failed for {q!r}: {exc}")
+    # backward snowballing from the most cited on-topic results: the papers they build on
+    seeds = sorted((p for p in found.values() if relevance(p) > 0), key=lambda p: -p.cited_by)[:5]
+    try:
+        for p in ctx.scholar.snowball([x.doi for x in seeds if x.doi], limit=30):
+            if p.doi and p.doi not in found:
+                found[p.doi] = p
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        errors.append(f"reference-list search failed: {exc}")
     relevant = [p for p in found.values() if relevance(p) > 0]
     if len(found) != len(relevant):
         errors.append(
@@ -64,25 +73,31 @@ def literature_agent(
         )
     # most on-topic first, then most cited
     ranked = sorted(relevant, key=lambda p: (-relevance(p), -p.cited_by))[:max_papers]
-    adapter = project_adapter(ctx, pid)
-    dataset_paper = Paper(
-        title=adapter.paper["title"],
-        doi=adapter.info.citation_doi,
-        year=adapter.paper["year"],
-        authors=list(adapter.paper["authors"]),
-        venue=adapter.paper["venue"],
-    )
+    from cyberlab_orchestrator.datasets import study_adapters
+
+    # every dataset the study uses is cited by its own paper (benchmark studies use several)
+    dataset_papers = {
+        a.paper["key"]: Paper(
+            title=a.paper["title"],
+            doi=a.info.citation_doi,
+            year=a.paper["year"],
+            authors=list(a.paper["authors"]),
+            venue=a.paper["venue"],
+        )
+        for a in study_adapters(ctx, pid)
+    }
+    paper_key = {id(p): k for k, p in dataset_papers.items()}
     ctx.authorize("literature", "citation_verify", "T0", pid)
     verified: list[Paper] = []
     keys: list[str] = []
     with ctx.db.session() as s:
-        for p in [dataset_paper, *ranked]:
+        for p in [*dataset_papers.values(), *ranked]:
             try:
                 v = ctx.scholar.verify(p)
             except httpx.HTTPError as exc:
                 p.status, p.verification_note = "Unverified", str(exc)
                 v = p
-            key = adapter.paper["key"] if p is dataset_paper else citation_key(v)
+            key = paper_key.get(id(p)) or citation_key(v)
             if s.scalar(
                 select(CitationRecord).where(
                     CitationRecord.project_id == pid, CitationRecord.key == key
@@ -116,11 +131,21 @@ def literature_agent(
         )
         for k, p in zip(keys, verified, strict=False)
     )
-    matrix = ctx.llm.complete_json(
-        "literature.matrix", SYSTEM, records or "No verified papers.", project_id=pid
-    )
+    # the evidence matrix in batches of 10 papers, so long lists stay within the model's context
+    blocks = records.split("\n\n") if records else []
+    rows: list[Any] = []
+    summaries: list[str] = []
+    matrix: dict[str, Any] = {}
+    for i in range(0, max(len(blocks), 1), 10):
+        part = "\n\n".join(blocks[i : i + 10]) or "No verified papers."
+        got = ctx.llm.complete_json("literature.matrix", SYSTEM, part, project_id=pid)
+        got = got if isinstance(got, dict) else {}
+        rows += got.get("matrix", []) if isinstance(got.get("matrix"), list) else []
+        if isinstance(got.get("summary"), str):
+            summaries.append(got["summary"])
+        matrix = {**got, **matrix}
+    matrix["summary"] = " ".join(summaries)
     # Hallucination guard: keep only matrix rows about papers we actually verified.
-    rows = matrix.get("matrix", []) if isinstance(matrix.get("matrix"), list) else []
     kept = [r for r in rows if isinstance(r, dict) and r.get("key") in keys]
     matrix["matrix"], matrix["dropped_unverified_rows"] = kept, len(rows) - len(kept)
     with ctx.db.session() as s:

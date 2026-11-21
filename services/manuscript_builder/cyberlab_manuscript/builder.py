@@ -540,6 +540,78 @@ def _n(v: Any) -> str:
     return f"{v:,}" if isinstance(v, int) else str(v)
 
 
+def benchmark_datasets_table(analysis: dict[str, Any]) -> str:
+    b = analysis.get("benchmark") or {}
+    rows = []
+    for ds_id, v in (b.get("per_dataset") or {}).items():
+        d = v.get("dataset") or (analysis.get("dataset") if ds_id == b["datasets"][0] else {})
+        d = d or {}
+        sc = d.get("split_counts") or {}
+        rows.append(
+            f"| {d.get('name') or ds_id} | {_n(d.get('n_rows_clean'))} | "
+            f"{_n(d.get('n_duplicates_removed'))} | {_n(sc.get('train'))} | {_n(sc.get('test'))} | "
+            f"{d.get('split_overlap_rows', 0)} |"
+        )
+    if not rows:
+        return ""
+    return (
+        "| Dataset | Rows after cleaning | Removed (duplicates/conflicts) | Train | Test | "
+        "Train/test overlap |\n|---|---|---|---|---|---|\n" + "\n".join(rows)
+    )
+
+
+def benchmark_table(analysis: dict[str, Any]) -> str:
+    """Models x datasets on the primary metric (mean ± sd over seeds) and the average rank."""
+    b = analysis.get("benchmark") or {}
+    if not b.get("datasets"):
+        return ""
+    metric = b.get("metric", "macro_f1")
+    datasets = b["datasets"]
+    from cyberlab_data import get_adapter
+
+    heads = [get_adapter(d).display for d in datasets]
+    ranks = (b.get("ranking") or {}).get("average_rank") or {}
+    models = list((b["per_dataset"][datasets[0]].get("models") or {}).keys())
+    lines = [
+        "| Model | " + " | ".join(heads) + (" | Average rank |" if ranks else " |"),
+        "|---|" + "---|" * len(heads) + ("---|" if ranks else ""),
+    ]
+    for m in models:
+        cells = []
+        for d in datasets:
+            agg = ((b["per_dataset"][d].get("models") or {}).get(m) or {}).get("aggregate") or {}
+            v = agg.get(metric) or {}
+            cells.append(f"{v['mean']:.4f} ± {v.get('sd', 0):.4f}" if "mean" in v else "–")
+        rank = f" | {ranks[m]:.2f}" if m in ranks else (" | –" if ranks else "")
+        lines.append(f"| {m} | " + " | ".join(cells) + rank + " |")
+    return "\n".join(lines)
+
+
+def benchmark_tests_table(analysis: dict[str, Any]) -> str:
+    b = analysis.get("benchmark") or {}
+    from cyberlab_data import get_adapter
+
+    rows = []
+    for d in b.get("datasets", [])[1:]:
+        for h in (b["per_dataset"].get(d) or {}).get("hypotheses", []):
+            if "p_holm" not in h:
+                continue
+            p = h["test"]["p_value"]
+            rows.append(
+                f"| {get_adapter(d).display} | {h['id']} | {h['a']} > {h['b']} ({h.get('metric')}) "
+                f"| {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
+                f"{'< 0.001' if p < 0.001 else f'{p:.4f}'} | "
+                f"{'< 0.001' if h['p_holm'] < 0.001 else format(h['p_holm'], '.4f')} | "
+                f"{h['result']} |"
+            )
+    if not rows:
+        return ""
+    return (
+        "| Dataset | Hypothesis | Comparison | Means | Paired test p (one-sided) | "
+        "Holm-adjusted p | Result |\n|---|---|---|---|---|---|---|\n" + "\n".join(rows)
+    )
+
+
 def dataset_section(analysis: dict[str, Any]) -> str:
     ds = analysis.get("dataset") or {}
     if not ds:
@@ -703,6 +775,15 @@ def build_manuscript(
                 ),
                 "",
             ]
+            if dt := benchmark_datasets_table(analysis):
+                out += [
+                    numbered(
+                        "table_datasets",
+                        "All datasets of the benchmark after cleaning and splitting.",
+                        dt,
+                    ),
+                    "",
+                ]
         if key == "limitations" and (note := small_class_note(analysis)):
             out += [note, ""]
         if key == "limitations" and (vnote := validation_note(analysis)):
@@ -733,6 +814,28 @@ def build_manuscript(
                 ),
                 "",
             ]
+            if bt := benchmark_table(analysis):
+                out += [
+                    "### Results across datasets",
+                    "",
+                    numbered(
+                        "table_benchmark",
+                        "Primary metric per model and dataset (means and standard deviations "
+                        "over seeds) and the average rank across datasets (1 = best).",
+                        bt,
+                    ),
+                    "",
+                ]
+                if tt := benchmark_tests_table(analysis):
+                    out += [
+                        numbered(
+                            "table_benchmark_tests",
+                            "The stated hypotheses repeated on the other datasets (secondary "
+                            "tests, Holm-adjusted across them).",
+                            tt,
+                        ),
+                        "",
+                    ]
             from cyberlab_manuscript.figures import _primary_metric, figures_markdown
 
             metric = _primary_metric(analysis)

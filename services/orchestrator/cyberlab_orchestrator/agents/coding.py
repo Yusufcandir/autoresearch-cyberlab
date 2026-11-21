@@ -14,6 +14,7 @@ from sqlalchemy import select
 from cyberlab_common.db import ApprovalRecord, DatasetRecord, ProtocolVersion, audit
 from cyberlab_data import (
     DatasetBlocked,
+    benchmark_split,
     dataset_record_id,
     get_adapter,
     is_default_split,
@@ -22,7 +23,50 @@ from cyberlab_data import (
 )
 from cyberlab_orchestrator.context import LabContext
 from cyberlab_protocol import CompileError, compile_protocol
-from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol
+from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol, SplitSpec
+
+
+def ensure_dataset_prepared(
+    ctx: LabContext, pid: str, dataset_id: str, split: SplitSpec
+) -> tuple[str | None, DatasetManifest | None]:
+    """Prepare and audit one dataset for one split (once); return (blocking reason, manifest)."""
+    rec_id = dataset_record_id(dataset_id, split)
+    adapter = get_adapter(dataset_id)
+    audited = (
+        prepared_dir_for(adapter.root(ctx.settings.dataset_root), split)
+        / "data_preprocessing_audit.json"
+    ).exists()
+    with ctx.db.session() as s:
+        rec = s.get(DatasetRecord, rec_id)
+        if rec is not None and rec.status == "verified" and audited:
+            return None, DatasetManifest.model_validate(rec.manifest)
+    try:
+        prepared = prepare_split(
+            adapter,
+            ctx.settings.dataset_root,
+            split,
+            benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
+        )
+    except DatasetBlocked as exc:
+        return f"{adapter.display} blocked: " + "; ".join(exc.reasons), None
+    m = prepared.manifest
+    with ctx.db.session() as s:
+        rec = s.get(DatasetRecord, rec_id)
+        if rec is None:
+            s.add(
+                DatasetRecord(
+                    id=rec_id,
+                    name=f"{m.name} [{split.strategy} split]",
+                    manifest=m.model_dump(mode="json"),
+                    status=m.status,
+                )
+            )
+        else:
+            rec.manifest, rec.status = m.model_dump(mode="json"), m.status
+        audit(s, "coding_agent", f"dataset.{m.status}", pid, {"dataset": dataset_id})
+    if m.status != "verified":
+        return f"{adapter.display} blocked: " + "; ".join(m.blocked_reasons), m
+    return None, m
 
 
 def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str | None:
@@ -45,7 +89,7 @@ def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str 
             adapter,
             ctx.settings.dataset_root,
             protocol.split,
-            benign_cap=ctx.extra.get("benign_cap", 400_000),
+            benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
         )
     except DatasetBlocked as exc:
         return "dataset for this split blocked: " + "; ".join(exc.reasons)
@@ -105,6 +149,14 @@ def coding_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     with ctx.db.session() as s:
         ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
         dataset = DatasetManifest.model_validate(ds.manifest) if ds else None
+    extra: list[tuple[str, SplitSpec, DatasetManifest | None]] = []
+    for ds_id in protocol.benchmark_datasets or []:
+        split = benchmark_split(ds_id, protocol.split)
+        error, man = ensure_dataset_prepared(ctx, pid, ds_id, split)
+        if error:
+            ctx.set_stage(pid, "dataset_blocked", "Blocked", error)
+            return {"compile_error": [error]}
+        extra.append((ds_id, split, man))
     try:
         manifests = compile_protocol(
             protocol,
@@ -112,6 +164,7 @@ def coding_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             dataset,
             max_job_minutes=ctx.settings.gpu_job_max_minutes,
             use_gpu=ctx.settings.use_gpu,
+            extra_datasets=extra,
         )
     except CompileError as exc:
         ctx.set_stage(pid, "compile_blocked", "Blocked", "; ".join(exc.reasons))

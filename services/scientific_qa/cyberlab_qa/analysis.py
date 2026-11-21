@@ -13,7 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from cyberlab_common.db import ClaimRecord, DatasetRecord, ProtocolVersion, RunRecord, audit
-from cyberlab_data import dataset_record_id
+from cyberlab_data import benchmark_split, dataset_record_id
 from cyberlab_evidence import ArtifactStore
 from cyberlab_qa.metrics import (
     QAFlag,
@@ -21,6 +21,7 @@ from cyberlab_qa.metrics import (
     bootstrap_diff_seeds,
     clopper_pearson,
     compute_metrics,
+    friedman_nemenyi,
     holm,
     leakage_audit,
     mcnemar,
@@ -58,6 +59,8 @@ def analyze_project(
         )
     )
     runs = [r for r in runs if r.experiment_id.startswith(f"p{protocol_version}-")]
+    bench_runs = [r for r in runs if "@" in r.experiment_id]
+    runs = [r for r in runs if "@" not in r.experiment_id]
     if not runs:
         raise ValueError("no successful runs to analyze")
 
@@ -87,6 +90,162 @@ def analyze_project(
         preds[(r.model_name, r.seed)] = df
         recompute_ok &= recompute_matches(r.metrics, df)
 
+    models = _summaries(protocol, preds, run_info)
+
+    hypotheses = _test_hypotheses(protocol, preds, models)
+
+    ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
+    overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
+    audit_input = {
+        n: {
+            "macro_f1": m["aggregate"]["macro_f1"]["mean"],
+            "per_class": m["per_class"],
+            "role": m["role"],
+        }
+        for n, m in models.items()
+    }
+    flags = leakage_audit(audit_input, overlap)
+    benchmark, bench_ok = _benchmark(s, store, project_id, protocol, models, bench_runs, flags)
+    recompute_ok = recompute_ok and bench_ok
+    if not recompute_ok:
+        flags.append(
+            QAFlag("blocker", "RECOMPUTE_MISMATCH", "stored metrics differ from recomputation")
+        )
+    analysis: dict[str, Any] = {
+        "project_id": project_id,
+        "protocol_version": protocol_version,
+        "protocol_sha256": protocol.sha256,
+        "dataset": ds.manifest if ds else None,
+        "models": models,
+        "hypotheses": hypotheses,
+        "min_test_support": protocol.min_test_support,
+        "followup": _followup_comparison(s, store, project_id, protocol),
+        "tuning": protocol.tuning.model_dump() if protocol.tuning else None,
+        "metrics_recomputed_match": recompute_ok,
+        "qa_flags": [f.__dict__ for f in flags],
+        "run_ids": sorted(r.id for r in [*runs, *bench_runs]),
+    }
+    if benchmark:
+        analysis["benchmark"] = benchmark
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "analysis.json"
+        p.write_text(json.dumps(analysis, indent=2, default=str))
+        rec = store.put(s, project_id, p, name="analysis.json")
+    analysis["artifact_sha256"] = rec.sha256
+    _publish_claims(s, project_id, analysis, rec.sha256)
+    audit(
+        s,
+        "scientific_qa",
+        "evidence.published",
+        project_id,
+        {"analysis_sha256": rec.sha256, "flags": len(flags), "recompute_ok": recompute_ok},
+    )
+    return analysis
+
+
+def _load_preds(
+    s: Session, store: ArtifactStore, project_id: str, runs: list[Any]
+) -> tuple[dict[tuple[str, int], pd.DataFrame], dict[str, dict[str, Any]], bool]:
+    preds: dict[tuple[str, int], pd.DataFrame] = {}
+    run_info: dict[str, dict[str, Any]] = {}
+    ok = True
+    for r in runs:
+        arts = r.receipt.get("artifacts", {})
+        if r.model_name not in run_info and "model_info.json" in arts:
+            run_info[r.model_name] = json.loads(
+                store.path_for(s, project_id, arts["model_info.json"]).read_text()
+            )
+        df = pd.read_csv(store.path_for(s, project_id, arts["predictions.csv"]))
+        preds[(r.model_name, r.seed)] = df
+        ok &= recompute_matches(r.metrics, df)
+    return preds, run_info, ok
+
+
+def _benchmark(
+    s: Session,
+    store: ArtifactStore,
+    project_id: str,
+    protocol: Protocol,
+    main_models: dict[str, Any],
+    bench_runs: list[Any],
+    flags: list[QAFlag],
+) -> tuple[dict[str, Any] | None, bool]:
+    """Every benchmark dataset analysed like the main one (same summaries, same tests), plus
+    a Friedman test and Nemenyi critical difference over the per-dataset mean scores."""
+    if not protocol.benchmark_datasets:
+        return None, True
+    metric = protocol.hypotheses[0].primary_metric if protocol.hypotheses else "macro_f1"
+    per_dataset: dict[str, Any] = {protocol.dataset_id: {"models": main_models}}
+    all_ok = True
+    tests: list[dict[str, Any]] = []
+    for ds_id in protocol.benchmark_datasets:
+        mine = [r for r in bench_runs if r.experiment_id.endswith(f"@{ds_id}")]
+        if not mine:
+            flags.append(
+                QAFlag("warning", "BENCHMARK_DATASET_MISSING", f"no successful runs on {ds_id}")
+            )
+            continue
+        preds, run_info, ok = _load_preds(s, store, project_id, mine)
+        all_ok &= ok
+        models = _summaries(protocol, preds, run_info)
+        hyps = _test_hypotheses(protocol, preds, models, holm_adjust=False)
+        for h in hyps:
+            h["dataset"] = ds_id
+        tests += [h for h in hyps if "test" in h]
+        rec = s.get(DatasetRecord, dataset_record_id(ds_id, benchmark_split(ds_id, protocol.split)))
+        man = rec.manifest if rec else {}
+        overlap = int(man.get("split_overlap_rows", 0) or 0)
+        if overlap:
+            flags.append(
+                QAFlag(
+                    "blocker",
+                    "LEAKAGE_OVERLAP",
+                    f"{ds_id}: {overlap} rows appear in both training and test",
+                )
+            )
+        per_dataset[ds_id] = {
+            "models": models,
+            "hypotheses": hyps,
+            "dataset": {
+                k: man.get(k)
+                for k in (
+                    "name",
+                    "license",
+                    "citation",
+                    "n_rows_raw",
+                    "n_rows_clean",
+                    "n_duplicates_removed",
+                    "split_counts",
+                    "split_overlap_rows",
+                    "class_counts",
+                )
+            },
+        }
+    # secondary tests (the stated hypotheses repeated on every other dataset): Holm across them
+    for h, p_adj in zip(tests, holm([h["test"]["p_value"] for h in tests]), strict=True):
+        h["p_holm"] = p_adj
+        h["result"] = "supported" if h["a_mean"] > h["b_mean"] and p_adj < 0.05 else "not supported"
+    scores: dict[str, dict[str, float]] = {}
+    for ds, v in per_dataset.items():
+        scores[ds] = {}
+        for n, m in v["models"].items():
+            mean = (m["aggregate"].get(metric) or {}).get("mean")
+            if mean is not None:
+                scores[ds][n] = float(mean)
+    return {
+        "metric": metric,
+        "datasets": list(per_dataset),
+        "per_dataset": per_dataset,
+        "scores": scores,
+        "ranking": friedman_nemenyi(scores),
+    }, all_ok
+
+
+def _summaries(
+    protocol: Protocol,
+    preds: dict[tuple[str, int], pd.DataFrame],
+    run_info: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     models: dict[str, Any] = {}
     for m in protocol.models:
         seeds = sorted(seed for (name, seed) in preds if name == m.name)
@@ -126,7 +285,15 @@ def analyze_project(
         # CIs also for every metric a hypothesis is tested on (e.g. balanced accuracy)
         for metric in {h.primary_metric for h in protocol.hypotheses} - {"macro_f1"}:
             models[m.name][f"{metric}_ci"] = bootstrap_ci_seeds(seed_preds, metric, n_boot=500)
+    return models
 
+
+def _test_hypotheses(
+    protocol: Protocol,
+    preds: dict[tuple[str, int], pd.DataFrame],
+    models: dict[str, Any],
+    holm_adjust: bool = True,
+) -> list[dict[str, Any]]:
     hypotheses: list[dict[str, Any]] = []
     for h in protocol.hypotheses:
         a, b = (x.strip() for x in h.comparison.split(">"))
@@ -168,55 +335,13 @@ def analyze_project(
         )
     # Holm-Bonferroni correction across all tested hypotheses of the protocol
     tested = [hr for hr in hypotheses if "mcnemar" in hr]
-    for hr, p_adj in zip(tested, holm([hr["test"]["p_value"] for hr in tested]), strict=True):
-        hr["p_holm"] = p_adj
-        hr["result"] = (
-            "supported" if hr["a_mean"] > hr["b_mean"] and p_adj < 0.05 else "not supported"
-        )
-
-    ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
-    overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
-    audit_input = {
-        n: {
-            "macro_f1": m["aggregate"]["macro_f1"]["mean"],
-            "per_class": m["per_class"],
-            "role": m["role"],
-        }
-        for n, m in models.items()
-    }
-    flags = leakage_audit(audit_input, overlap)
-    if not recompute_ok:
-        flags.append(
-            QAFlag("blocker", "RECOMPUTE_MISMATCH", "stored metrics differ from recomputation")
-        )
-    analysis: dict[str, Any] = {
-        "project_id": project_id,
-        "protocol_version": protocol_version,
-        "protocol_sha256": protocol.sha256,
-        "dataset": ds.manifest if ds else None,
-        "models": models,
-        "hypotheses": hypotheses,
-        "min_test_support": protocol.min_test_support,
-        "followup": _followup_comparison(s, store, project_id, protocol),
-        "tuning": protocol.tuning.model_dump() if protocol.tuning else None,
-        "metrics_recomputed_match": recompute_ok,
-        "qa_flags": [f.__dict__ for f in flags],
-        "run_ids": sorted(r.id for r in runs),
-    }
-    with tempfile.TemporaryDirectory() as td:
-        p = Path(td) / "analysis.json"
-        p.write_text(json.dumps(analysis, indent=2, default=str))
-        rec = store.put(s, project_id, p, name="analysis.json")
-    analysis["artifact_sha256"] = rec.sha256
-    _publish_claims(s, project_id, analysis, rec.sha256)
-    audit(
-        s,
-        "scientific_qa",
-        "evidence.published",
-        project_id,
-        {"analysis_sha256": rec.sha256, "flags": len(flags), "recompute_ok": recompute_ok},
-    )
-    return analysis
+    if holm_adjust:
+        for hr, p_adj in zip(tested, holm([hr["test"]["p_value"] for hr in tested]), strict=True):
+            hr["p_holm"] = p_adj
+            hr["result"] = (
+                "supported" if hr["a_mean"] > hr["b_mean"] and p_adj < 0.05 else "not supported"
+            )
+    return hypotheses
 
 
 def _publish_claims(s: Session, project_id: str, analysis: dict[str, Any], sha: str) -> None:

@@ -470,3 +470,54 @@ def test_pause_stop_resume_restart(lab: Lab) -> None:
             s.scalars(select(ProtocolVersion.version).where(ProtocolVersion.project_id == pid))
         )
     assert max(versions) == version + 1
+
+
+def test_multi_dataset_benchmark_study(lab: Lab) -> None:
+    """One protocol, two datasets: experiments on both, a ranking across them, one paper."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Benchmark of IDS models across CIC-IDS2017 and UNSW-NB15",
+        goal="Compare logistic regression, random forest, gradient boosting and an MLP on "
+        "CIC-IDS2017 and UNSW-NB15, reporting macro-F1 on each dataset and a ranking across "
+        "both datasets.",
+        dataset_hint="CIC-IDS2017",
+    )
+    pid = lab.create_project(pi, spec)
+    status = lab.start(pid)
+    assert status["pending"]["gate"] == "A", status
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        assert pv.body["benchmark_datasets"] == ["unsw-nb15-v1"]
+        version, sha = pv.version, pv.sha256
+        keys = {
+            c.key for c in s.scalars(select(CitationRecord).where(CitationRecord.project_id == pid))
+        }
+    assert "Moustafa2015unswnb15" in keys  # the second dataset's paper is cited too
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    with lab.db.session() as s:
+        jobs = list(s.scalars(select(JobRecord).where(JobRecord.project_id == pid)))
+    n_models = len(pv.body["models"])
+    assert len(jobs) == 2 * n_models * 3
+    assert sum("@unsw-nb15-v1" in j.experiment_id for j in jobs) == n_models * 3
+    for _ in range(len(jobs) + 4):
+        lab.worker_tick(wait=True)
+    status = lab.status(pid)
+    assert status["pending"] and status["pending"]["gate"] == "D", status
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md = ms.markdown
+    assert "### Results across datasets" in md and "Average rank" in md
+    assert "Friedman" in md and "UNSW-NB15" in md
+    assert "All datasets of the benchmark" in md
+    assert "per model and dataset (means over seeds)" in md  # heatmap figure
+    assert "Average rank of each model across datasets" in md  # ranking figure
+    assert "were also run on UNSW-NB15" in md  # Methodology states the benchmark
+    with lab.db.session() as s:
+        dups = s.scalars(select(CitationRecord.key).where(CitationRecord.project_id == pid))
+        assert len(list(dups)) == len(set(keys))

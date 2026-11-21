@@ -213,6 +213,9 @@ def results_text(analysis: dict[str, Any]) -> str:
     scope = untested_pairs_sentence(analysis)
     if hyp or scope:
         paras.append(" ".join(hyp + ([scope] if scope else [])))
+    bench = benchmark_text(analysis)
+    if bench:
+        paras.append(bench)
     best = _best(analysis)
     if best:
         support = {
@@ -346,6 +349,85 @@ def _setting(v: Any) -> str:
     return str(v)
 
 
+def dataset_label(dataset_id: str) -> str:
+    from cyberlab_data import get_adapter
+
+    return str(get_adapter(dataset_id).display)
+
+
+def benchmark_method_text(analysis: dict[str, Any]) -> str:
+    """How the benchmark datasets were used (Methodology)."""
+    b = analysis.get("benchmark") or {}
+    others = [d for d in b.get("datasets", [])[1:]]
+    if not others:
+        return ""
+    return (
+        f"To test whether the findings hold beyond one dataset, the same models, seeds, settings "
+        f"search and budget were also run on {_and([dataset_label(d) for d in others])}. Each "
+        "dataset was cleaned, de-duplicated and split on its own (its official partition when it "
+        "has one, otherwise a stratified split), and no rows are shared between datasets. The "
+        "stated hypotheses were repeated on every additional dataset as secondary tests, with "
+        "Holm correction across those tests. Models were ranked on each dataset by their mean "
+        f"{_metric(b.get('metric', 'macro_f1'))}, and the ranks were compared across datasets with "
+        "the Friedman test and the Nemenyi critical difference (alpha 0.05)."
+    )
+
+
+def benchmark_text(analysis: dict[str, Any]) -> str:
+    """Results across datasets (Results), from the stored ranking and secondary tests."""
+    b = analysis.get("benchmark") or {}
+    if not b.get("datasets"):
+        return ""
+    names = _and([dataset_label(d) for d in b["datasets"]])
+    rank = b.get("ranking") or {}
+    out = []
+    if rank.get("applicable"):
+        order = sorted(rank["average_rank"], key=rank["average_rank"].__getitem__)
+        ranks = "; ".join(f"{pretty(m)} {rank['average_rank'][m]:.2f}" for m in order)
+        sig = rank["p_value"] < 0.05
+        out.append(
+            f"Across the {_num(len(b['datasets']))} datasets ({names}), the average ranks on "
+            f"{_metric(b.get('metric', 'macro_f1'))} (1 = best) were: {ranks}. The Friedman test "
+            f"{'found' if sig else 'did not find'} a difference between the models' ranks "
+            f"(p {'< 0.001' if rank['p_value'] < 0.001 else '= ' + _pval(rank['p_value'])}); the Nemenyi critical difference is "
+            f"{rank['critical_difference']:.2f}, so only models whose average ranks differ by "
+            "more than this differ significantly."
+            + (
+                " With few datasets the test has little power, so a non-significant result does "
+                "not show that the models are equal."
+                if not sig
+                else ""
+            )
+        )
+    else:
+        out.append(
+            f"Results on each of the {_num(len(b['datasets']))} datasets ({names}) are listed in "
+            "the table below; a Friedman test across datasets needs at least two datasets and "
+            "three models, so no ranking test was run."
+        )
+    tests = [
+        h
+        for ds in b.get("datasets", [])[1:]
+        for h in (b["per_dataset"].get(ds) or {}).get("hypotheses", [])
+        if "p_holm" in h
+    ]
+    if tests:
+        out.append(
+            "Repeated on the other datasets (secondary tests, Holm-adjusted across them): "
+            + "; ".join(
+                f"{h['id']} on {dataset_label(h['dataset'])} was {h['result']} "
+                f"(Holm-adjusted p {'< 0.001' if h['p_holm'] < 0.001 else '= ' + _pval(h['p_holm'])})"
+                for h in tests
+            )
+            + "."
+        )
+    return " ".join(out)
+
+
+def _pval(p: float) -> str:
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+
 def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str, Any]) -> str:
     """Methodology from the deterministic method facts ('facts.x' references filled in)."""
 
@@ -353,6 +435,8 @@ def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str
         return re.sub(r"facts\.([a-z_]+)", lambda m: str(facts.get(m.group(1), m.group(0))), s)
 
     statements = [fill(s) for s in prose if not s.startswith("Model '")]
+    if bench := benchmark_method_text(analysis):
+        statements.append(bench)
     models = analysis.get("models", {})
     if models:
         statements.append(

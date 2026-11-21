@@ -137,6 +137,58 @@ def confusion_figure(analysis: dict[str, Any], model: str) -> str | None:
     return _png(fig)
 
 
+def benchmark_heatmap(analysis: dict[str, Any]) -> str | None:
+    b = analysis.get("benchmark") or {}
+    scores = b.get("scores") or {}
+    if len(scores) < 2:
+        return None
+    from cyberlab_data import get_adapter
+
+    datasets = list(b["datasets"])
+    models = sorted({m for d in datasets for m in scores.get(d, {})})
+    mat = np.array([[scores.get(d, {}).get(m, np.nan) for d in datasets] for m in models])
+    fig, ax = plt.subplots(figsize=(1.6 + 1.3 * len(datasets), 0.8 + 0.45 * len(models)))
+    im = ax.imshow(mat, cmap="viridis", aspect="auto", vmin=np.nanmin(mat), vmax=np.nanmax(mat))
+    ax.set_xticks(range(len(datasets)), [get_adapter(d).display for d in datasets], rotation=20)
+    ax.set_yticks(range(len(models)), [PRETTY.get(m, m) for m in models])
+    for i in range(len(models)):
+        for j in range(len(datasets)):
+            if not np.isnan(mat[i, j]):
+                ax.text(
+                    j,
+                    i,
+                    f"{mat[i, j]:.3f}",
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                    color="white" if mat[i, j] < np.nanmean(mat) else "black",
+                )
+    fig.colorbar(im, ax=ax, fraction=0.046, label=PRETTY.get(b.get("metric", ""), "score"))
+    return _png(fig)
+
+
+def rank_figure(analysis: dict[str, Any]) -> str | None:
+    r = (analysis.get("benchmark") or {}).get("ranking") or {}
+    if not r.get("applicable"):
+        return None
+    ranks = r["average_rank"]
+    order = sorted(ranks, key=ranks.__getitem__)
+    fig, ax = plt.subplots(figsize=(6, 0.7 + 0.35 * len(order)))
+    ys = range(len(order))
+    ax.scatter([ranks[m] for m in order], ys, color="#3b5ba5", zorder=3)
+    best = ranks[order[0]]
+    cd = float(r["critical_difference"])
+    ax.axvspan(
+        best, best + cd, color="#3b5ba5", alpha=0.12, label=f"critical difference ({cd:.2f})"
+    )
+    ax.set_yticks(list(ys), [PRETTY.get(m, m) for m in order])
+    ax.invert_yaxis()
+    ax.set_xlabel("average rank across datasets (1 = best)")
+    ax.legend(loc="lower right", fontsize=7)
+    ax.grid(axis="x", alpha=0.3)
+    return _png(fig)
+
+
 def figures_markdown(analysis: dict[str, Any], best: str | None) -> str:
     """The Figures sub-section of Results (empty string if nothing can be drawn)."""
     metric = PRETTY.get(_primary_metric(analysis), "macro-F1")
@@ -148,6 +200,15 @@ def figures_markdown(analysis: dict[str, Any], best: str | None) -> str:
         (
             confusion_figure(analysis, best) if best else None,
             f"Row-normalised confusion matrix of {PRETTY.get(best or '', best)} (first seed).",
+        ),
+        (
+            benchmark_heatmap(analysis),
+            f"{metric} per model and dataset (means over seeds).",
+        ),
+        (
+            rank_figure(analysis),
+            "Average rank of each model across datasets; models within the shaded critical "
+            "difference of the best model do not differ significantly (Nemenyi).",
         ),
     ):
         if b64:

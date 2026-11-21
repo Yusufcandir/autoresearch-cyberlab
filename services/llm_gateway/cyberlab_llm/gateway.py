@@ -401,10 +401,16 @@ class OllamaProvider:
         return ok
 
     def __init__(
-        self, host: str, model: str, timeout: float = 300, client: httpx.Client | None = None
+        self,
+        host: str,
+        model: str,
+        timeout: float = 300,
+        client: httpx.Client | None = None,
+        num_ctx: int = 32768,
     ):
         self.host = host.rstrip("/")
         self.model = model
+        self.num_ctx = num_ctx
         self.client = client or httpx.Client(timeout=timeout)
 
     def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
@@ -415,7 +421,7 @@ class OllamaProvider:
                 {"role": "user", "content": prompt},
             ],
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {"temperature": temperature, "num_ctx": self.num_ctx},
         }
         if json_mode:
             body["format"] = "json"
@@ -654,7 +660,10 @@ class LLMGateway:
 
 def build_gateway(settings: Settings, **hooks: Any) -> LLMGateway:
     ollama = OllamaProvider(
-        settings.ollama_host, settings.ollama_model, settings.llm_timeout_seconds
+        settings.ollama_host,
+        settings.ollama_model,
+        settings.llm_timeout_seconds,
+        num_ctx=settings.ollama_num_ctx,
     )
     provider = (settings.llm_provider or "fake").lower()
     if provider == "gemini":

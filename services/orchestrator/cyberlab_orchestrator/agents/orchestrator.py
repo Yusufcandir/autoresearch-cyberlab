@@ -13,7 +13,8 @@ SYSTEM = (
     "You are the chief research orchestrator of an AI-for-cybersecurity research lab. "
     "Plan a rigorous, reproducible study. You cannot run code or access the internet; other "
     "agents do that. Never invent results or citations. Output JSON with keys: "
-    "'objective' (string), 'search_queries' (3-5 short scholarly search strings), "
+    "'objective' (string), 'search_queries' (5-8 short scholarly search strings covering "
+    "the models, the datasets, the evaluation questions and closely related work), "
     "'tasks' (list of {agent, task}), 'risks' (list of strings)."
 )
 
@@ -31,12 +32,17 @@ def orchestrator_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]
         f"Constraints: {spec.constraints}",
         project_id=pid,
     )
-    queries = [q for q in plan.get("search_queries", []) if isinstance(q, str)][:5]
+    queries = [q for q in plan.get("search_queries", []) if isinstance(q, str)][:8]
     if not queries:
         queries = [
             get_adapter(spec.dataset_hint).search_query,
             "explainable intrusion detection",
         ]
+    from cyberlab_orchestrator.datasets import study_adapters
+
+    for a in study_adapters(ctx, pid)[1:]:  # benchmark datasets: their own literature too
+        if a.search_query not in queries:
+            queries.append(a.search_query)
     plan["search_queries"] = queries
     with ctx.db.session() as s:
         ctx.note(s, pid, "orchestrator", "plan", plan)

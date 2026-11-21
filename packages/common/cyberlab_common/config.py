@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     gemini_cooldown_seconds: float = Field(default=0, ge=0)
     ollama_host: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen2.5:7b-instruct"
+    # Context window sent to Ollama. Its default (2-4k tokens) silently cuts long writing
+    # prompts (facts, papers, results), which ruins drafts; qwen2.5 supports 32k.
+    ollama_num_ctx: int = Field(default=32768, ge=2048)
+    # Large datasets: BENIGN rows kept per dataset (attack classes are never sampled) and the
+    # most training rows a tuning trial uses. Both are stated in the paper's Methodology.
+    benign_row_cap: int = Field(default=400_000, ge=1_000)
+    tuning_max_rows: int = Field(default=200_000, ge=1_000)
+    # literature: verified papers kept per study (journal papers usually cite 30-50)
+    literature_max_papers: int = Field(default=40, ge=5, le=120)
     llm_timeout_seconds: float = Field(default=300, gt=0)
 
     # Literature services (polite pool contact is optional and never required)

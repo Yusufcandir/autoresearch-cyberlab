@@ -78,8 +78,27 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     problems += enforced
     protocol, design = _design_from_text(protocol, " ".join([goal, *constraints, feedback or ""]))
     problems += design
+    if protocol.tuning and protocol.tuning.max_train_rows != ctx.settings.tuning_max_rows:
+        tuning = protocol.tuning.model_copy(update={"max_train_rows": ctx.settings.tuning_max_rows})
+        protocol = Protocol.model_validate(
+            json.loads(protocol.model_copy(update={"tuning": tuning}).model_dump_json())
+        )
     protocol, fit = _fit_modality(protocol, adapter, base)
     problems += fit
+    if protocol.split.strategy != "cross_dataset":
+        from cyberlab_orchestrator.datasets import study_adapters
+
+        extra = [a.dataset_id for a in study_adapters(ctx, pid)[1:]]
+        if extra:
+            protocol = Protocol.model_validate(
+                json.loads(
+                    protocol.model_copy(update={"benchmark_datasets": extra}).model_dump_json()
+                )
+            )
+            problems.append(
+                "benchmark across datasets: the same models, seeds and tuning budget also run on "
+                + ", ".join(extra)
+            )
     if spec is not None:  # the study's own compute budget, not the schema default
         protocol = protocol.model_copy(update={"gpu_budget_minutes": spec.gpu_budget_minutes})
     with ctx.db.session() as s:

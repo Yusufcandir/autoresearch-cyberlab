@@ -27,7 +27,7 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             return {"dataset_status": "verified", "dataset_summary": _summary(m)}
     try:
         prepared = adapter.prepare(
-            root, SplitSpec(), benign_cap=ctx.extra.get("benign_cap", 400_000)
+            root, SplitSpec(), benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap)
         )
         manifest = prepared.manifest
     except DatasetBlocked as exc:

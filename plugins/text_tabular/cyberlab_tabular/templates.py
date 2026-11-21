@@ -416,6 +416,7 @@ def tune(
     key = (
         f"{manifest.project_id}-p{manifest.protocol_version}-"
         f"{manifest.protocol_sha256[:12]}-{manifest.model.name}"
+        + (f"-{manifest.dataset_id}" if "@" in manifest.experiment_id else "")
     )
     cache = Path(cache_dir) / f"{key}.json" if cache_dir else None
     if cache is not None and cache.exists():

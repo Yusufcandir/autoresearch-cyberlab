@@ -22,7 +22,7 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-_LATE_OPTIONAL = {"tuning", "min_test_support", "followup_of"}
+_LATE_OPTIONAL = {"tuning", "min_test_support", "followup_of", "benchmark_datasets"}
 
 
 def content_hash(obj: BaseModel | dict[str, Any]) -> str:
@@ -156,6 +156,9 @@ class Protocol(Versioned):
     min_test_support: int | None = Field(default=None, ge=1)
     # set when the feedback controller proposed this version as a follow-up experiment
     followup_of: dict[str, Any] | None = None
+    # Multi-dataset benchmark: the same models, seeds and tuning budget also run on these
+    # datasets; the paper reports each dataset and a Friedman/Nemenyi ranking across all.
+    benchmark_datasets: list[str] | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
     @property

@@ -154,6 +154,21 @@ def evidence_brief(analysis: dict[str, Any], facts: dict[str, Any]) -> dict[str,
             findings.append(
                 {"id": "F-missed", "kind": "classes no model detected", "text": ", ".join(missed)}
             )
+    bench = analysis.get("benchmark") or {}
+    rank = bench.get("ranking") or {}
+    if rank.get("applicable"):
+        order = sorted(rank["average_rank"], key=rank["average_rank"].__getitem__)
+        findings.append(
+            {
+                "id": "F-bench",
+                "kind": "ranking across datasets (Friedman test, Nemenyi critical difference); "
+                "the numbers are in the Results table, do not write them",
+                "text": f"datasets: {', '.join(bench['datasets'])}; order by average rank: "
+                + " > ".join(pretty(m) for m in order)
+                + f"; Friedman test {'significant' if rank['p_value'] < 0.05 else 'not significant'}"
+                " at 0.05",
+            }
+        )
     tuned = [n for n, m in models.items() if m.get("tuned")]
     return {
         "primary_metric": metric,
