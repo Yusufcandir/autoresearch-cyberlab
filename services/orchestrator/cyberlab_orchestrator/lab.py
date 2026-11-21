@@ -66,6 +66,7 @@ class Lab:
         gateway.budget_lookup, gateway.charge = self._budget, self._charge
         gateway.charge_usd = self._charge_usd
         gateway.private_lookup = self._private
+        gateway.paused_lookup = self._paused
         gateway.on_status = self._llm_status
         gateway.model_lookup = lambda: get_setting(self.db, "claude_model")
         self.ctx = LabContext(
@@ -110,6 +111,11 @@ class Lab:
                 {"task": task, "message": message},
                 emit=False,
             )
+
+    def _paused(self, project_id: str) -> bool:
+        with self.db.session() as s:
+            p = s.get(Project, project_id)
+            return bool(p is not None and p.paused)
 
     def _private(self, project_id: str) -> bool:
         with self.db.session() as s:
@@ -530,6 +536,10 @@ class Lab:
                     job.state, job.cancel_requested, job.failure_reason = "queued", False, None
                     requeued += 1
             audit(s, principal.username, "project.resumed", project_id, {"requeued_jobs": requeued})
+        with self._locks_guard:
+            lock = self._locks.get(project_id)
+        if lock is not None and lock.locked():
+            return self.status(project_id)  # a step is running; it simply continues now
         pend = self.pending(project_id)
         if pend and pend.get("gate") == "paused":
             return self._invoke(project_id, Command(resume={"paused": "resumed"}))

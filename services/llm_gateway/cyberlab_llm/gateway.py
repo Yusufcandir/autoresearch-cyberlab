@@ -466,6 +466,9 @@ class LLMGateway:
     charge_usd: Callable[[str, float, str, str], None] | None = None
     # project -> True if the study's data must stay on the host (local model only)
     private_lookup: Callable[[str], bool] | None = None
+    # project -> True while the PI has paused or stopped the study: the next model call waits
+    paused_lookup: Callable[[str], bool] | None = None
+    pause_poll_seconds: float = 2.0
     # (project_id, task, message): live status such as 'Gemini busy, retrying'
     on_status: Callable[[str, str, str], None] | None = None
     # The Claude model chosen on the dashboard (None = CLAUDE_MODEL from the environment).
@@ -505,6 +508,7 @@ class LLMGateway:
         json_mode: bool = False,
         temperature: float = 0.2,
     ) -> LLMResult:
+        self._wait_while_paused(project_id, task)
         if project_id and self.private_lookup and self.private_lookup(project_id):
             sensitive = True
         provider = self._route(sensitive)
@@ -587,6 +591,27 @@ class LLMGateway:
             }
         )
         return result
+
+    def _wait_while_paused(self, project_id: str | None, task: str) -> None:
+        """Pause/Stop take effect inside a long step too: a step such as writing makes many
+        model calls, and each one waits here (no tokens used) until the study is resumed."""
+        if not (project_id and self.paused_lookup):
+            return
+        told = False
+        while True:
+            try:
+                paused = self.paused_lookup(project_id)
+            except Exception:  # a status read must never stop a study
+                return
+            if not paused:
+                return
+            if not told and self.on_status is not None:
+                try:
+                    self.on_status(project_id, task, "Paused: waiting for Resume (nothing is sent)")
+                except Exception:  # noqa: BLE001 - status reporting must never break a call
+                    logging.getLogger(__name__).debug("status hook failed", exc_info=True)
+                told = True
+            time.sleep(self.pause_poll_seconds)
 
     def claude_model(self) -> str | None:
         """The dashboard's model choice, if it names a known Claude model."""

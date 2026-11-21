@@ -430,3 +430,30 @@ def test_busy_model_goes_to_the_back_for_the_next_calls(monkeypatch) -> None:  #
     calls.clear()
     p.generate("s", "p", json_mode=False, temperature=0)
     assert calls == ["b"]  # the busy model is not asked first again right away
+
+
+def test_model_calls_wait_while_the_study_is_paused() -> None:
+    import threading
+
+    from cyberlab_llm import LLMGateway
+    from cyberlab_llm.gateway import FakeProvider
+
+    paused = {"on": True}
+    seen: list[str] = []
+    gate = LLMGateway(
+        FakeProvider(),
+        None,
+        paused_lookup=lambda pid: paused["on"],
+        on_status=lambda pid, task, msg: seen.append(msg),
+        pause_poll_seconds=0.01,
+    )
+    out: list[str] = []
+    t = threading.Thread(
+        target=lambda: out.append(gate.complete("t", "s", "p", project_id="x").text)
+    )
+    t.start()
+    t.join(0.2)
+    assert t.is_alive() and not out and any("Paused" in m for m in seen)
+    paused["on"] = False
+    t.join(2)
+    assert out  # resumed: the call went through
