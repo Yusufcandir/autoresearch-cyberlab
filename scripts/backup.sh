@@ -14,7 +14,15 @@ TMP=$(mktemp -d)
 
 case "${DATABASE_URL:-}" in
   postgresql*)
-    docker compose -f infra/compose.server.yaml --env-file .env exec -T postgres pg_dump -U cyberlab cyberlab > "$TMP/db.sql"
+    DUMP="docker compose -f infra/compose.server.yaml --env-file .env exec -T postgres pg_dump -U cyberlab cyberlab"
+    # The systemd user manager keeps the groups it started with, so a user added to the
+    # 'docker' group later gets "permission denied" from the nightly timer even though the
+    # same command works in a terminal. 'sg docker' runs it with the docker group applied.
+    if docker info >/dev/null 2>&1; then
+      $DUMP > "$TMP/db.sql"
+    else
+      sg docker -c "$DUMP" > "$TMP/db.sql"
+    fi
     ;;
   sqlite*)
     DB="${DATABASE_URL#sqlite:///}"
