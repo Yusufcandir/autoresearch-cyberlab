@@ -184,7 +184,12 @@ class GeminiProvider:
                     r = None
                     time.sleep(3)
                     continue
-                if r.status_code in (429, 500, 503):  # overloaded or rate limited
+                if r.status_code == 429:
+                    # Free-tier quotas are per model (requests per minute and per day): waiting
+                    # rarely helps, the next model has its own quota, so move on at once.
+                    problems.append(f"{model}: HTTP 429")
+                    break
+                if r.status_code in (500, 503):  # overloaded
                     problems.append(f"{model}: HTTP {r.status_code}")
                     busy = "has reached its rate limit" if r.status_code == 429 else "is busy"
                     if _handover_due():
@@ -196,6 +201,10 @@ class GeminiProvider:
                     continue
                 break
             if r is None or r.status_code in (429, 500, 503):
+                if r is not None and r.status_code == 429 and model != self.models[-1]:
+                    nxt = self.models[self.models.index(model) + 1]
+                    report_status(f"Gemini {model} has reached its rate limit; switching to {nxt}")
+                    continue
                 if _handover_due():
                     raise LLMError(f"Gemini busy ({'; '.join(problems[-3:])})")
                 if model != self.models[-1]:

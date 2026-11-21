@@ -130,7 +130,8 @@ def test_busy_gemini_hands_over_to_ready_local_model(monkeypatch) -> None:  # ty
     gate = LLMGateway(g, o, handover_seconds=1.5)
     res = gate.complete("t", "s", "p")
     assert res.provider == "ollama" and res.text == "local ok"
-    assert gemini_calls["n"] <= 2  # handed over quickly instead of trying every model
+    # every model has its own quota, so each is tried once, without waiting, before handover
+    assert gemini_calls["n"] == 3
 
 
 def test_gemini_breaker_keeps_later_calls_on_local_model(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -320,3 +321,26 @@ def test_gateway_uses_dashboard_model_choice() -> None:
     gw.model_lookup = lambda: "gpt-oops"  # unknown values are ignored, never sent
     gw.complete("t", "s", "p")
     assert fake.kwargs["model"] == "claude-opus-5-5"
+
+
+def test_gemini_rate_limit_moves_to_next_model_without_waiting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import cyberlab_llm.gateway as gw
+
+    slept: list[float] = []
+    monkeypatch.setattr(gw.time, "sleep", slept.append)
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.path)
+        if "flash-lite-a" in str(req.url):
+            return httpx.Response(429, json={"error": {"message": "quota"}})
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})
+
+    p = GeminiProvider(
+        "k",
+        "flash-lite-a",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        fallback_models=["flash-lite-b"],
+    )
+    res = p.generate("s", "p", json_mode=False, temperature=0)
+    assert res.model == "flash-lite-b" and len(calls) == 2 and not slept
