@@ -383,7 +383,8 @@ def test_default_tries_every_gemini_model_then_local_and_retries_gemini_next_cal
     assert gate.complete("t", "s", "p").text == "local"
     assert {t.split(":")[0] for t in tried} == {"a", "b", "c"}
     down["on"] = False
-    assert gate.complete("t", "s", "p").text == "g"  # Gemini is tried again at once
+    g._rested = {}  # the short rest after "all busy" is over (30-60 s)
+    assert gate.complete("t", "s", "p").text == "g"  # Gemini is used again
 
 
 def test_busy_gemini_model_is_skipped_without_waiting(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -457,3 +458,31 @@ def test_model_calls_wait_while_the_study_is_paused() -> None:
     paused["on"] = False
     t.join(2)
     assert out  # resumed: the call went through
+
+
+def test_when_every_gemini_model_just_failed_the_next_call_skips_them(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import pytest
+
+    import cyberlab_llm.gateway as gw
+    from cyberlab_llm.gateway import LLMError
+
+    monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(req.url.path)
+        return httpx.Response(503, json={})
+
+    p = GeminiProvider(
+        "k", "a", client=httpx.Client(transport=httpx.MockTransport(handler)), fallback_models=["b"]
+    )
+    with pytest.raises(LLMError):
+        p.generate("s", "p", json_mode=False, temperature=0)
+    assert len(calls) == 2
+    with pytest.raises(LLMError, match="trying them again"):
+        p.generate("s", "p", json_mode=False, temperature=0)
+    assert len(calls) == 2  # no new requests while every model rests
+    p._rested = {}  # rest over
+    with pytest.raises(LLMError):
+        p.generate("s", "p", json_mode=False, temperature=0)
+    assert len(calls) == 4

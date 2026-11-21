@@ -180,6 +180,15 @@ class GeminiProvider:
         # its own quota and load). Only a lone model with no fallbacks is retried after a pause.
         attempts = 2 if len(self.models) == 1 else 1
         order = self._order()
+        now = time.monotonic()
+        if len(self.models) > 1 and all(self._rested.get(m, 0.0) > now for m in order):
+            # Every model failed moments ago (e.g. Google overloaded): do not ask them all again
+            # on every call. Hand this call to the local model; Gemini is tried again as soon as
+            # the first model's short rest (30-60 s) is over.
+            wait = min(self._rested[m] for m in order) - now
+            raise LLMError(
+                f"all Gemini models busy a moment ago; trying them again in {wait:.0f} s"
+            )
         for i, model in enumerate(order):
             nxt = order[i + 1] if i + 1 < len(order) else None
             r: httpx.Response | None = None
