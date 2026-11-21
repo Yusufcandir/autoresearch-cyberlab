@@ -41,6 +41,8 @@ ALLOWED_PLAIN_NUMBERS = {
 class EvidenceReport:
     resolved: list[dict[str, Any]] = field(default_factory=list)
     flags: list[dict[str, str]] = field(default_factory=list)
+    # AI-use statement kept beside the paper (for the journal's submission form), not in it
+    ai_disclosure: str = ""
 
     def flag(self, severity: str, code: str, message: str) -> None:
         self.flags.append({"severity": severity, "code": code, "message": message})
@@ -50,7 +52,12 @@ class EvidenceReport:
         return [f for f in self.flags if f["severity"] == "blocker"]
 
     def as_dict(self) -> dict[str, Any]:
-        return {"resolved": self.resolved, "flags": self.flags, "release_ready": not self.blockers}
+        return {
+            "resolved": self.resolved,
+            "flags": self.flags,
+            "release_ready": not self.blockers,
+            "ai_disclosure": self.ai_disclosure,
+        }
 
 
 def _closest_fact(name: str, facts: dict[str, Any]) -> str | None:
@@ -676,7 +683,7 @@ def build_manuscript(
             report.flag("blocker", "EMPTY_SECTION", f"the {required} section is empty")
     for f in analysis.get("qa_flags", []):
         report.flag("blocker" if f["severity"] == "blocker" else "warning", f["code"], f["message"])
-    out += ["## AI use disclosure", "", disclosure(llm_models or []), ""]
+    report.ai_disclosure = disclosure(llm_models or [])
     out += [
         "## Evidence",
         "",

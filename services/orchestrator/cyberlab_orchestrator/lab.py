@@ -42,7 +42,7 @@ class GateError(ValueError):
 # Release review checklist (spec Step 22): science, ethics and security.
 REVIEW_ITEMS: dict[str, str] = {
     "science": "every claim and number checked against the Results and Evidence",
-    "ethics": "dataset licences, citations and the AI-use disclosure checked",
+    "ethics": "dataset licences, citations and the AI-use statement checked",
     "security": "no private data, credentials or host details in the paper",
 }
 

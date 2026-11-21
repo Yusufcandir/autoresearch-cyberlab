@@ -89,6 +89,8 @@ def test_full_study(lab: Lab) -> None:
         md, report, mversion = ms.markdown, ms.evidence_report, ms.version
     assert "| xgboost |" in md and "[citation needed]" not in md
     assert report["release_ready"], report["flags"]
+    # the AI-use statement is kept beside the paper, not inside it
+    assert "AI use disclosure" not in md and "AutoResearch-CyberLab" in report["ai_disclosure"]
 
     with pytest.raises(Forbidden):
         lab.release(outsider_as_member(lab, pid, outsider), pid, mversion, CHECKS)
