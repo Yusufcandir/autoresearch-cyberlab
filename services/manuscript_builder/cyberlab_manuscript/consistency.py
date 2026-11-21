@@ -301,6 +301,44 @@ def untested_significance(
     return ", ".join(untested) or None
 
 
+CLASS_CLAIM = re.compile(
+    r"\b(better|higher|stronger|superior|improved|outperform\w*|best)\b[^.]{0,60}\brecall\b"
+    r"|\brecall\b[^.]{0,60}\b(better|higher|stronger|superior|improved|best)\b",
+    re.I,
+)
+
+
+def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]) -> str | None:
+    """'X has better recall for Worms and Backdoor': X must have the highest stored recall
+    (first seed) on every class the sentence names."""
+    if not CLASS_CLAIM.search(sentence):
+        return None
+    models = analysis.get("models", {})
+    named = [n for _, n in mentions(sentence, known)]
+    if not named:
+        return None
+    subject = named[0]
+    per_class = {n: (models.get(n) or {}).get("per_class") or {} for n in models}
+    classes = {c for pc in per_class.values() for c in pc}
+    cited = [c for c in classes if re.search(rf"\b{re.escape(c)}\b", sentence, re.I)]
+    wrong = []
+    for c in cited:
+        mine = (per_class.get(subject, {}).get(c) or {}).get("recall")
+        others = [
+            (per_class[n].get(c) or {}).get("recall")
+            for n in per_class
+            if n != subject and per_class[n].get(c)
+        ]
+        if mine is not None and any(o is not None and o > mine for o in others):
+            wrong.append(c)
+    if not wrong:
+        return None
+    return (
+        f"says {subject.replace('_', ' ')} has better recall on {', '.join(sorted(wrong))}, but another "
+        "model's stored recall on that class is higher"
+    )
+
+
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
     known = list(analysis.get("models", {}))
     tested = {
@@ -363,6 +401,10 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "RESULT_IN_METHOD",
                     f"a measured score appears in {name}; scores belong in Results",
                 )
+                continue
+            wrong_class = class_claim_problem(sent, analysis, known)
+            if wrong_class:
+                add(name, sent, "CLASS_CLAIM_WRONG", wrong_class)
                 continue
             if SCORE.search(sent) and not mentions(f"{ctx} {sent}", known):
                 add(

@@ -493,7 +493,8 @@ def _renumber(sentences: list[str]) -> list[str]:
         return sentences
     for n, i in enumerate(ordinal_idx):
         s = sentences[i]
-        if s.startswith(("Finally", "Lastly")) and n == len(ordinal_idx) - 1:
+        # 'Finally' reads well after three or more points; after one it reads as a gap
+        if s.startswith(("Finally", "Lastly")) and n == len(ordinal_idx) - 1 and n >= 2:
             continue
         sentences[i] = _ORDINAL.sub(f"{_ORDINALS[min(n, len(_ORDINALS) - 1)]}, ", s, count=1)
     return sentences
@@ -502,6 +503,8 @@ def _renumber(sentences: list[str]) -> list[str]:
 def _rebuild(body: str, drop: set[str]) -> str:
     """Rebuild a section without the dropped sentences, cleaning connectives and orphans."""
     out_lines = []
+    # A removal at the end of one paragraph also orphans an 'It ...' that opens the next one.
+    prev_dropped = False
     for line in body.split("\n"):
         if not line.strip() or line.lstrip().startswith(("|", "#", ">")):
             out_lines.append(line)
@@ -509,7 +512,6 @@ def _rebuild(body: str, drop: set[str]) -> str:
         m = re.match(r"^(\s*(?:[-*+]|\d+\.)\s+)", line)
         prefix, text = (m.group(1), line[m.end() :]) if m else ("", line)
         kept: list[str] = []
-        prev_dropped = False
         for s in split_sentences(text):
             if s in drop or (prev_dropped and _PRONOUN.match(s)):
                 prev_dropped = True
@@ -658,11 +660,7 @@ def lock_evidence(
         if rich and name in ("Abstract", "Conclusion") and _states_all_hypotheses(kept, analysis):
             pass  # the writer already reported every tested hypothesis (from placeholders)
         elif rich and name == "Discussion":
-            lead = [
-                p
-                for p in (untested_pairs_sentence(analysis), _missing_operational(kept, analysis))
-                if p
-            ]
+            lead = [p for p in (_missing_operational(kept, analysis),) if p]
             if accuracy_gap_models(analysis) and not re.search(r"balanced accuracy", kept, re.I):
                 lead.append(gap_text(analysis))
             kept = "\n\n".join(([kept] if kept else []) + lead)

@@ -37,6 +37,45 @@ ALLOWED_PLAIN_NUMBERS = {
 }
 
 
+# counts the platform itself uses and reports in the Methodology (bootstrap resamples,
+# permutations)
+METHOD_COUNTS = {"500", "1000"}
+
+
+# '(Finding F-acc)', '(F1)', '[C012]', 'claim C003': labels from the evidence brief
+INTERNAL_ID = re.compile(
+    r"\s*[\(\[](?:(?:finding|claim)\s+)?(?:F-?[A-Za-z0-9]+|C\d{3}|H\d+-?claim)[\)\]]"
+    r"|\s*\((?:see\s+)?(?:finding|claim)\s+[A-Za-z0-9-]+\)",
+    re.I,
+)
+
+
+def strip_internal_ids(text: str) -> str:
+    return INTERNAL_ID.sub("", text)
+
+
+def evidence_integers(analysis: dict[str, Any]) -> set[str]:
+    """Whole numbers recorded in the analysis (seeds, per-class test rows, split sizes, trials):
+    a writer quoting one of them is quoting evidence, not inventing a number."""
+    found: set[str] = set(METHOD_COUNTS)
+
+    def walk(v: Any) -> None:
+        if isinstance(v, bool):
+            return
+        if isinstance(v, int):
+            if 10 <= v < 10_000_000:
+                found.add(str(v))
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list | tuple):
+            for x in v:
+                walk(x)
+
+    walk(analysis)
+    return found
+
+
 @dataclass
 class EvidenceReport:
     resolved: list[dict[str, Any]] = field(default_factory=list)
@@ -178,9 +217,11 @@ def render_text(
         )
         return f"95% CI [{_fmt(ci['low'])}, {_fmt(ci['high'])}], {_ci_label(mdl or {})}"
 
+    recorded = evidence_integers(analysis)
+
     def check_numbers(segment: str) -> str:
         def num(m: re.Match[str]) -> str:
-            if m.group(1) in ALLOWED_PLAIN_NUMBERS:
+            if m.group(1) in ALLOWED_PLAIN_NUMBERS or m.group(1) in recorded:
                 return m.group(0)
             report.flag(
                 sev,

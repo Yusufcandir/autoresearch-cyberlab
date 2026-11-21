@@ -275,16 +275,28 @@ def _matrix_sentence(name: str, key: str, row: dict[str, Any]) -> str | None:
     )
     if not method:
         return None
+    # several phrasings, chosen by the citation key, so a list of papers does not read as a
+    # template repeated line after line
+    n = sum(map(ord, key))
     lead = name or "One study"
-    text = f"{lead} [@{key}] studied {_lower_first(method)}"
+    verb = ("studied", "proposed", "examined", "evaluated")[n % 4]
+    text = f"{lead} [@{key}] {verb} {_lower_first(method)}"
     if dataset:
-        text += f" ({dataset})"
+        text += (f" on {dataset}", f" using {dataset}")[n % 2]
     if finding and not re.search(r"\d", finding):
-        text += f". Main finding reported: {_upper_first(finding)}"
+        link = ("and reported that", "finding that", "and observed that")[n % 3]
+        text += f" {link} {_lower_first(finding)}"
     return text + "."
 
 
-EMPTY = re.compile(r"(?i)|n/?a|none|-|unknown|not (?:stated|specified|reported|given|available)")
+EMPTY = re.compile(
+    r"(?i)\s*(?:|n/?a|none|-|unknown|not (?:stated|specified|reported|given|available|clear)\b.*)"
+)
+# 'Zarqa Technical Intermediate College': a registry sometimes lists an affiliation as author
+INSTITUTION = re.compile(
+    r"(?i)\b(?:college|university|institute|department|school|laborator(?:y|ies)|faculty|"
+    r"academy|centre|center|ministry|corporation|inc\.|ltd)\b"
+)
 
 
 def _lower_first(s: str) -> str:
@@ -318,7 +330,7 @@ def backfill_related_work(
     matrix = matrix or {}
 
     def name(k: str) -> str:
-        authors = [a for a in papers[k].get("authors") or [] if a]
+        authors = [a for a in papers[k].get("authors") or [] if a and not INSTITUTION.search(a)]
         if not authors:
             return ""
         s1 = str(authors[0]).split()[-1]

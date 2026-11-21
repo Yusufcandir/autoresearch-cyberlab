@@ -359,10 +359,11 @@ def test_related_work_uses_the_evidence_matrix_and_drops_numeric_findings() -> N
     out, n = backfill_related_work(md, papers, matrix)
     assert n == 3
     assert (
-        "Smith et al. [@A] studied federated transfer learning (CIC-IDS2017). Main finding "
-        "reported: Rare attacks" in out
+        "Smith et al. [@A] proposed federated transfer learning using CIC-IDS2017 and observed "
+        "that rare attacks" in out
     )
-    assert "Kim [@B] studied adaptive SMOTE." in out and "99.1" not in out
+    assert "Kim [@B] examined adaptive SMOTE." in out and "99.1" not in out
+    assert "Main finding reported" not in out  # no repeated template phrase
     assert "“Paper C” [@C]" in out
 
 
@@ -371,7 +372,7 @@ def test_matrix_sentence_skips_placeholders_and_keeps_acronyms() -> None:
 
     assert _matrix_sentence("Moustafa and Slay", "K", {"method": "not stated"}) is None
     s = _matrix_sentence("M", "K", {"method": "SMOTE oversampling", "dataset": "Not specified"})
-    assert s == "M [@K] studied SMOTE oversampling."
+    assert s == "M [@K] evaluated SMOTE oversampling."  # wording varies by citation key
 
 
 def test_operational_text_reports_fpr_and_missed_classes() -> None:
