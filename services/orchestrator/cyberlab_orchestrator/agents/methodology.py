@@ -80,6 +80,8 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     problems += design
     protocol, fit = _fit_modality(protocol, adapter, base)
     problems += fit
+    if spec is not None:  # the study's own compute budget, not the schema default
+        protocol = protocol.model_copy(update={"gpu_budget_minutes": spec.gpu_budget_minutes})
     with ctx.db.session() as s:
         version = (
             s.scalar(

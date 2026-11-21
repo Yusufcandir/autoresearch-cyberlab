@@ -117,11 +117,13 @@ class SplitSpec(Versioned):
     test_days: list[str] = Field(default_factory=list)
 
 
-StatTest = Literal["bootstrap_ci", "mcnemar"]
+StatTest = Literal["paired_permutation", "bootstrap_ci", "mcnemar"]
 
 
 def _default_tests() -> list[StatTest]:
-    return ["bootstrap_ci", "mcnemar"]
+    # paired permutation test on the hypothesis metric (with Holm correction) is the primary
+    # test; bootstrap intervals for effect sizes; McNemar is kept as a per-row secondary check
+    return ["paired_permutation", "bootstrap_ci", "mcnemar"]
 
 
 class TuningSpec(Versioned):
