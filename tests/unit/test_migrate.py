@@ -36,9 +36,9 @@ def test_db_upgrade_stamps_existing_and_creates_new(tmp_path) -> None:
 
     old = Database(f"sqlite:///{(tmp_path / 'old.db').as_posix()}")
     old.create_all()  # created before migrations existed
-    assert upgrade(old) == "0001_baseline"
+    assert upgrade(old) == "0002_app_settings"
     new = Database(f"sqlite:///{(tmp_path / 'new.db').as_posix()}")
-    assert upgrade(new) == "0001_baseline"
+    assert upgrade(new) == "0002_app_settings"
     from sqlalchemy import inspect
 
     assert "projects" in inspect(new.engine).get_table_names()

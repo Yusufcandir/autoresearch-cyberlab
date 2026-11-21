@@ -241,6 +241,17 @@ class CostRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class AppSetting(Base):
+    """Lab-wide settings changed from the dashboard (e.g. which Claude model to use).
+    Stored in the database so the web app and the worker see the same value."""
+
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200))
+    updated_by: Mapped[str] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class OutboxEvent(Base):
     """Transactional outbox (spec 10.2): events are written in the same transaction as state."""
 
@@ -321,3 +332,20 @@ def audit(
     s.add(AuditEvent(actor=actor, action=action, project_id=project_id, detail=payload))
     if emit:
         s.add(OutboxEvent(event_type=action, project_id=project_id, payload=payload))
+
+
+def get_setting(db: Database, key: str) -> str | None:
+    with db.session() as s:
+        row = s.get(AppSetting, key)
+        return row.value if row else None
+
+
+def set_setting(db: Database, key: str, value: str, actor: str) -> None:
+    with db.session() as s:
+        row = s.get(AppSetting, key)
+        old = row.value if row else None
+        if row is None:
+            s.add(AppSetting(key=key, value=value, updated_by=actor))
+        else:
+            row.value, row.updated_by, row.updated_at = value, actor, now()
+        audit(s, actor, "setting_changed", detail={"key": key, "from": old, "to": value})

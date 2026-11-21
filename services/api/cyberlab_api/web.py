@@ -45,8 +45,11 @@ from cyberlab_common.db import (
     ProtocolVersion,
     RunRecord,
     User,
+    get_setting,
+    set_setting,
 )
 from cyberlab_data import ADAPTERS, dataset_record_id, get_adapter
+from cyberlab_llm.gateway import CLAUDE_MODELS, CLAUDE_PRICES
 from cyberlab_orchestrator.lab import GateError, Lab
 from cyberlab_schemas import ResearchSpec, SplitSpec
 
@@ -169,7 +172,36 @@ def portfolio(
             )
             rows.append({"p": p, "jobs": jobs})
     pend = {r["p"].id: lab.pending(r["p"].id) for r in rows}
-    return render(request, lab, "portfolio.html", me, rows=rows, pending=pend)
+    return render(request, lab, "portfolio.html", me, rows=rows, pending=pend, **_model_ctx(lab))
+
+
+def _model_ctx(lab: Lab) -> dict[str, Any]:
+    chosen = get_setting(lab.db, "claude_model")
+    return {
+        "claude_on": (lab.settings.llm_provider or "").lower() == "claude",
+        "claude_models": CLAUDE_MODELS,
+        "claude_current": chosen if chosen in CLAUDE_PRICES else lab.settings.claude_model,
+    }
+
+
+@router.post("/settings/model")
+def model_post(
+    request: Request,
+    model: str = Form(),
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    """Dashboard model switch (admin or PI). Applies to the next Claude call of every study."""
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    if me.role not in ("admin", "pi"):
+        return _message("Not allowed", "Only an admin or PI can change the model.", "/")
+    if model not in dict(CLAUDE_MODELS):
+        return _message("Unknown model", f"{model!r} is not one of the offered models.", "/")
+    set_setting(lab.db, "claude_model", model, me.username)
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/projects/new", response_class=HTMLResponse)

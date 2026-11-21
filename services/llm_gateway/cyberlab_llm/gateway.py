@@ -231,6 +231,14 @@ CLAUDE_PRICES: dict[str, tuple[float, float, float]] = {
     "claude-sonnet-5-5": (2.00, 10.00, 0.10),
     "claude-haiku-5-5": (0.10, 0.50, 0.01),
 }
+# Models offered by the dashboard switch, cheapest first: (id, label).
+CLAUDE_MODELS: tuple[tuple[str, str], ...] = (
+    ("claude-haiku-5-5", "Haiku (cheapest, for testing)"),
+    ("claude-sonnet-5-5", "Sonnet (middle)"),
+    ("claude-opus-5-5", "Opus (best, for real studies)"),
+)
+# Server-side refusal fallbacks exist for these models only (not Haiku).
+_FALLBACK_MODELS = {"claude-opus-5-5", "claude-sonnet-5-5"}
 
 
 def claude_cost_usd(
@@ -272,20 +280,30 @@ class ClaudeProvider:
             api_key=api_key, timeout=timeout, max_retries=3
         )
 
-    def generate(self, system: str, prompt: str, json_mode: bool, temperature: float) -> LLMResult:
+    def generate(
+        self,
+        system: str,
+        prompt: str,
+        json_mode: bool,
+        temperature: float,
+        model: str | None = None,
+    ) -> LLMResult:
         # `temperature` is not sent: current Claude models reject sampling parameters.
         a = self._anthropic
+        model = model or self.model
+        extra: dict[str, Any] = (
+            {"betas": self.BETAS, "fallbacks": "default"} if model in _FALLBACK_MODELS else {}
+        )
         t0 = time.monotonic()
         try:
             with self.client.beta.messages.stream(
-                model=self.model,
+                model=model,
                 max_tokens=self.max_tokens,
                 system=system,
                 messages=[{"role": "user", "content": prompt}],
                 output_config={"effort": self.effort},
                 cache_control={"type": "ephemeral"},
-                betas=self.BETAS,
-                fallbacks="default",
+                **extra,
             ) as stream:
                 msg = stream.get_final_message()
         except a.AuthenticationError as exc:
@@ -310,7 +328,7 @@ class ClaudeProvider:
         result = LLMResult(
             text=text,
             provider=self.name,
-            model=str(msg.model or self.model),
+            model=str(msg.model or model),
             prompt_tokens=int(u.input_tokens) + cache_read + cache_write,
             output_tokens=int(u.output_tokens),
             seconds=time.monotonic() - t0,
@@ -423,6 +441,8 @@ class LLMGateway:
     private_lookup: Callable[[str], bool] | None = None
     # (project_id, task, message): live status such as 'Gemini busy, retrying'
     on_status: Callable[[str, str, str], None] | None = None
+    # The Claude model chosen on the dashboard (None = CLAUDE_MODEL from the environment).
+    model_lookup: Callable[[], str | None] | None = None
     # Seconds Gemini may keep retrying before a ready local model takes over (0 = never).
     handover_seconds: float = 20.0
     # After Gemini fails once, stay on the local model this long instead of retrying Gemini
@@ -490,7 +510,12 @@ class LLMGateway:
                         f"No local fallback: Ollama is not reachable at {self.local.host} "
                         f"or model {self.local.model} is not pulled"
                     )
-            result = provider.generate(full_system, redact(prompt), json_mode, temperature)
+            if isinstance(provider, ClaudeProvider):
+                result = provider.generate(
+                    full_system, redact(prompt), json_mode, temperature, self.claude_model()
+                )
+            else:
+                result = provider.generate(full_system, redact(prompt), json_mode, temperature)
         except LLMError as primary_error:
             if provider is self.primary and self.local is not None and self.local is not provider:
                 self._trip_breaker()
@@ -528,6 +553,16 @@ class LLMGateway:
             }
         )
         return result
+
+    def claude_model(self) -> str | None:
+        """The dashboard's model choice, if it names a known Claude model."""
+        if self.model_lookup is None:
+            return None
+        try:
+            chosen = self.model_lookup()
+        except Exception:  # a settings read must never stop a study
+            return None
+        return chosen if chosen in CLAUDE_PRICES else None
 
     def complete_json(self, task: str, system: str, prompt: str, **kw: Any) -> Any:
         last: Exception | None = None

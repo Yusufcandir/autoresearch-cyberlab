@@ -293,3 +293,30 @@ def test_build_gateway_claude_needs_key(tmp_path) -> None:
         build_gateway(Settings(_env_file=None, llm_provider="claude"))
     gw = build_gateway(Settings(_env_file=None, llm_provider="claude", anthropic_api_key="x"))
     assert gw.primary.name == "claude" and gw.handover_seconds == 0
+
+
+def test_claude_model_override_and_no_fallback_beta_on_haiku() -> None:
+    from cyberlab_llm.gateway import ClaudeProvider
+
+    fake = _FakeAnthropic(_msg())
+    p = ClaudeProvider("k", client=fake)
+    p.generate("s", "p", False, 0.2, model="claude-haiku-5-5")
+    assert fake.kwargs["model"] == "claude-haiku-5-5"
+    assert "fallbacks" not in fake.kwargs and "betas" not in fake.kwargs
+    p.generate("s", "p", False, 0.2, model="claude-sonnet-5-5")
+    assert fake.kwargs["model"] == "claude-sonnet-5-5" and fake.kwargs["fallbacks"] == "default"
+
+
+def test_gateway_uses_dashboard_model_choice() -> None:
+    from cyberlab_llm.gateway import ClaudeProvider, LLMGateway
+
+    fake = _FakeAnthropic(_msg())
+    gw = LLMGateway(ClaudeProvider("k", client=fake))
+    gw.complete("t", "s", "p")
+    assert fake.kwargs["model"] == "claude-opus-5-5"  # nothing chosen: the CLAUDE_MODEL default
+    gw.model_lookup = lambda: "claude-haiku-5-5"
+    gw.complete("t", "s", "p")
+    assert fake.kwargs["model"] == "claude-haiku-5-5"
+    gw.model_lookup = lambda: "gpt-oops"  # unknown values are ignored, never sent
+    gw.complete("t", "s", "p")
+    assert fake.kwargs["model"] == "claude-opus-5-5"

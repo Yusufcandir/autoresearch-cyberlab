@@ -2,6 +2,13 @@
 {% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
 {% block content %}
 <div style="display:flex;align-items:center;gap:12px"><h1 style="flex:1">Studies</h1><a class="btn" href="/projects/new">New study</a></div>
+{% if claude_on %}<div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+<strong>Claude model</strong>
+{% if me.role in ['admin','pi'] %}<form method="post" action="/settings/model" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="hidden" name="csrf" value="{{ csrf }}">
+{% for mid, label in claude_models %}<button name="model" value="{{ mid }}" class="{{ '' if mid == claude_current else 'secondary' }} small"{% if mid == claude_current %} disabled{% endif %}>{{ '✓ ' if mid == claude_current }}{{ label }}</button>{% endfor %}
+</form>{% else %}<span>{% for mid, label in claude_models %}{% if mid == claude_current %}{{ label }}{% endif %}{% endfor %}</span>{% endif %}
+<span class="muted">Applies to the next step of every study; each study's cost ledger records the model used.</span>
+</div>{% endif %}
 <div class="card">
 {% if rows %}
 <table>

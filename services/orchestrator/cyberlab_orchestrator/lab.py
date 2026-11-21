@@ -23,6 +23,7 @@ from cyberlab_common.db import (
     Project,
     ProtocolVersion,
     audit,
+    get_setting,
     now,
 )
 from cyberlab_evidence import ArtifactStore
@@ -66,6 +67,7 @@ class Lab:
         gateway.charge_usd = self._charge_usd
         gateway.private_lookup = self._private
         gateway.on_status = self._llm_status
+        gateway.model_lookup = lambda: get_setting(self.db, "claude_model")
         self.ctx = LabContext(
             settings=settings,
             db=self.db,

@@ -141,3 +141,28 @@ def test_dashboard_pages(client: tuple[TestClient, Lab]) -> None:
     assert "How we know it is not hallucinating" in page.text and "doi.org/10.5220" in page.text
     live = c.get(r.headers["location"] + "/live")
     assert live.status_code == 200 and "stamp" in live.json()
+
+
+def test_dashboard_model_switch(client: tuple[TestClient, Lab]) -> None:
+    from cyberlab_common.db import get_setting
+
+    c, lab = client
+    lab.settings.llm_provider = "claude"
+    c.post("/login", data={"username": "mallory", "password": PW})
+    page = c.get("/").text
+    assert (
+        "Claude model" in page and 'action="/settings/model"' not in page
+    )  # researcher: view only
+    c.post("/login", data={"username": "prof", "password": PW})
+    page = c.get("/").text
+    csrf = page.split('name="csrf" value="')[1].split('"')[0]
+    assert c.post("/settings/model", data={"model": "nope", "csrf": csrf}).status_code != 303
+    assert get_setting(lab.db, "claude_model") is None
+    r = c.post(
+        "/settings/model",
+        data={"model": "claude-haiku-5-5", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and get_setting(lab.db, "claude_model") == "claude-haiku-5-5"
+    assert "✓ Haiku" in c.get("/").text
+    assert lab.ctx.llm.claude_model() == "claude-haiku-5-5"
