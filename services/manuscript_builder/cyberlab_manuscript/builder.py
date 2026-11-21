@@ -62,6 +62,9 @@ def strip_internal_ids(text: str) -> str:
         text,
     )
     text = re.sub(r"\b(H\d+):?\s+(?=\1\b)", "", text)
+    head, nl, rest = text.partition("\n")
+    if rest:
+        text = head + nl + re.sub(r"(?m)^#[ \t]+[^\n]*\n", "", rest)
     # '**Tree Ensembles and Boosting:**' on its own line reads as a slide, not a paper
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)

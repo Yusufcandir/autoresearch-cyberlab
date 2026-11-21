@@ -200,3 +200,24 @@ def test_v14_false_positive_direction_and_fragments() -> None:
     assert strip_internal_ids("Metrics matter. This aligns with\n\nNext para.") == (
         "Metrics matter.\n\nNext para."
     )
+
+
+def test_v20_claims_are_checked() -> None:
+    from cyberlab_manuscript.consistency import COMPARE, fpr_claim_problem
+
+    def m(fpr: float) -> dict[str, Any]:
+        return {"aggregate": {"false_positive_rate": {"mean": fpr}}, "per_class": {}}
+
+    a = {"models": {"lightgbm": m(0.2247), "random_forest": m(0.3897)}}
+    known = ["lightgbm", "random_forest"]
+    s = (
+        "The higher macro-F1 scores suggest better performance, but random forest has a lower "
+        "false positive rate compared to LightGBM."
+    )
+    assert fpr_claim_problem(s, a, known)
+    assert COMPARE.search("LightGBM achieves different performance from random forest")
+    low = "LightGBM has lower recall for Worms and Backdoor."
+    assert "Worms" in (class_claim_problem(low, _analysis(), known) or "")
+    assert strip_internal_ids("# Title\n\n## Related Work\n\n# Deep Learning\nText.") == (
+        "# Title\n\n## Related Work\n\nText."
+    )

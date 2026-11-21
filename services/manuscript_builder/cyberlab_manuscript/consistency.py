@@ -37,6 +37,7 @@ COMPARE = re.compile(
     r"\b(outperform\w*|better than|worse than|superior|inferior|surpass\w*|exceed\w*|"
     r"beat\w*|comparabl\w*|on par|similar(?:ly)? to|(?:higher|lower|greater) (?:\S+ ){0,2}than|"
     r"advantage over|edge over|improvement over|gain over|"
+    r"differ\w* (?:\S+ ){0,2}from|different (?:\S+ ){0,2}(?:from|than)|"
     r"(?:better|worse|higher|lower)\b[^.,;]{0,40}?\bcompared (?:to|with))\b",
     re.I,
 )
@@ -306,12 +307,18 @@ CLASS_CLAIM = re.compile(
     r"|\brecall\b[^.]{0,60}\b(better|higher|stronger|superior|improved|best)\b",
     re.I,
 )
+CLASS_CLAIM_LOW = re.compile(
+    r"\b(lower|worse|weaker|poorer|lowest|worst)\b[^.]{0,30}\brecall\b"
+    r"|\brecall\b[^.]{0,30}\b(lower|worse|weaker|poorer|lowest|worst)\b",
+    re.I,
+)
 
 
 def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]) -> str | None:
     """'X has better recall for Worms and Backdoor': X must have the highest stored recall
     (first seed) on every class the sentence names."""
-    if not CLASS_CLAIM.search(sentence):
+    lower = bool(CLASS_CLAIM_LOW.search(sentence)) and not CLASS_CLAIM.search(sentence)
+    if not CLASS_CLAIM.search(sentence) and not lower:
         return None
     models = analysis.get("models", {})
     named = [n for _, n in mentions(sentence, known)]
@@ -341,13 +348,18 @@ def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str
             for n in per_class
             if n != subject and per_class[n].get(c)
         ]
-        if mine is not None and any(o is not None and o > mine for o in others):
+        if mine is None:
+            continue
+        if lower and any(o is not None and o < mine for o in others):
+            wrong.append(c)
+        elif not lower and any(o is not None and o > mine for o in others):
             wrong.append(c)
     if not wrong:
         return None
+    word, other = ("lower", "lower") if lower else ("better", "higher")
     return (
-        f"says {subject.replace('_', ' ')} has better recall on {', '.join(sorted(wrong))}, but another "
-        "model's stored recall on that class is higher"
+        f"says {subject.replace('_', ' ')} has {word} recall on {', '.join(sorted(wrong))}, but "
+        f"another model's stored recall on that class is {other}"
     )
 
 
@@ -366,7 +378,10 @@ def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str])
     after = sentence[FPR_WORDS.search(sentence).end() :]  # type: ignore[union-attr]
     if any(re.search(rf"\b(?:for|on|of)\b[^.]{{0,40}}\b{re.escape(c)}\b", after) for c in classes):
         return "gives a false-positive rate per attack class, but it is defined on BENIGN rows"
-    low, high = bool(LOW.search(sentence)), bool(HIGH.search(sentence))
+    hit = FPR_WORDS.search(sentence)
+    assert hit is not None
+    window = sentence[max(0, hit.start() - 40) : hit.end() + 25]
+    low, high = bool(LOW.search(window)), bool(HIGH.search(window))
     if low == high:  # no direction, or both ('lower recall but more false alarms'): skip
         return None
     named = list(dict.fromkeys(n for _, n in mentions(sentence, known)))
