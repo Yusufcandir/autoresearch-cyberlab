@@ -53,7 +53,14 @@ INTERNAL_ID = re.compile(
 def strip_internal_ids(text: str) -> str:
     text = INTERNAL_ID.sub("", text)
     # the writer often names the hypothesis before its placeholder: 'H1 {{hyp:H1}}'
-    text = re.sub(r"\s*\((?:validation )?warning:\s*[a-z_ ]+\)", "", text, flags=re.I)
+    text = re.sub(r"\s*\((?:validation )?warnings?(?::\s*[a-z_ ,]+)?\)", "", text, flags=re.I)
+    # a sentence cut off where an unsupported citation was removed: 'This aligns with'
+    text = re.sub(
+        r"(?m)(?:(?<=[.!?])[ \t]+|^)[A-Z][^.!?\n]{0,120}\b(?:with|to|by|of|in|and|as|from|than|"
+        r"such as|including|like)[ \t]*$",
+        "",
+        text,
+    )
     text = re.sub(r"\b(H\d+):?\s+(?=\1\b)", "", text)
     # '**Tree Ensembles and Boosting:**' on its own line reads as a slide, not a paper
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)

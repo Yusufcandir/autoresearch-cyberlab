@@ -179,3 +179,24 @@ def test_v12_claims_are_checked() -> None:
     assert NOVELTY.search("this study uniquely evaluates LightGBM")
     assert OVERFIT.search("indicating overfitting to the majority class")
     assert _lower_first("Signal-processing feature construction").startswith("signal-processing")
+
+
+def test_v14_false_positive_direction_and_fragments() -> None:
+    from cyberlab_manuscript.consistency import fpr_claim_problem
+
+    def m(fpr: float) -> dict[str, Any]:
+        return {"aggregate": {"false_positive_rate": {"mean": fpr}}, "per_class": {}}
+
+    a = {"models": {"lightgbm": m(0.2247), "random_forest": m(0.3897), "resnet_mlp": m(0.3712)}}
+    known = ["lightgbm", "random_forest", "resnet_mlp"]
+    wrong = (
+        "The false positive rate is lower for Random Forest compared to LightGBM and ResNet-MLP."
+    )
+    assert fpr_claim_problem(wrong, a, known)
+    assert fpr_claim_problem("Random forest minimizes false alarms best.", a, known)
+    assert fpr_claim_problem("LightGBM had the lowest false-positive rate.", a, known) is None
+    assert fpr_claim_problem("Random forest had a higher false-positive rate.", a, known) is None
+    assert strip_internal_ids("leakage (Validation Warnings). Next.") == "leakage. Next."
+    assert strip_internal_ids("Metrics matter. This aligns with\n\nNext para.") == (
+        "Metrics matter.\n\nNext para."
+    )

@@ -351,8 +351,9 @@ def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str
     )
 
 
-FPR_WORDS = re.compile(r"\bfalse[- ]positive", re.I)
-HIGH = re.compile(r"\b(high|higher|highest|elevated|excessive|many|more)\b", re.I)
+FPR_WORDS = re.compile(r"\bfalse[- ](?:positive|alarm)", re.I)
+HIGH = re.compile(r"\b(high|higher|highest|elevated|excessive|many|more|worse)\b", re.I)
+LOW = re.compile(r"\b(low|lower|lowest|fewer|fewest|less|least|minimi[sz]\w*|better)\b", re.I)
 
 
 def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]) -> str | None:
@@ -365,18 +366,40 @@ def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str])
     after = sentence[FPR_WORDS.search(sentence).end() :]  # type: ignore[union-attr]
     if any(re.search(rf"\b(?:for|on|of)\b[^.]{{0,40}}\b{re.escape(c)}\b", after) for c in classes):
         return "gives a false-positive rate per attack class, but it is defined on BENIGN rows"
-    if not HIGH.search(sentence):
+    low, high = bool(LOW.search(sentence)), bool(HIGH.search(sentence))
+    if low == high:  # no direction, or both ('lower recall but more false alarms'): skip
         return None
-    named = [n for _, n in mentions(sentence, known)]
+    named = list(dict.fromkeys(n for _, n in mentions(sentence, known)))
     rates: dict[str, float] = {}
     for n in models:
         r = ((models[n].get("aggregate") or {}).get("false_positive_rate") or {}).get("mean")
         if r is not None:
             rates[n] = float(r)
-    if named and len(rates) > 1 and named[0] in rates and rates[named[0]] == min(rates.values()):
+    if not named or named[0] not in rates or len(rates) < 2:
+        return None
+    subject = named[0]
+    # compared with the other models it names, or with all models when it names none
+    others = [n for n in named[1:] if n in rates] or [n for n in rates if n != subject]
+    pretty_subject = subject.replace("_", " ")
+    if low and any(rates[o] < rates[subject] for o in others):
         return (
-            f"says {named[0].replace('_', ' ')} has a high false-positive rate, but it has the "
-            "lowest stored rate of all models"
+            f"says {pretty_subject} has the lower false-positive rate, but its stored rate "
+            f"({rates[subject]:.4f}) is higher than "
+            + ", ".join(
+                f"{o.replace('_', ' ')} ({rates[o]:.4f})"
+                for o in others
+                if rates[o] < rates[subject]
+            )
+        )
+    if high and any(rates[o] > rates[subject] for o in others):
+        return (
+            f"says {pretty_subject} has the higher false-positive rate, but its stored rate "
+            f"({rates[subject]:.4f}) is lower than "
+            + ", ".join(
+                f"{o.replace('_', ' ')} ({rates[o]:.4f})"
+                for o in others
+                if rates[o] > rates[subject]
+            )
         )
     return None
 
