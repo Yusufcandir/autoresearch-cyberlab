@@ -13,7 +13,7 @@ from cyberlab_data import get_adapter, prepared_dir_for
 from cyberlab_literature import Paper, bibtex_entry
 from cyberlab_llm import LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
-from cyberlab_manuscript.builder import strip_internal_ids
+from cyberlab_manuscript.builder import link_author_year, strip_internal_ids
 from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_manuscript.evidence_text import lock_evidence
 from cyberlab_orchestrator.agents.storyline import (
@@ -369,7 +369,7 @@ def writing_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
     )
     # Evidence statements are generated, never written by the model (see evidence_text).
     md, dropped = lock_evidence(md, analysis, facts, prose, rich=True)
-    md = strip_internal_ids(md)
+    md = link_author_year(strip_internal_ids(md), cites)
     if unresolved:  # the critic still finds major problems: stop for the authors
         report.flag(
             "warning",

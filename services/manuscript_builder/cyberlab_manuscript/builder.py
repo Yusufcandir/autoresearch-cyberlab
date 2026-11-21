@@ -51,7 +51,39 @@ INTERNAL_ID = re.compile(
 
 
 def strip_internal_ids(text: str) -> str:
-    return INTERNAL_ID.sub("", text)
+    text = INTERNAL_ID.sub("", text)
+    # the writer often names the hypothesis before its placeholder: 'H1 {{hyp:H1}}'
+    text = re.sub(r"\b(H\d+)\s+(?=\1\b)", "", text)
+    return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
+
+
+def _surname(author: str) -> str:
+    parts = str(author).replace(",", " ").split()
+    return parts[-1] if parts else ""
+
+
+def link_author_year(markdown: str, citations: dict[str, dict[str, Any]]) -> str:
+    """'Abbas et al. (2023)' written as plain text becomes 'Abbas et al. [@Abbas2023...]' when
+    exactly one verified reference has that first author and year, so it counts as cited."""
+    index: dict[tuple[str, int], list[str]] = {}
+    for key, c in citations.items():
+        if c.get("status") != "Verified" or not c.get("authors") or not c.get("year"):
+            continue
+        index.setdefault((_surname(c["authors"][0]).lower(), int(c["year"])), []).append(key)
+
+    def repl(m: re.Match[str]) -> str:
+        keys = index.get((m.group(1).lower(), int(m.group(3))), [])
+        if len(keys) != 1:
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2) or ''} [@{keys[0]}]"
+
+    body, sep, refs = markdown.partition("\n## References")
+    body = re.sub(
+        r"\b([A-Z][A-Za-z'\-]+)((?: et al\.| and [A-Z][A-Za-z'\-]+)?) \((\d{4})\)(?! ?\[@)",
+        repl,
+        body,
+    )
+    return body + sep + refs
 
 
 def evidence_integers(analysis: dict[str, Any]) -> set[str]:

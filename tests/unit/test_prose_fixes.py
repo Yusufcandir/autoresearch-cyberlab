@@ -71,3 +71,49 @@ def test_institution_is_not_an_author_and_empty_dataset_is_skipped() -> None:
         {"method": "SMOTE with ensembles", "dataset": "Not specified explicitly in abstract"},
     )
     assert s is not None and "Not specified" not in s and "Main finding reported" not in s
+
+
+def test_hypothesis_label_is_not_doubled() -> None:
+    assert strip_internal_ids("better (H1 H1 (supported)).") == "better (H1 supported)."
+    assert strip_internal_ids("H1 H1 (supported)") == "H1 (supported)"
+
+
+def test_author_year_mentions_become_citations() -> None:
+    from cyberlab_manuscript.builder import link_author_year
+
+    cites = {
+        "Abbas2023optimization": {"status": "Verified", "authors": ["Qaiser Abbas"], "year": 2023},
+        "Gupta2025improving": {"status": "Verified", "authors": ["Harsh Gupta"], "year": 2025},
+    }
+    md = "## Related Work\n\nAbbas et al. (2023) proposed X. Gupta (2025) compared Y. Lee (2020) Z.\n"
+    out = link_author_year(md, cites)
+    assert "Abbas et al. [@Abbas2023optimization] proposed" in out
+    assert "Gupta [@Gupta2025improving] compared" in out and "Lee (2020)" in out
+
+
+def test_false_positive_rate_claims_are_checked() -> None:
+    from cyberlab_manuscript.consistency import fpr_claim_problem
+
+    def m(fpr: float) -> dict[str, Any]:
+        return {
+            "aggregate": {"false_positive_rate": {"mean": fpr}},
+            "per_class": {"Backdoor": {"recall": 0.5}, "BENIGN": {"recall": 0.9}},
+        }
+
+    a = {"models": {"lightgbm": m(0.22), "random_forest": m(0.39)}}
+    known = ["lightgbm", "random_forest"]
+    assert fpr_claim_problem("LightGBM exhibits high false positive rates.", a, known)
+    assert fpr_claim_problem("Random forest has a higher false-positive rate.", a, known) is None
+    assert fpr_claim_problem("It has high false positive rates for Backdoor.", a, known)
+
+
+def test_backfilled_finding_gets_a_subject_and_names_stay_capitalised() -> None:
+    from cyberlab_orchestrator.agents.reviewer import _lower_first, _matrix_sentence
+
+    assert _lower_first("Random Forest achieved high accuracy").startswith("Random Forest")
+    s = _matrix_sentence(
+        "Abbas et al.",
+        "Abbas2023optimization",
+        {"method": "hybrid ensemble", "finding": "Yielded high overall accuracy"},
+    )
+    assert s is not None and "that the approach yielded" in s

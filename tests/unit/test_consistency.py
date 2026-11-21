@@ -362,7 +362,7 @@ def test_related_work_uses_the_evidence_matrix_and_drops_numeric_findings() -> N
         "Smith et al. [@A] proposed federated transfer learning using CIC-IDS2017 and observed "
         "that rare attacks" in out
     )
-    assert "Kim [@B] examined adaptive SMOTE." in out and "99.1" not in out
+    assert "Kim [@B] examined Adaptive SMOTE." in out and "99.1" not in out
     assert "Main finding reported" not in out  # no repeated template phrase
     assert "“Paper C” [@C]" in out
 

@@ -284,7 +284,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 <td class="num">[{{ '%.4f'|format(m.macro_f1_ci.low) }}, {{ '%.4f'|format(m.macro_f1_ci.high) }}]</td>
 <td class="num">{{ '%.4f'|format(a.accuracy.mean) }}</td><td class="num">{{ '%.4f'|format(a.mcc.mean) }}</td>
 <td class="num">{% if a.false_positive_rate %}{{ '%.4f'|format(a.false_positive_rate.mean) }}{% endif %}</td></tr>{% endfor %}</table>
-<h3>Hypotheses</h3><ul>{% for h in analysis.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} → <b>{{ h.result }}</b>{% if h.mcnemar %} <span class="muted">(McNemar p = {{ '%.3g'|format(h.mcnemar.p_value) }})</span>{% endif %}</li>{% endfor %}</ul>
+<h3>Hypotheses</h3><ul>{% for h in analysis.hypotheses %}<li><b>{{ h.id }}</b> {{ h.statement }} → <b>{{ h.result }}</b>{% if h.p_holm is defined %} <span class="muted">(paired permutation test, Holm-adjusted p {{ '< 0.001' if h.p_holm < 0.001 else '= %.3g'|format(h.p_holm) }})</span>{% elif h.mcnemar %} <span class="muted">(McNemar p = {{ '%.3g'|format(h.mcnemar.p_value) }})</span>{% endif %}</li>{% endfor %}</ul>
 {% if notes.interpretation %}<h3>Statistician's reading <span class="label Proposed">Proposed</span></h3><p>{{ notes.interpretation.interpretation|text }}</p>
 {% set cv = notes.interpretation.caveats|aslist %}{% if cv %}<ul>{% for c in cv %}<li class="muted">{{ c|text }}</li>{% endfor %}</ul>{% endif %}{% endif %}
 {% else %}<div class="empty"><span class="icon">📊</span>No results yet.</div>{% endif %}

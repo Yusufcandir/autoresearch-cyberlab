@@ -339,6 +339,36 @@ def class_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str
     )
 
 
+FPR_WORDS = re.compile(r"\bfalse[- ]positive", re.I)
+HIGH = re.compile(r"\b(high|higher|highest|elevated|excessive|many|more)\b", re.I)
+
+
+def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]) -> str | None:
+    """'LightGBM exhibits high false-positive rates' when LightGBM has the lowest stored rate,
+    or a false-positive rate 'for Backdoor' (it is defined on BENIGN rows only)."""
+    if not FPR_WORDS.search(sentence):
+        return None
+    models = analysis.get("models", {})
+    classes = {c for m in models.values() for c in (m.get("per_class") or {}) if c != "BENIGN"}
+    after = sentence[FPR_WORDS.search(sentence).end() :]  # type: ignore[union-attr]
+    if any(re.search(rf"\b(?:for|on|of)\b[^.]{{0,40}}\b{re.escape(c)}\b", after) for c in classes):
+        return "gives a false-positive rate per attack class, but it is defined on BENIGN rows"
+    if not HIGH.search(sentence):
+        return None
+    named = [n for _, n in mentions(sentence, known)]
+    rates = {
+        n: ((models[n].get("aggregate") or {}).get("false_positive_rate") or {}).get("mean")
+        for n in models
+    }
+    rates = {n: r for n, r in rates.items() if r is not None}
+    if named and len(rates) > 1 and named[0] in rates and rates[named[0]] == min(rates.values()):
+        return (
+            f"says {named[0].replace('_', ' ')} has a high false-positive rate, but it has the "
+            "lowest stored rate of all models"
+        )
+    return None
+
+
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
     known = list(analysis.get("models", {}))
     tested = {
@@ -401,6 +431,10 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     "RESULT_IN_METHOD",
                     f"a measured score appears in {name}; scores belong in Results",
                 )
+                continue
+            wrong_fpr = fpr_claim_problem(sent, analysis, known)
+            if wrong_fpr:
+                add(name, sent, "FPR_CLAIM_WRONG", wrong_fpr)
                 continue
             wrong_class = class_claim_problem(sent, analysis, known)
             if wrong_class:

@@ -285,7 +285,10 @@ def _matrix_sentence(name: str, key: str, row: dict[str, Any]) -> str | None:
         text += (f" on {dataset}", f" using {dataset}")[n % 2]
     if finding and not re.search(r"\d", finding):
         link = ("and reported that", "finding that", "and observed that")[n % 3]
-        text += f" {link} {_lower_first(finding)}"
+        f = _lower_first(finding)
+        if re.match(r"(?:[a-z]+ed|achieves?|shows?|provides?|outperforms?|improves?)\b", f):
+            f = "the approach " + f  # 'yielded high accuracy' has no subject of its own
+        text += f" {link} {f}"
     return text + "."
 
 
@@ -301,7 +304,10 @@ INSTITUTION = re.compile(
 
 def _lower_first(s: str) -> str:
     """Lower-case a leading ordinary word, never an acronym or name (SMOTE, XGBoost, Pegasos-QSVC)."""
-    w = s.split(" ", 1)[0]
+    w, _, rest = s.partition(" ")
+    nxt = rest.split(" ", 1)[0]
+    if nxt[:1].isupper():  # 'Random Forest', 'Signal-processing Feature': a name, keep it
+        return s
     if len(w) > 1 and w[0].isupper() and w[1:].islower() and w.isalpha():
         return s[0].lower() + s[1:]
     return s
@@ -349,9 +355,7 @@ def backfill_related_work(
                 (f"{name(k)}, " if name(k) else "")
                 + f"“{str(papers[k].get('title') or '').rstrip('.')}” [@{k}]"
             )
-    paras = []
-    if sentences:
-        paras.append(" ".join(sentences))
+    paras = [" ".join(sentences[i : i + 3]) for i in range(0, len(sentences), 3)]
     if listed:
         paras.append("Other work relevant to this study includes " + "; ".join(listed) + ".")
     new_body = body.rstrip() + "\n\n" + "\n\n".join(paras) + "\n\n"
