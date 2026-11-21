@@ -405,3 +405,17 @@ def test_wrong_primary_metric_is_flagged() -> None:
     assert _claimed_primary("We used macro-F1 as the primary metric.") == "macro_f1"
     assert _claimed_primary("Balanced accuracy is the primary metric here.") == "balanced_accuracy"
     assert _claimed_primary("Accuracy can be misleading.") is None
+
+
+def test_model_names_match_with_hyphens_and_spaces() -> None:
+    from cyberlab_manuscript.consistency import mentions
+
+    known = ["resnet_mlp", "lightgbm", "random_forest", "ft_transformer"]
+    for text, name in [
+        ("The ResNet-MLP reached a macro-F1 of 0.47.", "resnet_mlp"),
+        ("ResNetMLP was weakest.", "resnet_mlp"),
+        ("The FT-Transformer and LightGBM", "ft_transformer"),
+        ("Random forest is the baseline.", "random_forest"),
+    ]:
+        assert name in [n for _, n in mentions(text, known)], text
+    assert not mentions("a resnetmlpx model", ["resnet_mlp"])

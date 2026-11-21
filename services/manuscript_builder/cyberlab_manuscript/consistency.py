@@ -109,7 +109,9 @@ def mentions(sentence: str, known: list[str]) -> list[tuple[int, str]]:
     """(position, model) for every model named in the sentence, in reading order."""
     found: list[tuple[int, str]] = []
     for name in known:
-        pats = MODEL_ALIASES.get(name, (re.escape(name), re.escape(name.replace("_", " "))))
+        # 'resnet_mlp' is written 'ResNet-MLP', 'resnet mlp' or 'ResNetMLP' in prose
+        loose = r"\b" + r"[\s_-]?".join(re.escape(w) for w in name.split("_")) + r"\b"
+        pats = (*MODEL_ALIASES.get(name, ()), loose)
         for pat in pats:
             found += [(m.start(), name) for m in re.finditer(pat, sentence, re.I)]
     for pat, members in MODEL_GROUPS.items():
