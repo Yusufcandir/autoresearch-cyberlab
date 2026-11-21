@@ -16,7 +16,7 @@ import json
 import re
 from typing import Any
 
-from cyberlab_llm import LLMError
+from cyberlab_llm import BudgetExceeded, LLMError
 from cyberlab_manuscript.consistency import accuracy_gap_models
 from cyberlab_manuscript.evidence_text import pretty, primary_metric
 from cyberlab_orchestrator.context import LabContext
@@ -214,6 +214,8 @@ REFEREE_SYSTEM = (
 def _call(ctx: LabContext, pid: str, task: str, system: str, payload: dict[str, Any]) -> Any:
     try:
         return ctx.llm.complete_json(task, system, json.dumps(payload, default=str), project_id=pid)
+    except BudgetExceeded:
+        raise  # an optional step must not hide that the study's budget is used up
     except LLMError:
         return {}
 

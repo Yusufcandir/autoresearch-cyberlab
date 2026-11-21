@@ -57,11 +57,6 @@ def strip_internal_ids(text: str) -> str:
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
 
 
-def _surname(author: str) -> str:
-    parts = str(author).replace(",", " ").split()
-    return parts[-1] if parts else ""
-
-
 def link_author_year(markdown: str, citations: dict[str, dict[str, Any]]) -> str:
     """'Abbas et al. (2023)' written as plain text becomes 'Abbas et al. [@Abbas2023...]' when
     exactly one verified reference has that first author and year, so it counts as cited."""

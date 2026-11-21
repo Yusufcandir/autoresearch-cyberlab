@@ -356,11 +356,11 @@ def fpr_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str])
     if not HIGH.search(sentence):
         return None
     named = [n for _, n in mentions(sentence, known)]
-    rates = {
-        n: ((models[n].get("aggregate") or {}).get("false_positive_rate") or {}).get("mean")
-        for n in models
-    }
-    rates = {n: r for n, r in rates.items() if r is not None}
+    rates: dict[str, float] = {}
+    for n in models:
+        r = ((models[n].get("aggregate") or {}).get("false_positive_rate") or {}).get("mean")
+        if r is not None:
+            rates[n] = float(r)
     if named and len(rates) > 1 and named[0] in rates and rates[named[0]] == min(rates.values()):
         return (
             f"says {named[0].replace('_', ' ')} has a high false-positive rate, but it has the "

@@ -117,3 +117,19 @@ def test_backfilled_finding_gets_a_subject_and_names_stay_capitalised() -> None:
         {"method": "hybrid ensemble", "finding": "Yielded high overall accuracy"},
     )
     assert s is not None and "that the approach yielded" in s
+
+
+def test_budget_exhaustion_is_not_reported_as_no_sections() -> None:
+    import pytest
+
+    from cyberlab_llm import BudgetExceeded
+    from cyberlab_orchestrator.agents.writing import write_sections
+
+    class Ctx:
+        class llm:  # noqa: N801
+            @staticmethod
+            def complete_json(*a, **kw):  # type: ignore[no-untyped-def]
+                raise BudgetExceeded("project p used 1001258/1000000 LLM tokens")
+
+    with pytest.raises(BudgetExceeded):
+        write_sections(Ctx(), "p", {})  # type: ignore[arg-type]

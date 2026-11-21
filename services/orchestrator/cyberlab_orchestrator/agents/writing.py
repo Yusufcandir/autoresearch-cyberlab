@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from cyberlab_common.db import CitationRecord, ManuscriptRecord, Project, ProtocolVersion, audit
 from cyberlab_data import get_adapter, prepared_dir_for
 from cyberlab_literature import Paper, bibtex_entry
-from cyberlab_llm import LLMError
+from cyberlab_llm import BudgetExceeded, LLMError
 from cyberlab_manuscript import build_manuscript, manuscript_sha
 from cyberlab_manuscript.builder import link_author_year, strip_internal_ids
 from cyberlab_manuscript.consistency import accuracy_gap_models
@@ -232,6 +232,7 @@ def write_sections(ctx: LabContext, pid: str, context: dict[str, Any]) -> dict[s
     Every call sees the same facts, papers and results, so the parts stay consistent.
     """
     payload = json.dumps(context, default=str)
+    errors: list[str] = []
 
     def one(keys: list[str]) -> dict[str, str]:
         system = (
@@ -242,7 +243,10 @@ def write_sections(ctx: LabContext, pid: str, context: dict[str, Any]) -> dict[s
         for _attempt in range(2):
             try:
                 got = ctx.llm.complete_json("writing.draft", system, payload, project_id=pid)
-            except LLMError:
+            except BudgetExceeded:
+                raise  # the PI must raise the budget; retrying cannot help
+            except LLMError as exc:
+                errors.append(str(exc)[:300])
                 continue
             out = {k: str(got[k]) for k in keys if isinstance(got.get(k), str | int | float)}
             if out:
@@ -259,7 +263,8 @@ def write_sections(ctx: LabContext, pid: str, context: dict[str, Any]) -> dict[s
     if missing:  # the model sometimes drops a key: ask once more for just those sections
         sections.update(one(missing))
     if not sections:
-        raise LLMError("the writing model returned no sections")
+        why = f" (last error: {errors[-1]})" if errors else ""
+        raise LLMError(f"the writing model returned no sections{why}")
     return sections
 
 
