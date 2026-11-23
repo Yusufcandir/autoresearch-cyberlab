@@ -87,7 +87,7 @@ def test_full_study(lab: Lab) -> None:
         )
         assert ms is not None
         md, report, mversion = ms.markdown, ms.evidence_report, ms.version
-    assert "| xgboost |" in md and "[citation needed]" not in md
+    assert "| XGBoost |" in md and "[citation needed]" not in md
     assert report["release_ready"], report["flags"]
     # the AI-use statement is kept beside the paper, not inside it
     assert "AI use disclosure" not in md and "AutoResearch-CyberLab" in report["ai_disclosure"]
@@ -255,7 +255,7 @@ def test_full_study_with_deep_models(lab: Lab) -> None:
         )
         assert ms is not None
         md, report = ms.markdown, ms.evidence_report
-    assert "FT-Transformer" in md and "| ft_transformer |" in md
+    assert "FT-Transformer" in md and "| FT-Transformer |" in md
     assert report["release_ready"], report["flags"]
 
 
@@ -515,8 +515,8 @@ def test_multi_dataset_benchmark_study(lab: Lab) -> None:
     assert "### Results across datasets" in md and "Average rank" in md
     assert "Friedman" in md and "UNSW-NB15" in md
     assert "All datasets of the benchmark" in md
-    assert "per model and dataset (means over seeds)" in md  # heatmap figure
-    assert "Average rank of each model across datasets" in md  # ranking figure
+    assert "per model and dataset (mean over seeds)" in md  # rank-coloured score map
+    assert "Critical difference diagram" in md
     assert "were also run on UNSW-NB15" in md  # Methodology states the benchmark
     with lab.db.session() as s:
         dups = s.scalars(select(CitationRecord.key).where(CitationRecord.project_id == pid))
