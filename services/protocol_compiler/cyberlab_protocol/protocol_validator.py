@@ -162,7 +162,8 @@ def validate_protocol(
 
     # 7. feasibility
     train = int(((dataset or {}).get("split_counts") or {}).get("train", 0))
-    minutes = estimate_minutes(protocol, train)
+    n_datasets = 1 + len(protocol.get("benchmark_datasets") or [])
+    minutes = estimate_minutes(protocol, train) * n_datasets
     out.append(
         _r(
             "feasibility",
@@ -171,7 +172,9 @@ def validate_protocol(
             else WARNING
             if minutes > budget_minutes
             else PASS,
-            f"estimated compute about {minutes:.0f} min against a budget of {budget_minutes} min",
+            f"estimated compute about {minutes:.0f} min"
+            + (f" for {n_datasets} datasets" if n_datasets > 1 else "")
+            + f" against a budget of {budget_minutes} min",
         )
     )
     status = max((c["status"] for c in out), key=lambda s: _ORDER[s])

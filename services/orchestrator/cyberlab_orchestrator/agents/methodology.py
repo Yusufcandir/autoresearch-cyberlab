@@ -85,6 +85,20 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
         )
     protocol, fit = _fit_modality(protocol, adapter, base)
     problems += fit
+    if protocol.models and not any(m.role == "baseline" for m in protocol.models):
+        models = [
+            m.model_copy(update={"role": "baseline"}) if m.template in BASELINES else m
+            for m in protocol.models
+        ]
+        if any(m.role == "baseline" for m in models):
+            protocol = Protocol.model_validate(
+                json.loads(protocol.model_copy(update={"models": models}).model_dump_json())
+            )
+            problems.append(
+                "no model was marked as the baseline: "
+                + ", ".join(m.name for m in models if m.role == "baseline")
+                + " is the reference model"
+            )
     if protocol.split.strategy != "cross_dataset":
         from cyberlab_orchestrator.datasets import study_adapters
 

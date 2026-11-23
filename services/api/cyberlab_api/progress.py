@@ -234,6 +234,8 @@ def _when(ts: Any) -> datetime | None:
             ts = datetime.fromisoformat(ts)
         except ValueError:
             return None
+    if not isinstance(ts, datetime):
+        return None
     return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
 
 
