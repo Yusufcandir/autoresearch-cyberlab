@@ -232,60 +232,78 @@ def benchmark_discussion_text(analysis: dict[str, Any]) -> str:
 
 
 def results_text(analysis: dict[str, Any]) -> str:
-    """The complete Results prose, from the stored aggregates and tests."""
+    """The complete Results prose, from the stored aggregates and tests.
+
+    Written as connected paragraphs that point to the tables and figures (resolved to their
+    numbers after the build): the ranking on the primary metric with the leader's interval,
+    then the leader's other metrics, the smallest classes, the hypothesis tests and, for a
+    benchmark, the comparison across datasets. Every model appears with its score."""
     paras = []
-    lines = []
     metric = primary_metric(analysis)
-    order = [metric] + [
-        k for k in ("macro_f1", "balanced_accuracy", "accuracy", "mcc") if k != metric
-    ]
-    for name, m in analysis.get("models", {}).items():
-        agg = m.get("aggregate", {})
-        lead = agg.get(metric) or {}
-        if "mean" not in lead:
-            continue
-        txt = (
-            f"{_cap(pretty(name))} reached a {_metric(metric) if metric != 'mcc' else 'MCC'} of "
-            f"{lead['mean']:.4f} ± {lead.get('sd', 0):.4f}"
-        )
-        ci = m.get(f"{metric}_ci") or {}
-        if "low" in ci and "high" in ci:
-            label = m.get("ci_label") or (
-                f"seed {m['ci_seed']}" if m.get("ci_seed") is not None else ""
-            )
-            txt += f" (95% bootstrap CI [{ci['low']:.4f}, {ci['high']:.4f}]" + (
-                f", {label})" if label else ")"
-            )
-        extra = []
-        for key in order[1:]:
-            v = agg.get(key) or {}
-            if "mean" in v:
-                label = "MCC" if key == "mcc" else _metric(key)
-                ci2 = m.get(f"{key}_ci") or {}
-                ci_txt = (
-                    f" (95% CI [{ci2['low']:.4f}, {ci2['high']:.4f}])"
-                    if "low" in ci2 and "high" in ci2
-                    else ""
+    models = analysis.get("models", {})
+    label = "MCC" if metric == "mcc" else _metric(metric)
+    scored = [n for n in models if "mean" in (models[n].get("aggregate", {}).get(metric) or {})]
+    order = sorted(scored, key=lambda n: -models[n]["aggregate"][metric]["mean"])
+    b = analysis.get("benchmark") or {}
+    where = f" on {dataset_label(b['datasets'][0])}" if b.get("datasets") else ""
+    if order:
+
+        def score(n: str, with_ci: bool = False) -> str:
+            v = models[n]["aggregate"][metric]
+            txt = f"{v['mean']:.4f} ± {v.get('sd', 0):.4f}"
+            ci = models[n].get(f"{metric}_ci") or {}
+            if with_ci and "low" in ci and "high" in ci:
+                ci_label = models[n].get("ci_label") or (
+                    f"seed {models[n]['ci_seed']}" if models[n].get("ci_seed") is not None else ""
                 )
-                extra.append(f"{label} {v['mean']:.4f}{ci_txt}")
-        if extra:
-            txt += ", with " + ", ".join(extra)
-        lines.append(txt + ".")
-    if lines:
-        paras.append(
-            "Scores are means ± standard deviations over the model seeds on the test split.\n\n"
-            + "\n".join(f"- {ln}" for ln in lines)
-        )
+                txt += f", 95% bootstrap CI [{ci['low']:.4f}, {ci['high']:.4f}]" + (
+                    f", {ci_label}" if ci_label else ""
+                )
+            return txt
+
+        lead = order[0]
+        sents = [
+            "{{ref:table_main}} lists every model's scores on the test split"
+            + where
+            + " (means ± standard deviations over the model seeds), and {{ref:figure_ci}} shows "
+            f"the {label} of each model with its 95% bootstrap confidence interval.",
+            f"{_cap(pretty(lead))} had the highest mean {label} ({score(lead, True)})"
+            + (
+                ", followed by " + _and([f"{pretty(n)} ({score(n)})" for n in order[1:]])
+                if len(order) > 1
+                else ""
+            )
+            + ".",
+        ]
+        others = []
+        for key in ("macro_f1", "balanced_accuracy", "accuracy", "mcc"):
+            v = models[lead]["aggregate"].get(key) or {}
+            if key != metric and "mean" in v:
+                others.append(f"{'MCC' if key == 'mcc' else _metric(key)} {v['mean']:.4f}")
+        if others:
+            sents.append(f"{_cap(pretty(lead))} also reached " + _and(others) + ".")
+        paras.append(" ".join(sents))
     minority = minority_recall_text(analysis)
     if minority:
-        paras.append(minority)
+        paras.append(
+            "{{ref:figure_recall}} shows the recall of every model on every class. " + minority
+        )
     hyp = hypothesis_sentences(analysis)
     scope = untested_pairs_sentence(analysis)
     if hyp or scope:
-        paras.append(" ".join(hyp + ([scope] if scope else [])))
+        paras.append(
+            " ".join(
+                ["The hypothesis tests are summarised in {{ref:table_hypotheses}}."]
+                + hyp
+                + ([scope] if scope else [])
+            )
+        )
     bench = benchmark_text(analysis)
     if bench:
-        paras.append(bench)
+        paras.append(
+            bench + " The scores on each dataset are given in {{ref:table_benchmark}} and "
+            "{{ref:figure_benchmark}}, and the average ranks in {{ref:figure_rank}}."
+        )
     best = _best(analysis)
     if best:
         support = {
@@ -295,7 +313,8 @@ def results_text(analysis: dict[str, Any]) -> str:
         if support:
             small = min(support, key=support.__getitem__)
             paras.append(
-                f"Per-class results for {pretty(best)} are listed below; the smallest class, "
+                f"Per-class results for {pretty(best)} are given in {{{{ref:table_per_class}}}} "
+                "and its confusion matrix in {{ref:figure_confusion}}; the smallest class, "
                 f"{small}, has only {support[small]:,} test rows."
             )
     return "\n\n".join(paras)
@@ -416,6 +435,11 @@ def _setting(v: Any) -> str:
     measured score (e.g. alpha=1e-04, not 0.0001)."""
     if isinstance(v, float) and 0 < abs(v) < 0.01:
         return f"{v:.0e}"
+    if isinstance(v, float):
+        # three significant digits (0.0443, not 0.04429649570464297), and never four decimals,
+        # which would read as a measured score
+        txt = f"{v:.3g}"
+        return f"{v:.2e}" if re.fullmatch(r"\d\.\d{4}", txt) else txt
     return str(v)
 
 
@@ -482,15 +506,28 @@ def benchmark_text(analysis: dict[str, Any]) -> str:
         if "p_holm" in h
     ]
     if tests:
-        out.append(
-            "Repeated on the other datasets (secondary tests, Holm-adjusted across them): "
-            + "; ".join(
-                f"{h['id']} on {dataset_label(h['dataset'])} was {h['result']} "
-                f"(Holm-adjusted p {'< 0.001' if h['p_holm'] < 0.001 else '= ' + _pval(h['p_holm'])})"
-                for h in tests
-            )
-            + "."
+        # the full list is in its table; the text names only what was supported
+        held = [h for h in tests if h.get("result") == "supported"]
+        intro = (
+            f"The stated hypotheses were repeated on the other datasets as {_num(len(tests))} "
+            "secondary tests (Holm-adjusted across them, {{ref:table_benchmark_tests}})"
         )
+        if held:
+            out.append(
+                intro
+                + "; of these, only "
+                + _and(
+                    [
+                        f"{h['id']} on {dataset_label(h['dataset'])} (Holm-adjusted p "
+                        f"{'< 0.001' if h['p_holm'] < 0.001 else '= ' + _pval(h['p_holm'])})"
+                        for h in held
+                    ]
+                )
+                + (" was" if len(held) == 1 else " were")
+                + " supported."
+            )
+        else:
+            out.append(intro + "; none of them was supported.")
     return " ".join(out)
 
 
@@ -784,6 +821,9 @@ def lock_evidence(
     if "Results" in bodies:
         _, rest = _prose_and_rest(bodies["Results"])
         markdown = _replace_section(markdown, "Results", results_text(analysis) + "\n" + rest)
+        from cyberlab_manuscript.builder import resolve_refs
+
+        markdown = resolve_refs(markdown)
 
     # 2. Framing sections keep only sentences that state no results.
     issues = {i["sentence"]: i["reason"] for i in consistency_issues(markdown, analysis)}

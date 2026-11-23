@@ -128,8 +128,8 @@ def test_lock_evidence_leaves_no_inconsistency_and_keeps_framing() -> None:
     assert "BENIGN rows were randomly down-sampled to at most 400,000 rows." in md
     assert "Three models were compared" in md
     assert (
-        "XGBoost reached a macro-F1 of 0.9900 ± 0.0010 (95% bootstrap CI [0.9600, 0.9900], seed 42)"
-        in md
+        "XGBoost had the highest mean macro-F1 (0.9900 ± 0.0010, 95% bootstrap CI "
+        "[0.9600, 0.9900], seed 42)" in md
     )
     assert (
         md.count("H2 (random forest scores higher than logistic regression") == 3
@@ -168,7 +168,9 @@ def test_latex_export_keeps_structure_and_citations() -> None:
     assert r"\title{A \& B study}" in tex and r"\section{Results}" in tex
     assert r"\cite{Smith2020x,Lee2021y}" in tex and r"$\pm$" in tex and r"5\% cost" in tex
     assert r"\textbf{XGBoost}" in tex and r"\item one\_item" in tex
-    assert r"\begin{tabular}{ll}" in tex and r"xgb & 0.9 \\" in tex
+    assert r"\begin{tabular}{lc}" in tex and r"xgb & 0.9 \\" in tex
+    assert r"\documentclass[journal]{IEEEtran}" in tex and r"\toprule" in tex
+    assert "DRAFT note" not in tex
     assert "ignored" not in tex and r"\bibliography{manuscript-v1}" in tex
 
 
@@ -208,7 +210,8 @@ def test_findings_and_results_lead_with_the_primary_metric() -> None:
     }
     assert "highest mean balanced accuracy (0.9500" in findings_text(a)
     res = results_text(a)
-    assert "Random forest reached a balanced accuracy of 0.9500" in res
+    assert "Random forest had the highest mean balanced accuracy (0.9500" in res
+    assert "{{ref:table_main}}" in res and "followed by logistic regression" in res
     assert "95% bootstrap CI [0.9400, 0.9600]" in res
     assert "Rare, 9 test rows" in res and "logistic regression: Rare 0.0000" in res
 

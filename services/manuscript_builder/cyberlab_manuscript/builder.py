@@ -564,22 +564,64 @@ def _ci_label(m: dict[str, Any]) -> str:
     return f"seed {m['ci_seed']}" if m.get("ci_seed") is not None else "bootstrap"
 
 
+def model_label(name: str) -> str:
+    from cyberlab_manuscript.figures import PRETTY
+
+    return PRETTY.get(name, name.replace("_", " "))
+
+
+def metric_label(name: str) -> str:
+    return {
+        "macro_f1": "macro-F1",
+        "balanced_accuracy": "balanced accuracy",
+        "mcc": "MCC",
+        "false_positive_rate": "FPR",
+        "detection_rate": "detection rate",
+    }.get(name, name.replace("_", " "))
+
+
+def _bold_if(text: str, cond: bool) -> str:
+    return f"**{text}**" if cond and text not in ("n/a", "-", "–") else text
+
+
+def _best_of(values: dict[str, float | None], lower: bool = False) -> set[str]:
+    vals = {k: v for k, v in values.items() if v is not None}
+    if not vals:
+        return set()
+    target = min(vals.values()) if lower else max(vals.values())
+    return {k for k, v in vals.items() if round(v, 4) == round(target, 4)}
+
+
 def results_table(analysis: dict[str, Any]) -> str:
     rows = [
         "| Model | Role | Macro-F1 (mean ± sd) | 95% CI ({seed}) | Accuracy | MCC | FPR | Detection rate |",
         "|---|---|---|---|---|---|---|---|",
     ]
     seed = "?"
-    for name, m in analysis["models"].items():
+    models = analysis["models"]
+
+    def mean(n: str, k: str) -> float | None:
+        v = (models[n]["aggregate"].get(k) or {}).get("mean")
+        return float(v) if v is not None else None
+
+    order = sorted(models, key=lambda n: -(mean(n, "macro_f1") or 0.0))
+    best = {
+        k: _best_of({n: mean(n, k) for n in models}, lower=k == "false_positive_rate")
+        for k in ("macro_f1", "accuracy", "mcc", "false_positive_rate", "detection_rate")
+    }
+    for name in order:
+        m = models[name]
         a = m["aggregate"]
         ci = m["macro_f1_ci"]
         seed = _ci_label(m)
 
-        def g(k: str, a: dict[str, Any] = a) -> str:
-            return _fmt(a[k]["mean"]) if k in a else "n/a"
+        def g(k: str, a: dict[str, Any] = a, name: str = name) -> str:
+            return _bold_if(_fmt(a[k]["mean"]), name in best[k]) if k in a else "n/a"
 
+        f1 = f"{_fmt(a['macro_f1']['mean'])} ± {_fmt(a['macro_f1']['sd'])}"
         rows.append(
-            f"| {name} | {m['role']} | {_fmt(a['macro_f1']['mean'])} ± {_fmt(a['macro_f1']['sd'])} | "
+            f"| {model_label(name)} | {str(m['role']).capitalize()} | "
+            f"{_bold_if(f1, name in best['macro_f1'])} | "
             f"[{_fmt(ci['low'])}, {_fmt(ci['high'])}] | {g('accuracy')} | {g('mcc')} | "
             f"{g('false_positive_rate')} | {g('detection_rate')} |"
         )
@@ -589,8 +631,9 @@ def results_table(analysis: dict[str, Any]) -> str:
 
 def per_class_table(analysis: dict[str, Any], model: str) -> str:
     pc = analysis["models"][model]["per_class"]
-    rows = ["| Class | Precision | Recall | F1 | Support |", "|---|---|---|---|---|"]
-    for cls, v in pc.items():
+    rows = ["| Class | Precision | Recall | F1 | Test rows |", "|---|---|---|---|---|"]
+    # largest class first, as in the per-class figure
+    for cls, v in sorted(pc.items(), key=lambda kv: -int(kv[1].get("support", 0) or 0)):
         rows.append(
             f"| {cls} | {_fmt(v['precision'])} | {_fmt(v['recall'])} | {_fmt(v['f1'])} | {v['support']:,} |"
         )
@@ -617,7 +660,8 @@ def hypotheses_table(analysis: dict[str, Any]) -> str:
         odds = h["mcnemar"].get("odds_ratio")
         odds_txt = f"{odds:.2f}" if odds is not None else "-"
         rows.append(
-            f"| {h['id']} | {h['a']} > {h['b']} ({h['metric']}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
+            f"| {h['id']} | {model_label(h['a'])} > {model_label(h['b'])} "
+            f"({metric_label(h['metric'])}) | {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
             f"{diff} | {odds_txt} | {_fmt_p((h.get('test') or h['mcnemar'])['p_value'])} | {holm_p} | {h['result']} |"
         )
     return "\n".join(rows)
@@ -663,6 +707,24 @@ def benchmark_table(analysis: dict[str, Any]) -> str:
     heads = [get_adapter(d).display for d in datasets]
     ranks = (b.get("ranking") or {}).get("average_rank") or {}
     models = list((b["per_dataset"][datasets[0]].get("models") or {}).keys())
+    models.sort(key=lambda m: ranks.get(m, 99.0))  # best average rank first
+    top = {
+        d: _best_of(
+            {
+                m: (
+                    (
+                        ((b["per_dataset"][d].get("models") or {}).get(m) or {}).get("aggregate")
+                        or {}
+                    )
+                    .get(metric, {})
+                    .get("mean")
+                )
+                for m in models
+            }
+        )
+        for d in datasets
+    }
+    best_rank = _best_of({m: ranks.get(m) for m in models}, lower=True) if ranks else set()
     lines = [
         "| Model | " + " | ".join(heads) + (" | Average rank |" if ranks else " |"),
         "|---|" + "---|" * len(heads) + ("---|" if ranks else ""),
@@ -672,9 +734,17 @@ def benchmark_table(analysis: dict[str, Any]) -> str:
         for d in datasets:
             agg = ((b["per_dataset"][d].get("models") or {}).get(m) or {}).get("aggregate") or {}
             v = agg.get(metric) or {}
-            cells.append(f"{v['mean']:.4f} ± {v.get('sd', 0):.4f}" if "mean" in v else "–")
-        rank = f" | {ranks[m]:.2f}" if m in ranks else (" | –" if ranks else "")
-        lines.append(f"| {m} | " + " | ".join(cells) + rank + " |")
+            cells.append(
+                _bold_if(f"{v['mean']:.4f} ± {v.get('sd', 0):.4f}", m in top[d])
+                if "mean" in v
+                else "–"
+            )
+        rank = (
+            f" | {_bold_if(f'{ranks[m]:.2f}', m in best_rank)}"
+            if m in ranks
+            else (" | –" if ranks else "")
+        )
+        lines.append(f"| {model_label(m)} | " + " | ".join(cells) + rank + " |")
     return "\n".join(lines)
 
 
@@ -689,10 +759,10 @@ def benchmark_tests_table(analysis: dict[str, Any]) -> str:
                 continue
             p = h["test"]["p_value"]
             rows.append(
-                f"| {get_adapter(d).display} | {h['id']} | {h['a']} > {h['b']} ({h.get('metric')}) "
+                f"| {get_adapter(d).display} | {h['id']} | {model_label(h['a'])} > "
+                f"{model_label(h['b'])} ({metric_label(str(h.get('metric')))}) "
                 f"| {_fmt(h['a_mean'])} vs {_fmt(h['b_mean'])} | "
-                f"{'< 0.001' if p < 0.001 else f'{p:.4f}'} | "
-                f"{'< 0.001' if h['p_holm'] < 0.001 else format(h['p_holm'], '.4f')} | "
+                f"{_fmt_p(p)} | {_fmt_p(h['p_holm'])} | "
                 f"{h['result']} |"
             )
     if not rows:
@@ -710,7 +780,7 @@ def dataset_section(analysis: dict[str, Any]) -> str:
     counts = "\n".join(f"| {k} | {_n(v)} |" for k, v in ds.get("class_counts", {}).items())
     splits = ", ".join(f"{k}: {_n(v)}" for k, v in ds.get("split_counts", {}).items())
     return (
-        f"Dataset: {ds.get('name')} (`{ds.get('dataset_id')}`), licence: {ds.get('license')}\n\n"
+        f"Dataset: {ds.get('name')}, licence: {ds.get('license')}\n\n"
         f"Rows after cleaning: {_n(ds.get('n_rows_clean'))} of {_n(ds.get('n_rows_raw'))} raw; "
         f"duplicates or conflicting rows removed: {_n(ds.get('n_duplicates_removed'))}; "
         f"train/test overlap rows: {ds.get('split_overlap_rows')}. Splits: {splits}.\n\n"
@@ -937,11 +1007,11 @@ def build_manuscript(
                 ),
             )
             out += [
-                f"### Per-class results ({best})",
+                f"### Per-class results ({model_label(best)})",
                 "",
                 numbered(
                     "table_per_class",
-                    f"Per-class results of {best} (first seed).",
+                    f"Per-class results of {model_label(best)} (first seed), largest class first.",
                     per_class_table(analysis, best),
                 ),
                 "",
@@ -983,18 +1053,43 @@ _FIGURE_KEYS = (
     ("figure_ci", "confidence intervals"),
     ("figure_recall", "recall per class"),
     ("figure_confusion", "confusion matrix"),
+    ("figure_rank", "critical difference diagram"),
+    ("figure_benchmark", "per model and dataset"),
+)
+_TABLE_KEYS = (
+    ("table_classes", "rows per class"),
+    ("table_datasets", "all datasets of the benchmark"),
+    ("table_followup", "previous one"),
+    ("table_main", "main results per model"),
+    ("table_hypotheses", "hypothesis tests"),
+    ("table_benchmark_tests", "repeated on the other datasets"),
+    ("table_benchmark", "per model and dataset"),
+    ("table_per_class", "per-class results"),
 )
 
 
-def resolve_refs(md: str, tables: list[str]) -> str:
+def resolve_refs(md: str, tables: list[str] | None = None) -> str:
     """Cross-references (professor's plan, Phase 8): {{ref:table_main}} -> 'Table 2',
-    {{ref:figure_ci}} -> 'Figure 1', numbered in reading order."""
-    refs = {k: f"Table {i}" for i, k in enumerate(tables, 1)}
+    {{ref:figure_ci}} -> 'Figure 1', numbered in reading order. Without the build's own table
+    list the numbers are read from the captions."""
+    refs = {k: f"Table {i}" for i, k in enumerate(tables or [], 1)}
+    for m in re.finditer(r"^\*Table (\d+)\. (.+?)\*$", md, re.M):
+        for key, needle in _TABLE_KEYS:
+            if needle in m.group(2).lower():
+                refs.setdefault(key, f"Table {m.group(1)}")
+                break
     for m in re.finditer(r"^\*Figure (\d+)\. (.+?)\*$", md, re.M):
         for key, needle in _FIGURE_KEYS:
             if needle in m.group(2).lower():
                 refs.setdefault(key, f"Figure {m.group(1)}")
-    return re.sub(r"\{\{ref:([a-z_]+)\}\}", lambda m: refs.get(m.group(1), "the table below"), md)
+    return re.sub(
+        r"\{\{ref:([a-z_]+)\}\}",
+        lambda m: refs.get(
+            m.group(1),
+            "the figures below" if m.group(1).startswith("figure") else "the table below",
+        ),
+        md,
+    )
 
 
 def manuscript_sha(md: str) -> str:

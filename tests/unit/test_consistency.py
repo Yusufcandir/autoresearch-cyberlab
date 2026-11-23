@@ -270,8 +270,8 @@ def test_empty_results_prose_gets_an_evidence_summary() -> None:
     md, n = remove_sentences(md, ["bad claim about it here."])
     assert n == 1 and "**Logistic Regression:**" not in md and "\n- " not in md
     out, added = ensure_findings(md, GAP_ANALYSIS)
-    assert "Results" in added and "Logistic regression reached a macro-F1 of 0.6800" in out
-    assert out.index("reached a macro-F1") < out.index("### Main results")
+    assert "Results" in added and "logistic regression (0.6800" in out.lower()
+    assert out.index("highest mean macro-F1") < out.index("### Main results")
 
 
 def test_verdict_contradicted_after_the_rendered_result() -> None:

@@ -423,3 +423,28 @@ def test_four_dataset_v6_framing_is_kept() -> None:
     assert strip_internal_ids("## Discussion\n\nThe study also reveals X.\n").endswith(
         "The study reveals X.\n"
     )
+
+
+def test_journal_layout_pieces() -> None:
+    from cyberlab_manuscript.builder import resolve_refs
+    from cyberlab_manuscript.evidence_text import _setting
+    from cyberlab_manuscript.figures import _cliques
+    from cyberlab_manuscript.latex import markdown_to_latex
+
+    md = (
+        "## Results\n\nSee {{ref:table_main}} and {{ref:figure_ci}}.\n\n"
+        "*Table 3. Main results per model (means and standard deviations over seeds).*\n\n"
+        "*Figure 1. Macro-F1 of each model with 95% bootstrap confidence intervals.*\n"
+    )
+    assert "See Table 3 and Figure 1." in resolve_refs(md)
+    # settings: three significant digits, never four decimals (that reads as a score)
+    assert _setting(0.04429649570464297) == "4.43e-02" and _setting(0.9567) == "0.957"
+    ranks = {"a": 1.75, "b": 2.25, "c": 2.75, "d": 4.0, "e": 4.25}
+    assert _cliques(list(ranks), ranks, 3.05) == [(0, 4)]
+    assert _cliques(list(ranks), ranks, 1.0) == [(0, 2), (3, 4)]
+    tex = markdown_to_latex(
+        "# T\n\n## Abstract\n\nShort.\n\n## Results\n\nAs Table 1 shows.\n\n### Main results\n\n"
+        "*Table 1. Main results per model.*\n\n| Model | F1 |\n|---|---|\n| A | **0.9** |\n"
+    )
+    assert r"\begin{abstract}" in tex and r"Table~\ref{tab:1}" in tex and r"\label{tab:1}" in tex
+    assert r"\subsection{Main results}" not in tex and r"\textbf{0.9}" in tex
