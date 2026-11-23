@@ -202,6 +202,20 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         new = " ".join(sents[:at] + [text] + sents[at:])
         markdown = _set_section(markdown, name, body, f"\n\n{new.strip()}\n\n")
         added.append(name)
+    from cyberlab_manuscript.evidence_text import benchmark_findings_text
+
+    bench = benchmark_findings_text(analysis)
+    for name in ("Abstract", "Conclusion") if bench else ():
+        body = _section_bodies(markdown).get(name)
+        if body is None or "average rank" in body or bench.split(".")[0] in body:
+            continue
+        sents = split_sentences(" ".join(body.split()))
+        future = re.compile(r"(?i)(?:additionally,\s*|moreover,\s*)?(?:future|further)\b")
+        at = next((i for i, s in enumerate(sents) if future.match(s)), len(sents))
+        new = " ".join(sents[:at] + [bench] + sents[at:])
+        markdown = _set_section(markdown, name, body, f"\n\n{new.strip()}\n\n")
+        if name not in added:
+            added.append(name)
     body = _section_bodies(markdown).get("Results")
     if body is not None:
         prose, sep, rest = body.partition("\n### ")

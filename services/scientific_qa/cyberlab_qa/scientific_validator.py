@@ -230,11 +230,22 @@ def detect_data_leakage(
 def validate_experiment_configuration(
     protocol: dict[str, Any], runs: list[dict[str, Any]], analysis: dict[str, Any]
 ) -> dict[str, Any]:
+    main = protocol.get("dataset_id")
+    datasets = [main, *(protocol.get("benchmark_datasets") or [])]
     planned = {
-        (m["name"], s) for m in protocol.get("models", []) for s in protocol.get("seeds", [])
+        (m["name"], s, d)
+        for m in protocol.get("models", [])
+        for s in protocol.get("seeds", [])
+        for d in datasets
     }
-    done = {(r["model"], r["seed"]) for r in runs if r["status"] == "succeeded"}
-    failed = sorted(f"{m} seed {s}" for (m, s) in planned - done)
+    done = {
+        (r["model"], r["seed"], r.get("dataset") or main)
+        for r in runs
+        if r["status"] == "succeeded"
+    }
+    failed = sorted(
+        f"{m} seed {s}" + (f" on {d}" if d != main else "") for (m, s, d) in planned - done
+    )
     tuning = [
         n
         for n, m in analysis.get("models", {}).items()
@@ -255,7 +266,9 @@ def validate_experiment_configuration(
     return _r(
         "experiment_configuration",
         PASS,
-        f"all {len(planned)} planned runs succeeded with the approved protocol; the test split "
+        f"all {len(planned)} planned runs"
+        + (f" on {len(datasets)} datasets" if len(datasets) > 1 else "")
+        + " succeeded with the approved protocol; the test split "
         "was used once per run",
     )
 

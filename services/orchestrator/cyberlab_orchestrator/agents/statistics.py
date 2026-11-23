@@ -116,7 +116,12 @@ def run_validation(
         )
         body = dict(pv.body) if pv else {}
         runs = [
-            {"model": r.model_name, "seed": r.seed, "status": r.status}
+            {
+                "model": r.model_name,
+                "seed": r.seed,
+                "status": r.status,
+                "dataset": r.experiment_id.split("@", 1)[1] if "@" in r.experiment_id else None,
+            }
             for r in s.scalars(select(RunRecord).where(RunRecord.project_id == pid))
             if r.experiment_id.startswith(f"p{protocol_version}-")
         ]

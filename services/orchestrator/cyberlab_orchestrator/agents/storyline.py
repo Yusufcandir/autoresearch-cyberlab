@@ -18,7 +18,7 @@ from typing import Any
 
 from cyberlab_llm import BudgetExceeded, LLMError
 from cyberlab_manuscript.consistency import accuracy_gap_models
-from cyberlab_manuscript.evidence_text import pretty, primary_metric
+from cyberlab_manuscript.evidence_text import hypothesis_by_dataset, pretty, primary_metric
 from cyberlab_orchestrator.context import LabContext
 
 # --------------------------------------------------------------------------- evidence brief
@@ -166,7 +166,14 @@ def evidence_brief(analysis: dict[str, Any], facts: dict[str, Any]) -> dict[str,
                 "text": f"datasets: {', '.join(bench['datasets'])}; order by average rank: "
                 + " > ".join(pretty(m) for m in order)
                 + f"; Friedman test {'significant' if rank['p_value'] < 0.05 else 'not significant'}"
-                " at 0.05",
+                " at 0.05"
+                + "".join(
+                    f"; {hid} supported on: {', '.join(yes) or 'none'}, not supported on: "
+                    f"{', '.join(no) or 'none'}"
+                    for hid, (yes, no) in hypothesis_by_dataset(analysis).items()
+                )
+                + ". Do not generalise a result to all datasets or to 'tree ensembles' / 'deep "
+                "models' as a whole when it did not hold on every dataset.",
             }
         )
     tuned = [n for n, m in models.items() if m.get("tuned")]

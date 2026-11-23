@@ -87,6 +87,19 @@ def drop_repeated_sentences(text: str) -> str:
     return "".join(parts)
 
 
+MAX_KEYS_PER_CITATION = 4
+
+
+def trim_citation_dumps(text: str) -> str:
+    def trim(m: re.Match[str]) -> str:
+        keys = [k.strip() for k in m.group(1).split(";") if k.strip()]
+        if len(keys) <= MAX_KEYS_PER_CITATION + 1:
+            return m.group(0)
+        return "[" + "; ".join(keys[:MAX_KEYS_PER_CITATION]) + "]"
+
+    return re.sub(r"\[(@[^\]\n]+)\]", trim, text)
+
+
 def strip_internal_ids(text: str) -> str:
     text = INTERNAL_ID.sub("", text)
     # the writer often names the hypothesis before its placeholder: 'H1 {{hyp:H1}}'
@@ -105,6 +118,7 @@ def strip_internal_ids(text: str) -> str:
     # '**Tree Ensembles and Boosting:**' on its own line reads as a slide, not a paper
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
     text = drop_repeated_sentences(text)
+    text = trim_citation_dumps(text)
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
 
 

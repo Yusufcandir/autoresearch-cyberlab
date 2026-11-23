@@ -161,6 +161,55 @@ def findings_text(analysis: dict[str, Any]) -> str:
     return " ".join(out)
 
 
+def hypothesis_by_dataset(analysis: dict[str, Any]) -> dict[str, tuple[list[str], list[str]]]:
+    """For each hypothesis: (datasets where it was supported, datasets where it was not),
+    the main dataset included."""
+    b = analysis.get("benchmark") or {}
+    if not b.get("datasets"):
+        return {}
+    main = b["datasets"][0]
+    out: dict[str, tuple[list[str], list[str]]] = {}
+    for h in _tested_hyps(analysis):
+        out[h["id"]] = ([main], []) if h.get("result") == "supported" else ([], [main])
+    for ds in b["datasets"][1:]:
+        for h in (b["per_dataset"].get(ds) or {}).get("hypotheses", []):
+            if h.get("id") in out and "result" in h:
+                out[h["id"]][0 if h["result"] == "supported" else 1].append(ds)
+    return out
+
+
+def benchmark_findings_text(analysis: dict[str, Any]) -> str:
+    """One or two sentences on the cross-dataset result, without numbers (they are in Results)."""
+    b = analysis.get("benchmark") or {}
+    if len(b.get("datasets", [])) < 2:
+        return ""
+    n = _num(len(b["datasets"]))
+    out = []
+    rank = b.get("ranking") or {}
+    if rank.get("applicable"):
+        order = sorted(rank["average_rank"], key=rank["average_rank"].__getitem__)
+        sig = rank["p_value"] < 0.05
+        out.append(
+            f"Across the {n} datasets, {pretty(order[0])} had the best average rank, and the "
+            f"Friedman test {'found' if sig else 'did not find'} a significant difference "
+            "between the models' ranks."
+        )
+    parts = []
+    for hid, (yes, no) in hypothesis_by_dataset(analysis).items():
+        if not no:
+            parts.append(f"{hid} held on all {n} datasets")
+        elif not yes:
+            parts.append(f"{hid} held on none of them")
+        else:
+            parts.append(
+                f"{hid} held on {_num(len(yes))} of the {n} datasets (not on "
+                f"{_and([dataset_label(d) for d in no])})"
+            )
+    if parts:
+        out.append("Repeated on every dataset, " + "; ".join(parts) + ".")
+    return " ".join(out)
+
+
 def results_text(analysis: dict[str, Any]) -> str:
     """The complete Results prose, from the stored aggregates and tests."""
     paras = []

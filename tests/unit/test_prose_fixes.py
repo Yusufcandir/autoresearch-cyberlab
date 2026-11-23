@@ -309,3 +309,84 @@ def test_comma_counts_from_the_evidence_are_kept() -> None:
         "Rows after cleaning: 48,532 of 99,999.", analysis, {}, rep, "methodology", guardrail=True
     )
     assert "48,532" in out
+
+
+def test_four_dataset_benchmark_draft_problems() -> None:
+    from cyberlab_manuscript.builder import trim_citation_dumps
+    from cyberlab_manuscript.consistency import absolute_recall_problem, compared_pairs, mentions
+    from cyberlab_manuscript.evidence_text import benchmark_findings_text
+
+    def m(worms: float, shell: float) -> dict[str, Any]:
+        return {
+            "aggregate": {"macro_f1": {"mean": 0.7}},
+            "per_class": {
+                "Worms": {"recall": worms, "support": 8},
+                "Shellcode": {"recall": shell, "support": 30},
+                "DoS": {"recall": 0.9, "support": 900},
+            },
+        }
+
+    a = {"models": {"xgboost": m(1.0, 0.95), "lightgbm": m(0.875, 0.9)}}
+    known = ["xgboost", "lightgbm", "random_forest", "resnet_mlp", "ft_transformer"]
+    # class names before 'recall', and 'rare classes' without names
+    assert absolute_recall_problem(
+        "For rare classes like Worms and Shellcode, recall was low, with XGBoost achieving "
+        "1.0000 on Worms.",
+        a,
+        known,
+    )
+    assert absolute_recall_problem("Per-class recall for rare attack classes was low.", a, known)
+    assert absolute_recall_problem("Recall was high for DoS but low for Worms.", a, known) is None
+    # group words stand for every such model in the study
+    got = {n for _, n in mentions("Tree ensembles outperform deep tabular models.", known)}
+    assert got == set(known)
+    pairs = set(
+        compared_pairs("Tree ensembles are more effective than deep tabular models.", known)
+    )
+    assert ("xgboost", "resnet_mlp") in pairs and ("lightgbm", "ft_transformer") in pairs
+    # a citation group of 19 keys keeps the first four
+    keys = "; ".join(f"@k{i}" for i in range(19))
+    out = trim_citation_dumps(f"Research such as [{keys}] explores this. Two [@a; @b] stay.")
+    assert "[@k0; @k1; @k2; @k3]" in out and "@k4" not in out and "[@a; @b]" in out
+    # the cross-dataset result for the Abstract and Conclusion, with per-dataset verdicts
+    analysis = {
+        "models": {},
+        "hypotheses": [{"id": "H1", "a": "xgboost", "b": "resnet_mlp", "result": "supported"}],
+        "benchmark": {
+            "datasets": ["main", "other"],
+            "per_dataset": {"other": {"hypotheses": [{"id": "H1", "result": "not supported"}]}},
+            "ranking": {
+                "applicable": True,
+                "average_rank": {"xgboost": 1.5, "resnet_mlp": 1.5001},
+                "p_value": 0.107,
+            },
+        },
+    }
+    import cyberlab_manuscript.evidence_text as et
+
+    real = et.dataset_label
+    et.dataset_label = lambda d: d.upper()  # type: ignore[assignment]
+    try:
+        text = benchmark_findings_text(analysis)
+    finally:
+        et.dataset_label = real  # type: ignore[assignment]
+    assert "XGBoost had the best average rank" in text
+    assert "did not find a significant difference" in text
+    assert "H1 held on one of the two datasets (not on OTHER)" in text
+
+
+def test_validator_counts_runs_on_every_benchmark_dataset() -> None:
+    from cyberlab_qa.scientific_validator import validate_experiment_configuration
+
+    protocol = {
+        "dataset_id": "a",
+        "benchmark_datasets": ["b"],
+        "models": [{"name": "rf"}],
+        "seeds": [1, 2],
+    }
+    runs = [{"model": "rf", "seed": s, "status": "succeeded", "dataset": None} for s in (1, 2)]
+    got = validate_experiment_configuration(protocol, runs, {"models": {}})
+    assert got["status"] == "WARNING" and "rf seed 1 on b" in got["detail"]
+    runs += [{"model": "rf", "seed": s, "status": "succeeded", "dataset": "b"} for s in (1, 2)]
+    got = validate_experiment_configuration(protocol, runs, {"models": {}})
+    assert "all 4 planned runs on 2 datasets" in got["detail"]

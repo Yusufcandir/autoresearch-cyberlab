@@ -29,13 +29,27 @@ MODEL_ALIASES: dict[str, tuple[str, ...]] = {
     "mlp": (r"\bmlp\b", "neural network", "multi-layer perceptron", "multilayer perceptron"),
 }
 # Group words that stand for several models at once ('tree-based models' = RF and XGBoost).
+TREE_MODELS = (
+    "random_forest",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "extra_trees",
+    "decision_tree",
+    "gradient_boosting",
+)
+DEEP_MODELS = ("mlp", "resnet_mlp", "ft_transformer", "tabnet", "tab_transformer", "saint", "node")
 MODEL_GROUPS: dict[str, tuple[str, ...]] = {
-    r"\btree[- ]based (?:models?|methods?|ensembles?|classifiers?)\b": ("random_forest", "xgboost"),
+    r"\btree[- ](?:based|ensembles?)(?: (?:models?|methods?|ensembles?|classifiers?|learners?))?\b": TREE_MODELS,
+    r"\b(?:gradient[- ])?boosted (?:decision )?trees\b": TREE_MODELS,
+    r"\bdeep (?:tabular |learning |neural )?(?:models?|architectures?|networks?|learners?|"
+    r"approaches|methods)\b": DEEP_MODELS,
 }
 
 COMPARE = re.compile(
     r"\b(outperform\w*|better than|worse than|superior|inferior|surpass\w*|exceed\w*|"
     r"beat\w*|comparabl\w*|on par|similar(?:ly)? to|(?:higher|lower|greater) (?:\S+ ){0,2}than|"
+    r"(?:more|less) [a-z-]+ than|"
     r"advantage over|edge over|improvement over|gain over|"
     r"differ\w* (?:\S+ ){0,2}from|different (?:\S+ ){0,2}(?:from|than)|"
     r"(?:better|worse|higher|lower)\b[^.,;]{0,40}?\bcompared (?:to|with))\b",
@@ -522,6 +536,11 @@ def absolute_recall_problem(
             return None
         low = m2.group("dir").lower() in ("low", "poor", "weak")
         rest = m2.group("rest")
+        # classes introduced before 'recall' ('For rare classes like Worms and Shellcode, ...')
+        lead = sentence[: m2.start()]
+        intro = re.search(r"\b(?:for|like|such as|including|e\.g\.)\b[^;]*$", lead, re.I)
+        if intro:
+            rest = intro.group(0) + " " + rest
     named = [n for _, n in mentions(sentence, known)]
     subjects = [named[0]] if named and named[0] in models else list(models)
     if not subjects:
@@ -539,6 +558,24 @@ def absolute_recall_problem(
                 vals.append(float(r))
         if vals and ((low and min(vals) >= 0.8) or (not low and max(vals) <= 0.5)):
             wrong.append(c)
+    if not wrong and re.search(
+        r"\b(?:rare|rarest|minority|smallest|small)\b[^.]{0,20}\bclass",
+        rest + " " + sentence[: sentence.lower().find("recall")],
+        re.I,
+    ):
+        # 'recall for rare attack classes was low': the three smallest classes by test support
+        pc = models[subjects[0]].get("per_class") or {}
+        rare = sorted(
+            (c for c in pc if c.upper() != "BENIGN"), key=lambda c: pc[c].get("support", 0)
+        )[:3]
+        vals = [
+            float(r)
+            for n in subjects
+            for c in rare
+            if (r := ((models[n].get("per_class") or {}).get(c) or {}).get("recall")) is not None
+        ]
+        if vals and ((low and min(vals) >= 0.8) or (not low and max(vals) <= 0.5)):
+            wrong = [f"the rare classes ({', '.join(rare)})"]
     if not wrong:
         return None
     return (
