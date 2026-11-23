@@ -273,7 +273,7 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
 <div class="bar"><div class="fill" style="width:{{ (100 * job_counts.get('succeeded',0) / jobs|length)|round|int }}%"></div></div>
 <p class="muted">{% for k, v in job_counts.items() %}{{ k }} {{ v }} · {% endfor %}CPU models run in parallel; GPU jobs run one at a time on the shared GPU.</p>
 <table><tr><th>Experiment</th><th>State</th><th>Result</th><th>Time cap</th><th></th></tr>
-{% for j in jobs %}{% set r = runs.get(j.id) %}<tr><td><b>{{ j.manifest.model.name }}</b> <span class="muted">seed {{ j.manifest.seed }}{% if j.manifest.use_gpu %} · GPU{% endif %}</span></td>
+{% for j in jobs %}{% set r = runs.get(j.id) %}<tr><td><b>{{ j.manifest.model.name }}</b> <span class="muted">seed {{ j.manifest.seed }}{% if j.manifest.use_gpu %} · GPU{% endif %} · {{ j.manifest.dataset_id }}</span></td>
 <td><span class="label {{ {'queued':'Proposed','running':'Running','succeeded':'Measured','failed':'Blocked','canceled':'Blocked','blocked':'Blocked'}[j.state] }}">{{ j.state }}</span></td>
 <td>{% if r and r.metrics %}macro-F1 <b>{{ '%.4f'|format(r.metrics.macro_f1) }}</b> · acc {{ '%.4f'|format(r.metrics.accuracy) }}{% endif %}{% if j.failure_reason %}<span class="error">{{ j.failure_reason[:200] }}</span>{% endif %}</td>
 <td>{{ j.manifest.max_minutes }} min</td>
