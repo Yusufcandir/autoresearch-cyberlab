@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Large datasets: BENIGN rows kept per dataset (attack classes are never sampled) and the
     # most training rows a tuning trial uses. Both are stated in the paper's Methodology.
     benign_row_cap: int = Field(default=400_000, ge=1_000)
+    # rows kept per attack class (huge NetFlow sets have millions per class); smaller values
+    # make studies much faster and are stated in the paper
+    class_row_cap: int = Field(default=400_000, ge=1_000)
     tuning_max_rows: int = Field(default=200_000, ge=1_000)
     # literature: verified papers kept per study (journal papers usually cite 30-50)
     literature_max_papers: int = Field(default=40, ge=5, le=120)

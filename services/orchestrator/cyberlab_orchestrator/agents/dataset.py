@@ -23,11 +23,19 @@ def dataset_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
             and existing.status == "verified"
             and (root / "prepared" / "clean.parquet").exists()
         ):
+            from cyberlab_orchestrator.agents.coding import disk_manifest
+
+            on_disk = disk_manifest(root / "prepared")
+            if on_disk and on_disk.get("status") == "verified" and on_disk != existing.manifest:
+                existing.manifest = on_disk  # prepared again (e.g. other row caps)
             m = DatasetManifest.model_validate(existing.manifest)
             return {"dataset_status": "verified", "dataset_summary": _summary(m)}
     try:
         prepared = adapter.prepare(
-            root, SplitSpec(), benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap)
+            root,
+            SplitSpec(),
+            benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
+            class_cap=ctx.settings.class_row_cap,
         )
         manifest = prepared.manifest
     except DatasetBlocked as exc:

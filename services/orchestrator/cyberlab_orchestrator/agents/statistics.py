@@ -134,6 +134,7 @@ def run_validation(
                 ctx.settings.dataset_root,
                 split,
                 benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
+                class_cap=ctx.settings.class_row_cap,
             )
         except Exception as exc:  # noqa: BLE001 - the report then says NOT_EVALUATED
             logging.getLogger(__name__).warning("re-preparing for the audit failed: %s", exc)

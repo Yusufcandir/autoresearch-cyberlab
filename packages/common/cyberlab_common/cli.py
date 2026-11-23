@@ -83,7 +83,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("dataset", help="download (official URL only), unzip or prepare a dataset")
     p.add_argument("action", choices=["download", "unzip", "prepare", "fixture"])
     p.add_argument("--name", default="cicids2017", help="cicids2017 (default) or unsw-nb15")
-    p.add_argument("--benign-cap", type=int, default=400_000)
+    p.add_argument("--benign-cap", type=int, default=None, help="default: BENIGN_ROW_CAP")
+    p.add_argument("--class-cap", type=int, default=None, help="default: CLASS_ROW_CAP")
     p.set_defaults(func=_dataset)
 
     p = sub.add_parser("worker", help="run the job broker loop (one GPU job at a time)")
@@ -350,7 +351,11 @@ def _dataset(args: argparse.Namespace) -> int:
             adapter.write_fixture(root / "raw")
             print(f"wrote a small SYNTHETIC test fixture to {root / 'raw'} (not real data)")
             return 0
-        prepared = adapter.prepare(root, benign_cap=args.benign_cap)
+        prepared = adapter.prepare(
+            root,
+            benign_cap=args.benign_cap or s.benign_row_cap,
+            class_cap=args.class_cap or s.class_row_cap,
+        )
     except DatasetBlocked as exc:
         print(exc)
         return 2

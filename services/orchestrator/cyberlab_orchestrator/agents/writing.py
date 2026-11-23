@@ -158,6 +158,8 @@ def method_facts(
         "rows_removed_duplicates_or_conflicts": f"{ds.get('n_duplicates_removed', 0):,} rows",
         "rows_dropped_inf_nan": f"{notes.get('rows_with_inf_or_nan_dropped', 0):,} rows",
         "benign_cap": f"{notes.get('benign_cap') or 0:,} rows",
+        "class_cap": f"{notes.get('class_cap') or 0:,} rows",
+        "rows_in_file": f"{notes.get('rows_in_file') or 0:,}",
         # separate facts, so a writer cannot put the class name where a number belongs
         "smallest_class": smallest.split(" (")[0] if smallest else "",
         "smallest_class_test_rows": smallest.split("(")[1].split(" ")[0] if "(" in smallest else "",
@@ -180,6 +182,15 @@ def method_facts(
             ["BENIGN rows were randomly down-sampled to at most facts.benign_cap."]
             if notes.get("benign_cap")
             and (ds.get("class_counts") or {}).get("BENIGN", 0) >= notes["benign_cap"]
+            else []
+        ),
+        *(
+            [
+                "Because the file holds facts.rows_in_file flows, it was read with a seeded "
+                "per-class sample of at most facts.benign_cap of BENIGN and facts.class_cap of "
+                "each attack class; smaller classes were kept in full."
+            ]
+            if any(v < 1.0 for v in (notes.get("sampling_rate_per_class") or {}).values())
             else []
         ),
         (

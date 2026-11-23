@@ -236,11 +236,14 @@ def prepare_split(
     dataset_root: Path,
     split: Any,
     benign_cap: int | None = 400_000,
+    class_cap: int | None = 400_000,
 ) -> Any:
     """Prepare data for a protocol's split. A cross-dataset split trains on this dataset and
     tests on another one with the same features (the NetFlow-v2 family)."""
     if getattr(split, "strategy", None) != "cross_dataset":
-        return adapter.prepare(adapter.root(dataset_root), split, benign_cap=benign_cap)
+        return adapter.prepare(
+            adapter.root(dataset_root), split, benign_cap=benign_cap, class_cap=class_cap
+        )
     from cyberlab_data.common import BENIGN, DatasetBlocked, DatasetInfo, finalize
 
     if not split.test_days:

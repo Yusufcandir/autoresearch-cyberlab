@@ -26,26 +26,46 @@ from cyberlab_protocol import CompileError, compile_protocol
 from cyberlab_schemas import Approval, ApprovalGate, DatasetManifest, Protocol, SplitSpec
 
 
+def disk_manifest(prepared: Any) -> dict[str, Any] | None:
+    """The manifest of the data actually on disk (it changes when the dataset is prepared
+    again, e.g. with other row caps, so a stored record must follow it)."""
+    import json
+
+    path = prepared / "manifest.json"
+    return json.loads(path.read_text()) if path.exists() else None
+
+
 def ensure_dataset_prepared(
     ctx: LabContext, pid: str, dataset_id: str, split: SplitSpec
 ) -> tuple[str | None, DatasetManifest | None]:
     """Prepare and audit one dataset for one split (once); return (blocking reason, manifest)."""
     rec_id = dataset_record_id(dataset_id, split)
     adapter = get_adapter(dataset_id)
-    audited = (
-        prepared_dir_for(adapter.root(ctx.settings.dataset_root), split)
-        / "data_preprocessing_audit.json"
-    ).exists()
+    prepared_dir = prepared_dir_for(adapter.root(ctx.settings.dataset_root), split)
+    audited = (prepared_dir / "data_preprocessing_audit.json").exists()
     with ctx.db.session() as s:
         rec = s.get(DatasetRecord, rec_id)
-        if rec is not None and rec.status == "verified" and audited:
-            return None, DatasetManifest.model_validate(rec.manifest)
+        on_disk = disk_manifest(prepared_dir)
+        if on_disk and audited and on_disk.get("status") == "verified":
+            if rec is None:
+                s.add(
+                    DatasetRecord(
+                        id=rec_id,
+                        name=f"{on_disk.get('name')} [{split.strategy} split]",
+                        manifest=on_disk,
+                        status="verified",
+                    )
+                )
+            elif rec.manifest != on_disk:
+                rec.manifest, rec.status = on_disk, "verified"
+            return None, DatasetManifest.model_validate(on_disk)
     try:
         prepared = prepare_split(
             adapter,
             ctx.settings.dataset_root,
             split,
             benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
+            class_cap=ctx.settings.class_row_cap,
         )
     except DatasetBlocked as exc:
         return f"{adapter.display} blocked: " + "; ".join(exc.reasons), None
@@ -90,6 +110,7 @@ def ensure_split_prepared(ctx: LabContext, pid: str, protocol: Protocol) -> str 
             ctx.settings.dataset_root,
             protocol.split,
             benign_cap=ctx.extra.get("benign_cap", ctx.settings.benign_row_cap),
+            class_cap=ctx.settings.class_row_cap,
         )
     except DatasetBlocked as exc:
         return "dataset for this split blocked: " + "; ".join(exc.reasons)
