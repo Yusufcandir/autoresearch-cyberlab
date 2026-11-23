@@ -18,6 +18,7 @@ from cyberlab_api.deps import get_lab
 from cyberlab_api.progress import (
     build_progress,
     friendly_activity,
+    overall_progress,
     render_manuscript,
     trust_summary,
 )
@@ -419,6 +420,7 @@ def project_page(
         activity=friendly_activity(events),
         steps=steps,
         now=now,
+        progress=overall_progress(steps, jobs, runs, status["stage"]),
         trust=trust,
         stamp=events[-1].id if events else 0,
     )

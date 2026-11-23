@@ -337,3 +337,44 @@ def test_activity_times_are_shown_in_local_time() -> None:
     ts = datetime(2026, 11, 21, 8, 28, 5, tzinfo=UTC)
     assert local_time(ts) == ts.astimezone().strftime("%H:%M:%S")
     assert local_time(ts.replace(tzinfo=None)) == local_time(ts)  # naive values are UTC
+
+
+def test_overall_progress_percentage_and_time_left() -> None:
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from cyberlab_api.progress import STEPS, Step, overall_progress
+
+    now = datetime(2026, 11, 23, 12, 0, tzinfo=UTC)
+    before = {k for k, _, _ in STEPS[: [k for k, _, _ in STEPS].index("experiments")]}
+    steps = [Step(k, label, "done" if k in before else "todo", "") for k, label, _ in STEPS]
+    for st in steps:
+        if st.key == "experiments":
+            st.state = "running"
+
+    def job(i: int, state: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=f"j{i}",
+            state=state,
+            updated_at=now - timedelta(minutes=5),
+            manifest={"max_minutes": 60},
+        )
+
+    jobs = (
+        [job(i, "succeeded") for i in range(5)]
+        + [job(5, "running")]
+        + [job(i, "queued") for i in range(6, 10)]
+    )
+    runs = {
+        f"j{i}": SimpleNamespace(
+            receipt={
+                "started_at": (now - timedelta(minutes=30)).isoformat(),
+                "finished_at": (now - timedelta(minutes=20)).isoformat(),
+            }
+        )
+        for i in range(5)
+    }
+    p = overall_progress(steps, jobs, runs, "running", now)  # type: ignore[arg-type]
+    assert 35 < p["percent"] < 70
+    assert p["label"] == "Experiments 5 of 10" and p["eta"] == "about 50 min left"
+    assert overall_progress(steps, [], {}, "released", now)["percent"] == 100  # type: ignore[arg-type]

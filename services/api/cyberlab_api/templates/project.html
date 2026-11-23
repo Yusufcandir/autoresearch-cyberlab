@@ -4,6 +4,10 @@
 .chips{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px;color:var(--muted)}
 .chip b{color:var(--text);font-weight:600}
+.overall{display:flex;align-items:center;gap:12px;margin:10px 0 4px}
+.overall-bar{flex:1;height:10px;border-radius:999px;background:color-mix(in srgb,var(--line) 70%,transparent);overflow:hidden}
+.overall-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--accent,#5b5bd6),color-mix(in srgb,var(--accent,#5b5bd6) 60%,#22c55e));transition:width .6s ease}
+.overall-text{font-size:13px;white-space:nowrap}
 .live{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:var(--panel);border:1px solid var(--line);font-size:13px;font-weight:600;color:var(--verified);white-space:nowrap;box-shadow:var(--shadow)}
 .live .dot{width:8px;height:8px;border-radius:50%;background:var(--verified);box-shadow:0 0 0 4px color-mix(in srgb,var(--verified) 20%,transparent);animation:pulse 2s infinite}
 .live.off{color:var(--blocked)}.live.off .dot{background:var(--blocked);animation:none}
@@ -95,6 +99,10 @@ mark.flag{background:color-mix(in srgb,var(--unverified) 22%,transparent);color:
     {% if status.stage not in ['error','released'] and not pend %}<span class="spinner"></span>{% endif %}
     <span class="tag">Now</span><span>{{ (now or "Working…")|safe }}</span>
   </div>
+  {% if progress %}<div class="overall" title="Share of the whole study that is done. The experiments are the largest part.">
+    <div class="overall-bar"><div class="overall-fill" style="width:{{ progress.percent }}%"></div></div>
+    <div class="overall-text"><b>{{ progress.percent }}%</b>{% if progress.label %} · {{ progress.label }}{% endif %}{% if progress.eta %} · {{ progress.eta }}{% endif %}</div>
+  </div>{% endif %}
   <ol class="stepper">
     {% for st in steps %}<li class="step {{ st.state }}" title="{{ st.label }}{% if st.detail %}: {{ st.detail }}{% endif %}">
       <span class="bubble">{% if st.state == 'done' %}✓{% elif st.state == 'error' %}!{% else %}{{ loop.index }}{% endif %}</span>

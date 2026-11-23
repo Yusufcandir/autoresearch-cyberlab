@@ -209,6 +209,97 @@ def build_progress(
     return steps, now
 
 
+# Share of a whole study each step usually takes (sums to 100). The experiments dominate.
+_WEIGHTS = {
+    "orchestrator": 2,
+    "literature": 7,
+    "research_gap": 3,
+    "methodology": 4,
+    "dataset": 4,
+    "gate_a": 2,
+    "coding": 2,
+    "experiments": 55,
+    "statistics": 5,
+    "writing": 11,
+    "reviewer": 4,
+    "gate_d": 1,
+}
+
+
+def _when(ts: Any) -> datetime | None:
+    if not ts:
+        return None
+    if isinstance(ts, str):
+        try:
+            ts = datetime.fromisoformat(ts)
+        except ValueError:
+            return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+
+def overall_progress(
+    steps: list[Step],
+    jobs: list[JobRecord],
+    runs: dict[str, Any],
+    stage: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """One percentage for the whole study, plus an estimate of the time left for the
+    experiments (from how long the finished ones took). Waiting for the PI counts as done
+    for the steps before it, so the bar never runs backwards while nothing happens."""
+    now = now or datetime.now(UTC)
+    if stage == "released":
+        return {"percent": 100, "label": "Finished", "eta": None}
+    total = sum(_WEIGHTS.get(s.key, 2) for s in steps) or 1
+    done = 0.0
+    label = ""
+    eta = None
+    for st in steps:
+        w = _WEIGHTS.get(st.key, 2)
+        if st.state == "done":
+            done += w
+        elif st.key == "experiments" and jobs:
+            terminal = {"succeeded", "failed", "canceled", "blocked"}
+            finished = [j for j in jobs if j.state in terminal]
+            running = [j for j in jobs if j.state == "running"]
+            durations = []
+            for j in finished:
+                r = runs.get(j.id)
+                rec = (r.receipt if r is not None else {}) or {}
+                a, b = _when(rec.get("started_at")), _when(rec.get("finished_at"))
+                if a and b and b > a:
+                    durations.append((b - a).total_seconds())
+            typical = sum(durations) / len(durations) if durations else None
+            partial = 0.0
+            for j in running:
+                started = _when(j.updated_at)
+                cap = max(60.0, float(j.manifest.get("max_minutes", 60)) * 60)
+                expect = typical or cap / 2
+                if started:
+                    partial += min(0.9, (now - started).total_seconds() / expect)
+            frac = (len(finished) + partial) / len(jobs)
+            done += w * frac
+            label = f"Experiments {len(finished)} of {len(jobs)}"
+            left = len(jobs) - len(finished)
+            if typical and left and len(durations) >= 2:
+                parallel = max(1, len(running))
+                minutes = max(1, round(left * typical / parallel / 60))
+                eta = (
+                    f"about {minutes} min left"
+                    if minutes < 90
+                    else f"about {minutes / 60:.1f} h left"
+                )
+        elif st.state == "running":
+            done += w * 0.5
+            label = st.label
+        elif st.state == "waiting":
+            label = f"Waiting: {st.label}"
+    pct = int(round(100 * done / total))
+    if stage != "released":
+        pct = min(pct, 99)
+    return {"percent": max(pct, 1), "label": label, "eta": eta}
+
+
 _FRIENDLY = {
     "project.created": "Study created",
     "dataset.verified": "Dataset passed the gate",
