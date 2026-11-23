@@ -210,6 +210,27 @@ def benchmark_findings_text(analysis: dict[str, Any]) -> str:
     return " ".join(out)
 
 
+def benchmark_discussion_text(analysis: dict[str, Any]) -> str:
+    """Which model led on each dataset, and where a hypothesis did not carry over (no numbers)."""
+    b = analysis.get("benchmark") or {}
+    scores = b.get("scores") or {}
+    if len(scores) < 2:
+        return ""
+    lead = {ds: max(s, key=s.__getitem__) for ds, s in scores.items() if s}
+    out = [
+        f"The model with the highest mean {_metric(b.get('metric', 'macro_f1'))} was "
+        + _and([f"{pretty(m)} on {dataset_label(ds)}" for ds, m in lead.items()])
+        + "."
+    ]
+    for hid, (yes, no) in hypothesis_by_dataset(analysis).items():
+        if yes and no:
+            out.append(
+                f"{hid} did not hold on {_and([dataset_label(d) for d in no])}, so the result "
+                "on one NetFlow dataset does not carry over to every other."
+            )
+    return " ".join(out)
+
+
 def results_text(analysis: dict[str, Any]) -> str:
     """The complete Results prose, from the stored aggregates and tests."""
     paras = []
@@ -570,10 +591,26 @@ _GROUP = re.compile(
 )
 
 
+# Related Work sentences about the literature itself ('These studies ...', 'Most prior work
+# ...') or about what this study adds are framing, not results.
+_LITERATURE = re.compile(
+    r"^(?:(?:However|Yet|But|Still),\s+)?(?:These|Such|Prior|Previous|Existing|Earlier|Recent|"
+    r"Most|Many|Few|Other) (?:(?:of )?(?:these |the )?(?:prior |previous |existing |recent )?"
+    r"(?:studies|works?|papers|approaches|research|literature|methods))\b|"
+    r"^(?:This|Our|The present) (?:study|work|paper) (?:contributes|adds|differs|extends|"
+    r"complements|addresses|fills)\b",
+    re.I,
+)
+
+
 def forbidden(sentence: str, context: str, known: list[str]) -> str | None:
     """Why an LLM sentence may not stay in a framing section (None = allowed)."""
     if _NUMBER.search(sentence):
         return "states a measured value"
+    from cyberlab_manuscript.consistency import is_question
+
+    if is_question(sentence) and not _STATS.search(sentence):
+        return None  # 'This study evaluates whether A outperforms B' is the research question
     if _STATS.search(sentence):
         return "states a hypothesis, test or interval result"
     named = mentions(f"{context} {sentence}", known) or _GROUP.search(sentence)
@@ -696,7 +733,11 @@ def forbidden_rich(sentence: str, context: str, known: list[str]) -> str | None:
 def _states_all_hypotheses(text: str, analysis: dict[str, Any]) -> bool:
     ids = [h["id"] for h in _tested_hyps(analysis)]
     return bool(ids) and all(
-        re.search(rf"\b{re.escape(i)} \((?:not )?supported\)", text) for i in ids
+        re.search(
+            rf"\b{re.escape(i)} \((?:not )?supported\)|\({re.escape(i)}, (?:not )?supported\)",
+            text,
+        )
+        for i in ids
     )
 
 
@@ -755,6 +796,7 @@ def lock_evidence(
                     discussion_lead(analysis),
                     gap_text(analysis),
                     operational_text(analysis),
+                    benchmark_discussion_text(analysis),
                 ]
             )
         )
@@ -779,6 +821,13 @@ def lock_evidence(
                     continue
                 if name == "Related Work" and "[@" in s:
                     continue  # statements about cited papers are checked against their abstracts
+                if (
+                    name == "Related Work"
+                    and _LITERATURE.match(s)
+                    and not _NUMBER.search(s)
+                    and s not in issues
+                ):
+                    continue
                 why = issues.get(s) or (
                     forbidden_rich(s, ctx, known)
                     if rich and name in RICH_SECTIONS
@@ -796,6 +845,11 @@ def lock_evidence(
             lead = [p for p in (_missing_operational(kept, analysis),) if p]
             if accuracy_gap_models(analysis) and not re.search(r"balanced accuracy", kept, re.I):
                 lead.append(gap_text(analysis))
+            bench = benchmark_discussion_text(analysis)
+            if bench and not any(
+                dataset_label(d) in kept for d in (analysis.get("benchmark") or {})["datasets"][1:]
+            ):
+                lead.insert(0, bench)
             kept = "\n\n".join(([kept] if kept else []) + lead)
         elif name == "Abstract":
             kept = (kept + " " + findings_text(analysis)).strip()

@@ -119,6 +119,9 @@ def strip_internal_ids(text: str) -> str:
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
     text = drop_repeated_sentences(text)
     text = trim_citation_dumps(text)
+    text = re.sub(
+        r"(?m)^((?:The|This|Our) (?:study|analysis|paper|work|evaluation)) also\b ", r"\1 ", text
+    )
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
 
 

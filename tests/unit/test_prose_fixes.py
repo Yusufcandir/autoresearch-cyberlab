@@ -390,3 +390,36 @@ def test_validator_counts_runs_on_every_benchmark_dataset() -> None:
     runs += [{"model": "rf", "seed": s, "status": "succeeded", "dataset": "b"} for s in (1, 2)]
     got = validate_experiment_configuration(protocol, runs, {"models": {}})
     assert "all 4 planned runs on 2 datasets" in got["detail"]
+
+
+def test_four_dataset_v6_framing_is_kept() -> None:
+    from cyberlab_manuscript.builder import strip_internal_ids
+    from cyberlab_manuscript.consistency import compared_pairs, consistency_issues
+    from cyberlab_manuscript.evidence_text import _states_all_hypotheses, forbidden
+
+    known = ["lightgbm", "ft_transformer", "resnet_mlp", "random_forest", "xgboost"]
+    question = (
+        "This study evaluates whether deep tabular models like FT-Transformer and ResNet-MLP "
+        "outperform tree ensembles like LightGBM and random forest."
+    )
+    assert forbidden(question, "", known) is None
+    analysis = {
+        "models": {n: {} for n in known},
+        "hypotheses": [
+            {"id": "H1", "a": "lightgbm", "b": "ft_transformer", "result": "supported"},
+            {"id": "H3", "a": "lightgbm", "b": "random_forest", "result": "not supported"},
+        ],
+        "dataset": {"split_overlap_rows": 0},
+    }
+    lim = "First, it does not fully evaluate session-level or temporal leakage."
+    md = f"# T\n\n## Introduction\n\n{question}\n\n## Limitations\n\n{lim}\n\n"
+    assert consistency_issues(md, analysis) == []
+    # the group word after ', suggesting that' is not an object of the comparison
+    assert compared_pairs(
+        "LightGBM outperforms the FT-Transformer, suggesting that tree ensembles remain strong.",
+        known,
+    ) == [("lightgbm", "ft_transformer")]
+    assert _states_all_hypotheses("A (H1, supported) and B (H3, not supported).", analysis)
+    assert strip_internal_ids("## Discussion\n\nThe study also reveals X.\n").endswith(
+        "The study reveals X.\n"
+    )

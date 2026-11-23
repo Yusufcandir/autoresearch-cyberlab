@@ -67,6 +67,7 @@ NEGATION = re.compile(
 LEAK = re.compile(r"\bleak\w*", re.I)
 NO_LEAK = re.compile(
     r"\b(no|without|zero|prevent\w*|avoid\w*|free of|ensur\w*|consider\w*|check\w*|audit\w*|"
+    r"evaluat\w*|assess\w*|measur\w*|test\w*|quantif\w*|"
     r"guard\w* against|detect\w*|importance of)\b[^.]{0,60}\bleak\w*|"
     r"\bleak\w*[^.]{0,30}\b(was|were) (not|ruled out|excluded)",
     re.I,
@@ -121,6 +122,25 @@ def prose_sentences(body: str) -> list[str]:
     return [s for s, _ in prose_items(body)]
 
 
+QUESTION = re.compile(r"\b(?:whether|if)\b", re.I)
+
+
+def is_question(sentence: str) -> bool:
+    """'This study evaluates whether deep models outperform tree ensembles' asks, it does not
+    claim: the comparison comes after 'whether'/'if', or the sentence is a question."""
+    if sentence.rstrip().endswith("?"):
+        return True
+    q = QUESTION.search(sentence)
+    c = COMPARE.search(sentence) or SUPERIORITY.search(sentence)
+    return bool(q and c and q.start() < c.start())
+
+
+# 'A beats B, suggesting that tree ensembles ...': what follows starts a new clause
+CLAUSE_END = re.compile(
+    r",\s*(?:suggesting|indicating|showing|implying|which|while|whereas|although|but)\b|;", re.I
+)
+
+
 def mentions(sentence: str, known: list[str]) -> list[tuple[int, str]]:
     """(position, model) for every model named in the sentence, in reading order."""
     found: list[tuple[int, str]] = []
@@ -147,6 +167,9 @@ def comparisons(sentence: str, known: list[str]) -> list[tuple[str, str, str]]:
     for i, c in enumerate(comps):
         lo = comps[i - 1].end() if i else 0
         hi = comps[i + 1].start() if i + 1 < len(comps) else len(sentence)
+        cut = CLAUSE_END.search(sentence, c.end(), hi)
+        if cut:
+            hi = cut.start()
         left = [(pos, n) for pos, n in ms if lo <= pos < c.start()]
         right = [n for pos, n in ms if c.end() <= pos < hi]
         if i + 1 < len(comps) and right:
@@ -774,6 +797,8 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                 continue
             if name == "Related Work" or "[@" in sent:
                 continue  # statements about other papers are checked against their abstracts
+            if is_question(sent):
+                continue
             mentioned = [n for _, n in mentions(f"{ctx} {sent}", known)]
             contradiction = comparison_contradiction(
                 sent, known, hyps
