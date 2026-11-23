@@ -131,6 +131,16 @@ def _section_bodies(markdown: str) -> dict[str, str]:
     return {parts[i].strip(): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
 
 
+def _set_section(markdown: str, name: str, old_body: str, new_body: str) -> str:
+    """Replace one section's body, anchored at its heading (a body may be empty or occur
+    elsewhere in the text)."""
+    head = f"## {name}"
+    at = markdown.find(head + old_body)
+    if at < 0:
+        return markdown
+    return markdown[:at] + head + new_body + markdown[at + len(head) + len(old_body) :]
+
+
 ORPHAN = re.compile(
     r"(?:However,?\s+|Similarly,?\s+|Moreover,?\s+)?(?:These|This|Their|They|Such|It|Its)\b"
 )
@@ -184,12 +194,13 @@ def ensure_findings(markdown: str, analysis: dict[str, Any] | None) -> tuple[str
         )
         if complete:  # every hypothesis is already reported here
             continue
-        sents = split_sentences(" ".join(body.split()))
+        given = set(split_sentences(text))
+        sents = [s for s in split_sentences(" ".join(body.split())) if s not in given]
         # findings go before the first 'Future work / further research ...' sentence
         future = re.compile(r"(?i)(?:additionally,\s*|moreover,\s*)?(?:future|further)\b")
         at = next((i for i, s in enumerate(sents) if future.match(s)), len(sents))
         new = " ".join(sents[:at] + [text] + sents[at:])
-        markdown = markdown.replace(body, f"\n\n{new.strip()}\n\n", 1)
+        markdown = _set_section(markdown, name, body, f"\n\n{new.strip()}\n\n")
         added.append(name)
     body = _section_bodies(markdown).get("Results")
     if body is not None:
@@ -321,6 +332,30 @@ def _upper_first(s: str) -> str:
     return s[:1].upper() + s[1:]
 
 
+MAX_BACKFILL = 12
+_STOP = {
+    "this",
+    "that",
+    "with",
+    "from",
+    "study",
+    "models",
+    "model",
+    "data",
+    "using",
+    "based",
+    "results",
+    "paper",
+    "approach",
+    "their",
+    "these",
+    "which",
+    "while",
+    "about",
+    "into",
+}
+
+
 def backfill_related_work(
     markdown: str,
     papers: dict[str, dict[str, Any]],
@@ -338,6 +373,26 @@ def backfill_related_work(
     if not missing:
         return markdown, 0
     matrix = matrix or {}
+    # Only the papers closest to this study are written out (a long list of loosely related
+    # work reads as padding): ranked by how many of the study's own terms they share.
+    title = re.search(r"(?m)^# (.+)$", markdown)
+    focus = {
+        w
+        for w in re.findall(
+            r"[a-z][a-z0-9-]{3,}",
+            ((title.group(1) if title else "") + " " + bodies.get("Abstract", "")).lower(),
+        )
+        if w not in _STOP
+    }
+
+    def score(k: str) -> int:
+        row = matrix.get(k) or {}
+        text = " ".join(
+            str(x) for x in (papers[k].get("title"), row.get("method"), row.get("dataset"))
+        ).lower()
+        return sum(1 for w in focus if w in text)
+
+    missing = sorted(missing, key=lambda k: -score(k))[:MAX_BACKFILL]
 
     def name(k: str) -> str:
         authors = [a for a in papers[k].get("authors") or [] if a and not INSTITUTION.search(a)]
@@ -362,8 +417,8 @@ def backfill_related_work(
     paras = [" ".join(sentences[i : i + 3]) for i in range(0, len(sentences), 3)]
     if listed:
         paras.append("Other work relevant to this study includes " + "; ".join(listed) + ".")
-    new_body = body.rstrip() + "\n\n" + "\n\n".join(paras) + "\n\n"
-    return markdown.replace(body, new_body, 1), len(missing)
+    new_body = (body.rstrip() or "") + "\n\n" + "\n\n".join(paras) + "\n\n"
+    return _set_section(markdown, "Related Work", body, new_body), len(missing)
 
 
 def claim_check(

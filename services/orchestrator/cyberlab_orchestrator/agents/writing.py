@@ -191,6 +191,7 @@ def method_facts(
                 "each attack class; smaller classes were kept in full."
             ]
             if any(v < 1.0 for v in (notes.get("sampling_rate_per_class") or {}).values())
+            and not any("sampled" in p for p in adapter.preprocessing)
             else []
         ),
         (

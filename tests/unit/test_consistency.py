@@ -420,3 +420,14 @@ def test_model_names_match_with_hyphens_and_spaces() -> None:
     ]:
         assert name in [n for _, n in mentions(text, known)], text
     assert not mentions("a resnetmlpx model", ["resnet_mlp"])
+
+
+def test_findings_are_not_added_twice() -> None:
+    from cyberlab_manuscript.evidence_text import findings_text
+    from cyberlab_orchestrator.agents.reviewer import ensure_findings
+
+    first = findings_text(GAP_ANALYSIS).split(". ")[0] + "."
+    md = f"## Abstract\n\nX.\n\n## Conclusion\n\nWe conclude. {first}\n\n## Evidence\n"
+    out, _ = ensure_findings(md, GAP_ANALYSIS)
+    conclusion = out.split("## Conclusion")[1].split("## Evidence")[0]
+    assert conclusion.count(first) == 1

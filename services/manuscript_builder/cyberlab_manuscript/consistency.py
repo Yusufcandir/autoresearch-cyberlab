@@ -43,7 +43,8 @@ COMPARE = re.compile(
 )
 SUPERIORITY = re.compile(
     r"\b(superiority|superior to (?:all|the other|every)|outperform\w* (?:all|the other|every)|"
-    r"best[- ]performing|the best model)\b",
+    r"best[- ]performing|the best model|ranks? (?:the )?highest|highest[- ]ranked|"
+    r"top[- ]ranked|ranks? first)\b",
     re.I,
 )
 NEGATION = re.compile(
@@ -453,6 +454,48 @@ def tested_pair_called_untested(
     )
 
 
+ABS_RECALL = re.compile(
+    r"\b(?P<dir>low|poor|weak|high|strong|good)\s+recall\b[^.]{0,40}?\b(?:for|on|of)\b(?P<rest>[^.]*)",
+    re.I,
+)
+NOT_REPORTED = re.compile(
+    r"\b(?:does not|did not|do not|not|no|without|lacks?)\s+(?:\w+\s+){0,2}"
+    r"(?:evaluat|report|consider|measur|includ|assess)\w*[^.]{0,60}?"
+    r"\b(false[- ]positive rate|precision|recall|balanced accuracy|MCC|detection rate)\b",
+    re.I,
+)
+
+
+def absolute_recall_problem(
+    sentence: str, analysis: dict[str, Any], known: list[str]
+) -> str | None:
+    """'XGBoost's low recall for Worms' when its stored recall on Worms is high (or the
+    reverse), using the first named model or, if none, the best model."""
+    m = ABS_RECALL.search(sentence)
+    if not m:
+        return None
+    models = analysis.get("models", {})
+    named = [n for _, n in mentions(sentence, known)]
+    subject = named[0] if named else None
+    if subject is None or subject not in models:
+        return None
+    pc = models[subject].get("per_class") or {}
+    low = m.group("dir").lower() in ("low", "poor", "weak")
+    wrong = [
+        c
+        for c, v in pc.items()
+        if re.search(rf"\b{re.escape(c)}\b", m.group("rest"), re.I)
+        and v.get("recall") is not None
+        and ((low and v["recall"] >= 0.8) or (not low and v["recall"] <= 0.5))
+    ]
+    if not wrong:
+        return None
+    return (
+        f"calls the recall of {subject.replace('_', ' ')} on {', '.join(wrong)} "
+        f"{'low' if low else 'high'}, but the stored recall says otherwise"
+    )
+
+
 def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str, str]]:
     known = list(analysis.get("models", {}))
     tested = {
@@ -514,6 +557,23 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
                     sent,
                     "RESULT_IN_METHOD",
                     f"a measured score appears in {name}; scores belong in Results",
+                )
+                continue
+            # the generated verdict 'H2 (A scores higher than B ...) was not supported'
+            # restates the hypothesis inside brackets; it is not a claim that A beats B
+            if re.match(r"^H\d+ \(", sent) and re.search(r"\) was (?:not )?supported\b", sent):
+                continue
+            wrong_abs = absolute_recall_problem(sent, analysis, known)
+            if wrong_abs:
+                add(name, sent, "CLASS_CLAIM_WRONG", wrong_abs)
+                continue
+            missing_metric = NOT_REPORTED.search(sent)
+            if missing_metric and name not in ("Results", "Methodology"):
+                add(
+                    name,
+                    sent,
+                    "REPORTED_METRIC_CALLED_MISSING",
+                    f"says {missing_metric.group(1)} was not evaluated, but the paper reports it",
                 )
                 continue
             called_untested = tested_pair_called_untested(sent, known, tested)

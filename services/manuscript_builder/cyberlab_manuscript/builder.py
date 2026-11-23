@@ -86,6 +86,15 @@ def link_author_year(markdown: str, citations: dict[str, dict[str, Any]]) -> str
         return f"{m.group(1)}{m.group(2) or ''} [@{keys[0]}]"
 
     body, sep, refs = markdown.partition("\n## References")
+    verified = [k for k, c in citations.items() if c.get("status") == "Verified"]
+    if verified:
+        body = re.sub(
+            r"(?<![@\w\[])("
+            + "|".join(re.escape(k) for k in sorted(verified, key=len, reverse=True))
+            + r")\b(?!\])",
+            r"[@\1]",
+            body,
+        )
     body = re.sub(
         r"\b([A-Z][A-Za-z'\-]+)((?: et al\.| and [A-Z][A-Za-z'\-]+)?) \((\d{4})\)(?! ?\[@)",
         repl,

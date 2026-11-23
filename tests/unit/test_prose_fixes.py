@@ -221,3 +221,48 @@ def test_v20_claims_are_checked() -> None:
     assert strip_internal_ids("# Title\n\n## Related Work\n\n# Deep Learning\nText.") == (
         "# Title\n\n## Related Work\n\nText."
     )
+
+
+def test_pilot_benchmark_draft_problems() -> None:
+    from cyberlab_manuscript.builder import link_author_year
+    from cyberlab_manuscript.consistency import (
+        NOT_REPORTED,
+        SUPERIORITY,
+        absolute_recall_problem,
+        consistency_issues,
+    )
+    from cyberlab_orchestrator.agents.reviewer import backfill_related_work
+
+    # added Related Work goes under its heading, not above the Abstract
+    md = "# T\n\n## Abstract\n\nA deep tabular study.\n\n## Related Work\n\n## Methodology\n\nM.\n"
+    papers = {f"K{i}": {"title": f"Paper {i}", "authors": ["A B"]} for i in range(20)}
+    out, n = backfill_related_work(md, papers, {})
+    assert out.index("## Related Work") < out.index("Paper") and out.startswith("# T")
+    assert n == 12  # capped to the closest papers
+
+    # bare citation keys become citations
+    cites = {"India2024enhanced": {"status": "Verified"}}
+    assert "[@India2024enhanced]" in link_author_year(
+        "## Discussion\n\nConsistent with India2024enhanced, deep models lag.\n", cites
+    )
+
+    # absolute recall claims, 'ranks highest', 'does not evaluate FPR'
+    a = {"models": {"xgboost": {"per_class": {"Worms": {"recall": 1.0}}}}}
+    assert absolute_recall_problem(
+        "XGBoost's low recall for rare classes like Worms.", a, ["xgboost"]
+    )
+    assert SUPERIORITY.search("While LightGBM ranks highest in macro-F1")
+    assert NOT_REPORTED.search("the study does not evaluate other metrics like false positive rate")
+
+    # the generated hypothesis verdict is not read as a claim
+    gen = (
+        "H2 (the FT-Transformer scores higher than the ResNet-MLP on macro-F1; 0.7102 vs "
+        "0.7131) was not supported (one-sided paired permutation test on macro-F1, p = 0.635)."
+    )
+    an = {
+        "models": {"ft_transformer": {}, "resnet_mlp": {}},
+        "hypotheses": [
+            {"id": "H2", "a": "ft_transformer", "b": "resnet_mlp", "result": "not supported"}
+        ],
+    }
+    assert consistency_issues(f"# T\n\n## Conclusion\n\n{gen}\n", an) == []
