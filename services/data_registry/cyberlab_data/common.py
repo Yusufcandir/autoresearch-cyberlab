@@ -160,6 +160,10 @@ def finalize(
     if numeric:
         df[numeric] = df[numeric].apply(pd.to_numeric, errors="coerce")
         df[numeric] = df[numeric].replace([np.inf, -np.inf], np.nan)
+        # values beyond float32 (some NetFlow-v2 byte-rate fields) would become infinite when
+        # stored as float32 below, so they count as invalid here and the row is removed
+        big = np.finfo(np.float32).max
+        df[numeric] = df[numeric].mask(df[numeric].abs() > big)
     for c in text:
         df[c] = df[c].astype("string").str.strip().mask(lambda v: v == "")
     n_bad = int(df[features].isna().any(axis=1).sum())

@@ -89,3 +89,38 @@ def test_ollama_reasoning_models_answer_without_a_think_block() -> None:
     )
     res = p.generate("s", "p", True, 0.2)
     assert sent["think"] is False and res.json() == {"ok": True}
+
+
+def test_values_beyond_float32_are_removed_not_turned_into_infinity(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import numpy as np
+    import pandas as pd
+
+    from cyberlab_data.common import DatasetInfo, finalize
+    from cyberlab_schemas import SplitSpec
+
+    rng = np.random.default_rng(0)
+    n = 400
+    df = pd.DataFrame(
+        {
+            "a": rng.normal(size=n),
+            "b": rng.normal(size=n),
+            "Class": ["BENIGN"] * (n // 2) + ["DoS"] * (n // 2),
+        }
+    )
+    df.loc[3, "a"] = 1e300  # like a corrupt NetFlow-v2 byte-rate value
+    info = DatasetInfo(name="t", source_url="x", license="x", citation="x", citation_doi=None)
+    prepared = finalize(
+        df,
+        root=tmp_path,
+        split=SplitSpec(),
+        dataset_id="t-v1",
+        info=info,
+        files={},
+        group_column=None,
+        benign_cap=None,
+        class_cap=None,
+    )
+    clean = pd.read_parquet(prepared.root / "clean.parquet")
+    feats = [c for c in clean.columns if c in ("a", "b")]
+    assert np.isfinite(clean[feats].to_numpy(dtype=float)).all()
+    assert len(clean) == n - 1
