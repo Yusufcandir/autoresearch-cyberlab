@@ -170,6 +170,24 @@ def decide(
 
 
 def record_decisions(ctx: LabContext, pid: str, decisions: list[dict[str, Any]]) -> None:
+    from sqlalchemy import select
+
+    from cyberlab_common.db import AgentNote
+
+    def same(d: dict[str, Any]) -> tuple[Any, ...]:
+        return (d.get("rule"), d.get("identified_problem"), d.get("proposed_action"))
+
     with ctx.db.session() as s:
+        known = {
+            same(n.content)
+            for n in s.scalars(
+                select(AgentNote).where(
+                    AgentNote.project_id == pid, AgentNote.kind == "research_decision"
+                )
+            )
+        }
         for d in decisions:
+            if same(d) in known:  # a rewrite recomputes the statistics: no duplicate entry
+                continue
+            known.add(same(d))
             ctx.note(s, pid, "feedback_controller", "research_decision", d)

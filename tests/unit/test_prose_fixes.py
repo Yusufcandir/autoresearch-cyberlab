@@ -266,3 +266,46 @@ def test_pilot_benchmark_draft_problems() -> None:
         ],
     }
     assert consistency_issues(f"# T\n\n## Conclusion\n\n{gen}\n", an) == []
+
+
+def test_benchmark_v4_problems() -> None:
+    from cyberlab_manuscript.builder import drop_repeated_sentences, link_author_year
+    from cyberlab_manuscript.consistency import absolute_recall_problem, best_claim_problem
+
+    def m(f1: float, worms: float) -> dict[str, Any]:
+        return {
+            "aggregate": {"macro_f1": {"mean": f1}},
+            "per_class": {"Worms": {"recall": worms, "support": 8}},
+        }
+
+    a = {"models": {"xgboost": m(0.7736, 1.0), "lightgbm": m(0.7643, 0.875)}}
+    known = ["xgboost", "lightgbm"]
+    assert best_claim_problem(
+        "LightGBM achieves the highest macro-F1 score among the models.", a, known
+    )
+    assert best_claim_problem("XGBoost achieves the highest macro-F1.", a, known) is None
+    assert absolute_recall_problem(
+        "For example, the recall for the smallest class, Worms, is particularly low.", a, known
+    )
+    cites = {"Siroj2025optimizing": {"status": "Verified", "authors": ["A Siroj"], "year": 2025}}
+    assert "[@Siroj2025optimizing]" in link_author_year(
+        "## Discussion\n\nAs in [Siroj et al., 2025], trees work.\n", cites
+    )
+    rw = (
+        "# T\n\n## Related Work\n\nThese works explore deep learning models for intrusion "
+        "detection but do not compare them with tree ensembles on NetFlow data. Recent work "
+        "explores deep learning models for intrusion detection but does not compare them with "
+        "tree ensembles on NetFlow data.\n\n## Methodology\n\nM.\n"
+    )
+    assert drop_repeated_sentences(rw).count("NetFlow data") == 1
+
+
+def test_comma_counts_from_the_evidence_are_kept() -> None:
+    from cyberlab_manuscript.builder import EvidenceReport, render_text
+
+    rep = EvidenceReport()
+    analysis = {"models": {}, "dataset": {"n_rows_clean": 48532}}
+    out = render_text(
+        "Rows after cleaning: 48,532 of 99,999.", analysis, {}, rep, "methodology", guardrail=True
+    )
+    assert "48,532" in out

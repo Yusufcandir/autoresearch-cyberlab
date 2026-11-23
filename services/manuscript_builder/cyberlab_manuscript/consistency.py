@@ -466,28 +466,76 @@ NOT_REPORTED = re.compile(
 )
 
 
+BEST_CLAIM = re.compile(
+    r"\b(?:achiev\w*|has|had|have|shows?|showed|reach\w*|with|obtain\w*|yield\w*)\s+the\s+"
+    r"(?:highest|best|top)\b[^.]{0,30}?\b(macro-?F1|accuracy|balanced accuracy|MCC|score)",
+    re.I,
+)
+
+
+def best_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]) -> str | None:
+    m = BEST_CLAIM.search(sentence)
+    if not m:
+        return None
+    named = [n for pos, n in mentions(sentence, known) if pos < m.start()]
+    if not named:
+        return None
+    metric = {"accuracy": "accuracy", "mcc": "mcc", "balanced accuracy": "balanced_accuracy"}.get(
+        m.group(1).lower(), "macro_f1"
+    )
+    models = analysis.get("models", {})
+    means = {
+        n: (v.get("aggregate", {}).get(metric) or {}).get("mean")
+        for n, v in models.items()
+        if (v.get("aggregate", {}).get(metric) or {}).get("mean") is not None
+    }
+    if not means:
+        return None
+    best = max(means, key=lambda n: means[n])
+    subject = named[-1]
+    if subject in means and subject != best:
+        return (
+            f"says {subject.replace('_', ' ')} has the highest {metric.replace('_', ' ')}, but "
+            f"{best.replace('_', ' ')} has the highest stored mean"
+        )
+    return None
+
+
 def absolute_recall_problem(
     sentence: str, analysis: dict[str, Any], known: list[str]
 ) -> str | None:
     """'XGBoost's low recall for Worms' when its stored recall on Worms is high (or the
     reverse), using the first named model or, if none, the best model."""
     m = ABS_RECALL.search(sentence)
-    if not m:
-        return None
     models = analysis.get("models", {})
+    if m:
+        low = m.group("dir").lower() in ("low", "poor", "weak")
+        rest = m.group("rest")
+    else:  # 'the recall for ... Worms, is particularly low'
+        m2 = re.search(
+            r"\brecall\b(?P<rest>[^.]{0,60}?)\b(?:is|was|are|were|remains?)\s+"
+            r"(?:\w+\s+)?(?P<dir>low|poor|weak|high|strong)\b",
+            sentence,
+            re.I,
+        )
+        if not m2:
+            return None
+        low = m2.group("dir").lower() in ("low", "poor", "weak")
+        rest = m2.group("rest")
     named = [n for _, n in mentions(sentence, known)]
-    subject = named[0] if named else None
-    if subject is None or subject not in models:
+    subjects = [named[0]] if named and named[0] in models else list(models)
+    if not subjects:
         return None
-    pc = models[subject].get("per_class") or {}
-    low = m.group("dir").lower() in ("low", "poor", "weak")
-    wrong = [
-        c
-        for c, v in pc.items()
-        if re.search(rf"\b{re.escape(c)}\b", m.group("rest"), re.I)
-        and v.get("recall") is not None
-        and ((low and v["recall"] >= 0.8) or (not low and v["recall"] <= 0.5))
-    ]
+    subject = subjects[0] if len(subjects) == 1 else "every model"
+    wrong = []
+    classes = {c for n in subjects for c in (models[n].get("per_class") or {})}
+    for c in classes:
+        if not re.search(rf"\b{re.escape(c)}\b", rest, re.I):
+            continue
+        vals = [((models[n].get("per_class") or {}).get(c) or {}).get("recall") for n in subjects]
+        vals = [v for v in vals if v is not None]
+        if vals and ((low and min(vals) >= 0.8) or (not low and max(vals) <= 0.5)):
+            wrong.append(c)
     if not wrong:
         return None
     return (
@@ -562,6 +610,10 @@ def consistency_issues(markdown: str, analysis: dict[str, Any]) -> list[dict[str
             # the generated verdict 'H2 (A scores higher than B ...) was not supported'
             # restates the hypothesis inside brackets; it is not a claim that A beats B
             if re.match(r"^H\d+ \(", sent) and re.search(r"\) was (?:not )?supported\b", sent):
+                continue
+            wrong_best = best_claim_problem(sent, analysis, known)
+            if wrong_best:
+                add(name, sent, "BEST_CLAIM_WRONG", wrong_best)
                 continue
             wrong_abs = absolute_recall_problem(sent, analysis, known)
             if wrong_abs:

@@ -50,6 +50,43 @@ INTERNAL_ID = re.compile(
 )
 
 
+_FRAMING_SECTIONS = ("Introduction", "Related Work", "Discussion", "Limitations", "Conclusion")
+
+
+def drop_repeated_sentences(text: str) -> str:
+    """A writer sometimes says the same thing twice in a section ('These works explore deep
+    models ... but do not compare them with tree ensembles'). Keep the first of any two
+    number-free sentences that share most of their words."""
+    from cyberlab_manuscript.consistency import split_sentences
+
+    parts = re.split(r"(?m)^(## .+)$", text)
+    for i in range(1, len(parts) - 1, 2):
+        if parts[i][3:].strip() not in _FRAMING_SECTIONS:
+            continue
+        seen: list[set[str]] = []
+        lines = []
+        for line in parts[i + 1].split("\n"):
+            if not line.strip() or line.lstrip().startswith(("|", "#", ">", "!", "*")):
+                lines.append(line)
+                continue
+            kept = []
+            for s in split_sentences(line):
+                words = set(re.findall(r"[a-z]{3,}", s.lower()))
+                # share of the shorter sentence's words found in an earlier one
+                if (
+                    len(words) >= 8
+                    and not re.search(r"\d", s)
+                    and any(len(words & w) / min(len(words), len(w)) >= 0.75 for w in seen)
+                ):
+                    continue
+                seen.append(words)
+                kept.append(s)
+            if kept:
+                lines.append(" ".join(kept))
+        parts[i + 1] = "\n".join(lines)
+    return "".join(parts)
+
+
 def strip_internal_ids(text: str) -> str:
     text = INTERNAL_ID.sub("", text)
     # the writer often names the hypothesis before its placeholder: 'H1 {{hyp:H1}}'
@@ -67,6 +104,7 @@ def strip_internal_ids(text: str) -> str:
         text = head + nl + re.sub(r"(?m)^#[ \t]+[^\n]*\n", "", rest)
     # '**Tree Ensembles and Boosting:**' on its own line reads as a slide, not a paper
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
+    text = drop_repeated_sentences(text)
     return re.sub(r"\((H\d+) \(([a-z ]+)\)\)", r"(\1 \2)", text)
 
 
@@ -95,6 +133,14 @@ def link_author_year(markdown: str, citations: dict[str, dict[str, Any]]) -> str
             r"[@\1]",
             body,
         )
+
+    def bracket(m: re.Match[str]) -> str:
+        keys = index.get((m.group(1).lower(), int(m.group(2))), [])
+        return f"[@{keys[0]}]" if len(keys) == 1 else m.group(0)
+
+    body = re.sub(
+        r"\[([A-Z][A-Za-z'\-]+)(?: et al\.| and [A-Z][A-Za-z'\-]+)?,? (\d{4})\]", bracket, body
+    )
     body = re.sub(
         r"\b([A-Z][A-Za-z'\-]+)((?: et al\.| and [A-Z][A-Za-z'\-]+)?) \((\d{4})\)(?! ?\[@)",
         repl,
@@ -269,6 +315,25 @@ def render_text(
     recorded = evidence_integers(analysis)
 
     def check_numbers(segment: str) -> str:
+        shelved: list[str] = []
+
+        def shelve(m: re.Match[str]) -> str:
+            if m.group(0).replace(",", "") in recorded:
+                shelved.append(m.group(0))
+                # letters, not digits, so the number check below cannot see the placeholder
+                tag = "".join(chr(97 + int(d)) for d in str(len(shelved) - 1))
+                return f"\x00{tag}\x00"
+            return m.group(0)
+
+        segment = re.sub(r"\b\d{1,3}(?:,\d{3})+\b", shelve, segment)
+        out = _check_plain(segment)
+        return re.sub(
+            r"\x00([a-j]+)\x00",
+            lambda m: shelved[int("".join(str(ord(c) - 97) for c in m.group(1)))],
+            out,
+        )
+
+    def _check_plain(segment: str) -> str:
         def num(m: re.Match[str]) -> str:
             if m.group(1) in ALLOWED_PLAIN_NUMBERS or m.group(1) in recorded:
                 return m.group(0)
