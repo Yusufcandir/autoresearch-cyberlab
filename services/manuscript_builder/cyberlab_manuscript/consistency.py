@@ -484,11 +484,11 @@ def best_claim_problem(sentence: str, analysis: dict[str, Any], known: list[str]
         m.group(1).lower(), "macro_f1"
     )
     models = analysis.get("models", {})
-    means = {
-        n: (v.get("aggregate", {}).get(metric) or {}).get("mean")
-        for n, v in models.items()
-        if (v.get("aggregate", {}).get(metric) or {}).get("mean") is not None
-    }
+    means: dict[str, float] = {}
+    for n, v in models.items():
+        mean = (v.get("aggregate", {}).get(metric) or {}).get("mean")
+        if mean is not None:
+            means[n] = float(mean)
     if not means:
         return None
     best = max(means, key=lambda n: means[n])
@@ -532,8 +532,11 @@ def absolute_recall_problem(
     for c in classes:
         if not re.search(rf"\b{re.escape(c)}\b", rest, re.I):
             continue
-        vals = [((models[n].get("per_class") or {}).get(c) or {}).get("recall") for n in subjects]
-        vals = [v for v in vals if v is not None]
+        vals: list[float] = []
+        for n in subjects:
+            r = ((models[n].get("per_class") or {}).get(c) or {}).get("recall")
+            if r is not None:
+                vals.append(float(r))
         if vals and ((low and min(vals) >= 0.8) or (not low and max(vals) <= 0.5)):
             wrong.append(c)
     if not wrong:
