@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import statistics
 import tempfile
 from pathlib import Path
@@ -37,6 +38,12 @@ HEADLINE = (
     "mcc",
     "false_positive_rate",
     "detection_rate",
+    "false_negative_rate",
+    "weighted_f1",
+    "pr_auc_macro",
+    "pr_auc",
+    "roc_auc_ovr_macro",
+    "roc_auc",
 )
 
 
@@ -59,6 +66,8 @@ def analyze_project(
         )
     )
     runs = [r for r in runs if r.experiment_id.startswith(f"p{protocol_version}-")]
+    xfer_runs = [r for r in runs if "@xfer-" in r.experiment_id]
+    runs = [r for r in runs if "@xfer-" not in r.experiment_id]
     bench_runs = [r for r in runs if "@" in r.experiment_id]
     runs = [r for r in runs if "@" not in r.experiment_id]
     if not runs:
@@ -67,8 +76,13 @@ def analyze_project(
     preds: dict[tuple[str, int], pd.DataFrame] = {}
     run_info: dict[str, dict[str, Any]] = {}
     recompute_ok = True
+    per_run_info: dict[tuple[str, int], dict[str, Any]] = {}
     for r in runs:
         arts = r.receipt.get("artifacts", {})
+        if "model_info.json" in arts:
+            per_run_info[(r.model_name, r.seed)] = json.loads(
+                store.path_for(s, project_id, arts["model_info.json"]).read_text()
+            )
         if r.model_name not in run_info and "model_info.json" in arts:
             info = json.loads(store.path_for(s, project_id, arts["model_info.json"]).read_text())
             if "tuning.json" in arts:
@@ -91,8 +105,10 @@ def analyze_project(
         recompute_ok &= recompute_matches(r.metrics, df)
 
     models = _summaries(protocol, preds, run_info)
+    _efficiency_and_explanations(models, per_run_info)
 
     hypotheses = _test_hypotheses(protocol, preds, models)
+    ablations = _ablations(protocol, preds, models)
 
     ds = s.get(DatasetRecord, dataset_record_id(protocol.dataset_id, protocol.split))
     overlap = int(ds.manifest.get("split_overlap_rows", 0)) if ds else 0
@@ -127,6 +143,17 @@ def analyze_project(
     }
     if benchmark:
         analysis["benchmark"] = benchmark
+    if ablations:
+        analysis["ablations"] = ablations
+    if xfer_runs:
+        transfer, xfer_ok = _transfer(s, store, project_id, protocol, xfer_runs)
+        analysis["transfer"] = transfer
+        if not xfer_ok:
+            analysis["metrics_recomputed_match"] = False
+            analysis["qa_flags"].append(
+                QAFlag("blocker", "RECOMPUTE_MISMATCH", "generalization metrics differ").__dict__
+            )
+        analysis["run_ids"] = sorted({*analysis["run_ids"], *(r.id for r in xfer_runs)})
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "analysis.json"
         p.write_text(json.dumps(analysis, indent=2, default=str))
@@ -241,6 +268,160 @@ def _benchmark(
     }, all_ok
 
 
+TRANSFER_METRICS = ("macro_f1", "detection_rate", "false_positive_rate")
+
+
+def _transfer(
+    s: Session, store: ArtifactStore, project_id: str, protocol: Protocol, runs: list[Any]
+) -> tuple[dict[str, Any], bool]:
+    """Generalization matrix: for each model, training dataset and test dataset, the
+    attack-vs-BENIGN scores (mean and sd over seeds); diagonal = tested on its own dataset."""
+    vals: dict[str, dict[str, dict[str, dict[str, list[float]]]]] = {}
+    ok = True
+    datasets: list[str] = [protocol.dataset_id, *(protocol.benchmark_datasets or [])]
+    for r in runs:
+        src = r.experiment_id.split("@xfer-", 1)[1]
+        arts = r.receipt.get("artifacts", {})
+        own = pd.read_csv(store.path_for(s, project_id, arts["predictions.csv"]))
+        ok &= recompute_matches(r.metrics, own)
+        frames = {src: own}
+        for name, sha in arts.items():
+            if name.startswith("transfer_") and name.endswith(".csv"):
+                frames[name[len("transfer_") : -4]] = pd.read_csv(
+                    store.path_for(s, project_id, sha)
+                )
+        for tgt, df in frames.items():
+            met = compute_metrics(df)
+            cell = vals.setdefault(r.model_name, {}).setdefault(src, {}).setdefault(tgt, {})
+            for k in TRANSFER_METRICS:
+                if k in met:
+                    cell.setdefault(k, []).append(float(met[k]))
+    models: dict[str, Any] = {}
+    for m, by_src in vals.items():
+        matrix: dict[str, dict[str, dict[str, Any]]] = {}
+        diag: list[float] = []
+        off: list[float] = []
+        for src, by_tgt in by_src.items():
+            for tgt, mets in by_tgt.items():
+                summary: dict[str, dict[str, float]] = {
+                    k: {
+                        "mean": statistics.fmean(v),
+                        "sd": statistics.stdev(v) if len(v) > 1 else 0.0,
+                        "n_seeds": len(v),
+                    }
+                    for k, v in mets.items()
+                }
+                matrix.setdefault(src, {})[tgt] = summary
+                f1 = summary.get("macro_f1", {}).get("mean")
+                if f1 is not None:
+                    (diag if src == tgt else off).append(f1)
+        worst = min(
+            (
+                (src, tgt, c["macro_f1"]["mean"])
+                for src, row in matrix.items()
+                for tgt, c in row.items()
+                if src != tgt and "macro_f1" in c
+            ),
+            key=lambda t: t[2],
+            default=None,
+        )
+        models[m] = {
+            "matrix": matrix,
+            "in_domain": statistics.fmean(diag) if diag else None,
+            "cross_domain": statistics.fmean(off) if off else None,
+            "worst": {"train": worst[0], "test": worst[1], "macro_f1": worst[2]} if worst else None,
+        }
+    return {
+        "label_scheme": "binary",
+        "metric": "macro_f1",
+        "datasets": [d for d in datasets if any(d in v["matrix"] for v in models.values())],
+        "models": models,
+    }, ok
+
+
+def _efficiency_and_explanations(
+    models: dict[str, Any], per_run: dict[tuple[str, int], dict[str, Any]]
+) -> None:
+    """Mean training time and inference latency over seeds, and the permutation importance
+    averaged over seeds, from each run's model_info.json."""
+    for name, m in models.items():
+        infos = [per_run[(name, sd)] for sd in m["seeds"] if (name, sd) in per_run]
+        train = [float(i["train_seconds"]) for i in infos if i.get("train_seconds") is not None]
+        infer = [
+            1000.0 * float(i["inference_seconds"]) / max(int(i.get("n_test") or 0), 1)
+            for i in infos
+            if i.get("inference_seconds") is not None and i.get("n_test")
+        ]
+        if train:
+            m["efficiency"] = {
+                "train_seconds": statistics.fmean(train),
+                "train_seconds_sd": statistics.stdev(train) if len(train) > 1 else 0.0,
+                "inference_ms_per_1000": statistics.fmean(infer) if infer else None,
+                "used_gpu": any(bool(i.get("used_gpu")) for i in infos),
+                "n_seeds": len(train),
+            }
+        shaps = [i["shap_importance"]["overall"] for i in infos if i.get("shap_importance")]
+        if shaps:
+            feats_s = set().union(*shaps)
+            mean_s = {f: statistics.fmean(float(d.get(f, 0.0)) for d in shaps) for f in feats_s}
+            m["shap_importance"] = dict(sorted(mean_s.items(), key=lambda kv: -kv[1])[:15])
+            first = next(i["shap_importance"] for i in infos if i.get("shap_importance"))
+            if first.get("per_class"):
+                m["shap_per_class"] = first["per_class"]
+        imps = [i["permutation_importance"] for i in infos if i.get("permutation_importance")]
+        if imps:
+            feats = set().union(*imps)
+            mean = {f: statistics.fmean(float(d.get(f, 0.0)) for d in imps) for f in feats}
+            m["permutation_importance"] = dict(sorted(mean.items(), key=lambda kv: -kv[1])[:15])
+            m["permutation_importance_seeds"] = len(imps)
+
+
+def _ablations(
+    protocol: Protocol, preds: dict[tuple[str, int], pd.DataFrame], models: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Each ablation model against the full model of the same template: the paired
+    permutation test on the primary metric (one-sided: removing the features lowers it),
+    Holm-adjusted across the ablations."""
+    metric = protocol.hypotheses[0].primary_metric if protocol.hypotheses else "macro_f1"
+    out: list[dict[str, Any]] = []
+    for m in protocol.models:
+        if m.role != "ablation" or m.name not in models:
+            continue
+        base = next(
+            (
+                b.name
+                for b in protocol.models
+                if b.template == m.template and b.role != "ablation" and b.name in models
+            ),
+            None,
+        )
+        if base is None:
+            continue
+        common = sorted(
+            {sd for (n, sd) in preds if n == m.name} & {sd for (n, sd) in preds if n == base}
+        )
+        if not common:
+            continue
+        a = [preds[(base, sd)] for sd in common]
+        b = [preds[(m.name, sd)] for sd in common]
+        out.append(
+            {
+                "model": m.name,
+                "base": base,
+                "metric": metric,
+                "dropped": list((m.params or {}).get("drop_features") or []),
+                "base_mean": models[base]["aggregate"][metric]["mean"],
+                "ablated_mean": models[m.name]["aggregate"][metric]["mean"],
+                "test": paired_permutation_test(a, b, metric, n_perm=1000),
+                "effect": bootstrap_diff_seeds(a, b, metric, n_boot=500),
+            }
+        )
+    for x, p_adj in zip(out, holm([x["test"]["p_value"] for x in out]), strict=True):
+        x["p_holm"] = p_adj
+        x["significant"] = x["base_mean"] > x["ablated_mean"] and p_adj < 0.05
+    return out
+
+
 def _summaries(
     protocol: Protocol,
     preds: dict[tuple[str, int], pd.DataFrame],
@@ -254,7 +435,13 @@ def _summaries(
         per_seed = {seed: compute_metrics(preds[(m.name, seed)]) for seed in seeds}
         agg: dict[str, Any] = {}
         for k in HEADLINE:
-            vals = [per_seed[sd][k] for sd in seeds if k in per_seed[sd]]
+            # a metric that is undefined for a seed (NaN, e.g. PR-AUC without positives) is
+            # left out rather than poisoning the mean
+            vals = [
+                float(per_seed[sd][k])
+                for sd in seeds
+                if k in per_seed[sd] and math.isfinite(float(per_seed[sd][k]))
+            ]
             if vals:
                 agg[k] = {
                     "mean": statistics.fmean(vals),

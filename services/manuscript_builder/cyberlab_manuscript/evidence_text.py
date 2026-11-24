@@ -241,6 +241,17 @@ def benchmark_discussion_text(analysis: dict[str, Any]) -> str:
                 f"{hid} did not hold on {_and([dataset_label(d) for d in no])}, so the result "
                 "on one NetFlow dataset does not carry over to every other."
             )
+    t = (analysis.get("transfer") or {}).get("models") or {}
+    gaps = [
+        v["in_domain"] - v["cross_domain"]
+        for v in t.values()
+        if v.get("in_domain") is not None and v.get("cross_domain") is not None
+    ]
+    if gaps and min(gaps) > 0:
+        out.append(
+            "Every model scored lower on datasets it was not trained on than on its own, so "
+            "results measured within one dataset overstate performance on a new network."
+        )
     return " ".join(out)
 
 
@@ -301,6 +312,8 @@ def results_text(analysis: dict[str, Any]) -> str:
         paras.append(
             "{{ref:figure_recall}} shows the recall of every model on every class. " + minority
         )
+    if imp := importance_text(analysis):
+        paras.append(imp)
     hyp = hypothesis_sentences(analysis)
     scope = untested_pairs_sentence(analysis)
     if hyp or scope:
@@ -311,6 +324,9 @@ def results_text(analysis: dict[str, Any]) -> str:
                 + ([scope] if scope else [])
             )
         )
+    for extra in (efficiency_text(analysis), ablation_text(analysis)):
+        if extra:
+            paras.append(extra)
     bench = benchmark_text(analysis)
     if bench:
         # the tables and figures are cited in their numbered order, so each one can be
@@ -319,6 +335,8 @@ def results_text(analysis: dict[str, Any]) -> str:
             "{{ref:table_benchmark}} and {{ref:figure_benchmark}} give the scores on each "
             "dataset, and {{ref:figure_rank}} the average ranks. " + bench
         )
+    if xfer := transfer_text(analysis):
+        paras.append(xfer)
     best = _best(analysis)
     if best:
         support = {
@@ -333,6 +351,102 @@ def results_text(analysis: dict[str, Any]) -> str:
                 f"{small}, has only {support[small]:,} test rows."
             )
     return "\n\n".join(paras)
+
+
+def importance_text(analysis: dict[str, Any]) -> str:
+    """Which features each model relies on (permutation importance), from the stored runs."""
+    models = analysis.get("models", {})
+    have = [n for n in models if models[n].get("permutation_importance")]
+    if not have:
+        return ""
+    metric = _metric(primary_metric(analysis))
+    best = _best(analysis)
+    lead: str = best if best is not None and best in have else have[0]
+    top = list(models[lead]["permutation_importance"].items())[:3]
+    sents = [
+        "{{ref:figure_importance}} shows how much each model relies on each feature "
+        f"(permutation importance: the drop in {metric} when the feature's values are shuffled "
+        "on the test rows, averaged over seeds)."
+    ]
+    if top:
+        sents.append(
+            f"For {pretty(lead)}, shuffling "
+            + _and([f"{f} lowered {metric} by {d:.3f}" for f, d in top])
+            + "."
+        )
+    if len(have) > 1:
+        shared = set(list(models[have[0]]["permutation_importance"])[:5])
+        for n in have[1:]:
+            shared &= set(list(models[n]["permutation_importance"])[:5])
+        sents.append(
+            f"Among the five most important features of every model were {_and(sorted(shared))}."
+            if shared
+            else "No feature was among the five most important of every model."
+        )
+    shap_lead = next(
+        (n for n in sorted(models, key=lambda n: n != best) if models[n].get("shap_importance")),
+        None,
+    )
+    if shap_lead:
+        top_s = list(models[shap_lead]["shap_importance"])[:3]
+        sents.append(
+            f"The SHAP values of {pretty(shap_lead)} ({{{{ref:figure_shap}}}}) agree on what "
+            f"drives its decisions: its most influential features were {_and(top_s)}."
+            if set(top_s) & set(list(models[shap_lead].get("permutation_importance") or {})[:5])
+            else f"The SHAP values of {pretty(shap_lead)} ({{{{ref:figure_shap}}}}) rank "
+            f"{_and(top_s)} highest."
+        )
+        per = models[shap_lead].get("shap_per_class") or {}
+        if per:
+            sents.append(
+                "By class, "
+                + "; ".join(f"{c} was driven most by {next(iter(v))}" for c, v in per.items() if v)
+                + "."
+            )
+    return " ".join(sents)
+
+
+def efficiency_text(analysis: dict[str, Any]) -> str:
+    models = analysis.get("models", {})
+    eff = {n: m["efficiency"] for n, m in models.items() if m.get("efficiency")}
+    if len(eff) < 2:
+        return ""
+    fast = min(eff, key=lambda n: eff[n]["train_seconds"])
+    slow = max(eff, key=lambda n: eff[n]["train_seconds"])
+    inf = [e["inference_ms_per_1000"] for e in eff.values() if e.get("inference_ms_per_1000")]
+    out = (
+        "{{ref:table_efficiency}} gives the time of the final training run (excluding the "
+        f"settings search) and the inference latency. {_cap(pretty(fast))} trained fastest "
+        f"({eff[fast]['train_seconds']:.1f} s) and {pretty(slow)} slowest "
+        f"({eff[slow]['train_seconds']:.1f} s)"
+    )
+    if inf:
+        out += f"; inference took {min(inf):.2f} to {max(inf):.2f} ms per 1,000 test rows"
+    return out + "."
+
+
+def ablation_text(analysis: dict[str, Any]) -> str:
+    abl = analysis.get("ablations") or []
+    if not abl:
+        return ""
+    sents = [
+        "{{ref:table_ablation}} compares each full model with the same model trained without selected features."
+    ]
+    for x in abl:
+        eff = x.get("effect") or {}
+        ci = (
+            f", 95% CI [{eff['low']:+.4f}, {eff['high']:+.4f}]"
+            if {"low", "high"} <= set(eff)
+            else ""
+        )
+        sents.append(
+            f"Removing {_and(x['dropped']) or 'the listed features'} from {pretty(x['base'])} "
+            f"changed {_metric(x['metric'])} from {x['base_mean']:.4f} to "
+            f"{x['ablated_mean']:.4f} (difference {x['base_mean'] - x['ablated_mean']:+.4f}{ci}; "
+            f"Holm-adjusted {_p(x['p_holm'])}), "
+            + ("a significant loss." if x.get("significant") else "not a significant loss.")
+        )
+    return " ".join(sents)
 
 
 def minority_recall_text(analysis: dict[str, Any], n: int = 3) -> str:
@@ -482,6 +596,53 @@ def benchmark_method_text(analysis: dict[str, Any]) -> str:
     )
 
 
+def transfer_method_text(analysis: dict[str, Any]) -> str:
+    t = analysis.get("transfer") or {}
+    if len(t.get("datasets", [])) < 2:
+        return ""
+    return (
+        "To evaluate generalization, every model was also trained on each dataset and tested "
+        "on the test split of every dataset, using the features all datasets share. Because "
+        "the attack families differ between the datasets, labels were reduced to attack versus "
+        "BENIGN for these runs, and the reviewed default settings were used (no settings "
+        "search). A model tested on its own dataset gives the in-domain score; tested on another "
+        "dataset, the cross-dataset score."
+    )
+
+
+def transfer_text(analysis: dict[str, Any]) -> str:
+    """Generalization results (Results), from the stored transfer matrix."""
+    t = analysis.get("transfer") or {}
+    models = {n: v for n, v in (t.get("models") or {}).items() if v.get("cross_domain") is not None}
+    if not models:
+        return ""
+    order = sorted(models, key=lambda n: -models[n]["cross_domain"])
+    sents = [
+        "{{ref:table_transfer}} and {{ref:figure_transfer}} show how well each model "
+        "generalizes when it is trained on one dataset and tested on another (attack versus "
+        "BENIGN, macro-F1, mean over seeds)."
+    ]
+    sents.append(
+        "Averaged over all pairs of different datasets, "
+        + _and(
+            [
+                f"{pretty(n)} reached {models[n]['cross_domain']:.4f} (in-domain "
+                f"{models[n]['in_domain']:.4f})"
+                for n in order
+            ]
+        )
+        + "."
+    )
+    best = order[0]
+    w = models[best].get("worst")
+    if w:
+        sents.append(
+            f"The hardest transfer for {pretty(best)} was from {dataset_label(w['train'])} to "
+            f"{dataset_label(w['test'])} (macro-F1 {w['macro_f1']:.4f})."
+        )
+    return " ".join(sents)
+
+
 def benchmark_text(analysis: dict[str, Any]) -> str:
     """Results across datasets (Results), from the stored ranking and secondary tests."""
     b = analysis.get("benchmark") or {}
@@ -559,6 +720,8 @@ def methodology_text(facts: dict[str, Any], prose: list[str], analysis: dict[str
     statements = [fill(s) for s in prose if not s.startswith("Model '")]
     if bench := benchmark_method_text(analysis):
         statements.append(bench)
+    if xfer := transfer_method_text(analysis):
+        statements.append(xfer)
     models = analysis.get("models", {})
     if models:
         statements.append(

@@ -16,10 +16,16 @@ from cyberlab_manuscript.layout import (
     ieee_reference,
     journal_refs,
     place_floats,
+    png_width_inches,
     references,
     roman,
     split_sections,
 )
+
+
+def _size(src: str) -> str:
+    w = png_width_inches(src)
+    return f' style="width:{w}in"' if w else ""
 
 
 def journalize_html(out: str) -> str:
@@ -39,7 +45,7 @@ def journalize_html(out: str) -> str:
         r'<p><img src="([^"]+)" alt="Figure (\d+)"\s*/?></p>\s*<p><em>Figure \d+\. (.*?)</em></p>',
         lambda m: (
             f'<figure class="fig{" wide" if WIDE_FIGURE.search(m.group(3)) else ""}">'
-            f'<img src="{m.group(1)}" alt="Figure {m.group(2)}">'
+            f'<img src="{m.group(1)}" alt="Figure {m.group(2)}"{_size(m.group(1))}>'
             f"<figcaption><b>Fig. {m.group(2)}.</b> {m.group(3)}</figcaption></figure>"
         ),
         out,

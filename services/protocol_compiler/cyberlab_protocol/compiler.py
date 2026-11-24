@@ -134,7 +134,34 @@ def compile_protocol(
         raise CompileError(reasons)
     targets: list[tuple[str, SplitSpec, str]] = [(protocol.dataset_id, protocol.split, "")]
     targets += [(d, sp, f"@{d}") for d, sp, _ in extra_datasets or []]
-    return [
+    transfer: list[ExperimentManifest] = []
+    if protocol.transfer and extra_datasets:
+        # generalization: trained on each dataset (attack vs BENIGN, reviewed default settings)
+        # and tested on every dataset; one run per model, seed and training dataset
+        all_ds = [d for d, _, _ in targets]
+        transfer = [
+            ExperimentManifest(
+                experiment_id=f"p{protocol.version}-{m.name}-s{seed}@xfer-{ds_id}",
+                project_id=protocol.project_id,
+                protocol_version=protocol.version,
+                protocol_sha256=protocol.sha256,
+                dataset_id=ds_id,
+                model=m,
+                seed=seed,
+                label_scheme="binary",
+                split=split,
+                risk_tier=protocol.risk_tier,
+                max_minutes=min(protocol.gpu_budget_minutes, max_job_minutes),
+                use_gpu=use_gpu and m.template in GPU_TEMPLATES,
+                tuning=None,
+                transfer_targets=[d for d in all_ds if d != ds_id],
+            )
+            for ds_id, split, _ in targets
+            for m in protocol.models
+            if m.role != "ablation"
+            for seed in protocol.seeds
+        ]
+    return transfer + [
         ExperimentManifest(
             experiment_id=f"p{protocol.version}-{m.name}-s{seed}{suffix}",
             project_id=protocol.project_id,

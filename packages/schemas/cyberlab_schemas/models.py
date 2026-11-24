@@ -22,7 +22,14 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-_LATE_OPTIONAL = {"tuning", "min_test_support", "followup_of", "benchmark_datasets"}
+_LATE_OPTIONAL = {
+    "tuning",
+    "min_test_support",
+    "followup_of",
+    "benchmark_datasets",
+    "transfer",
+    "transfer_targets",
+}
 
 
 def content_hash(obj: BaseModel | dict[str, Any]) -> str:
@@ -159,6 +166,9 @@ class Protocol(Versioned):
     # Multi-dataset benchmark: the same models, seeds and tuning budget also run on these
     # datasets; the paper reports each dataset and a Friedman/Nemenyi ranking across all.
     benchmark_datasets: list[str] | None = None
+    # Generalization (needs benchmark_datasets): every model is also trained on each dataset
+    # with attack-vs-BENIGN labels and tested on every other dataset (shared features only).
+    transfer: bool | None = None
     created_at: datetime = Field(default_factory=utcnow)
 
     @property
@@ -200,6 +210,8 @@ class ExperimentManifest(Versioned):
     max_minutes: int = Field(ge=1)
     use_gpu: bool = False
     tuning: TuningSpec | None = None
+    # generalization runs: dataset ids whose test splits are also predicted
+    transfer_targets: list[str] | None = None
 
 
 class JobState(StrEnum):

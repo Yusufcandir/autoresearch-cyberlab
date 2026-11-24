@@ -13,10 +13,11 @@ from cyberlab_tabular import run_experiment
 
 def main(argv: list[str]) -> int:
     manifest_path, prepared_dir, out_dir = (Path(a) for a in argv[:3])
+    targets = {k: Path(v) for k, v in (a.split("=", 1) for a in argv[3:])}
     manifest = ExperimentManifest.model_validate_json(manifest_path.read_text())
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        run_experiment(manifest, prepared_dir, out_dir)
+        run_experiment(manifest, prepared_dir, out_dir, targets=targets or None)
     except Exception as exc:  # noqa: BLE001 - recorded as the job failure reason
         (out_dir / "error.json").write_text(
             json.dumps({"error": repr(exc), "traceback": traceback.format_exc()[-4000:]})

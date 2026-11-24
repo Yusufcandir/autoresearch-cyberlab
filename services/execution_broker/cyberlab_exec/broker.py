@@ -384,6 +384,13 @@ class Broker:
             str(prepared),
             str(work / "out"),
         ]
+        from cyberlab_data import benchmark_split
+
+        for t in manifest.transfer_targets or []:  # generalization: other datasets' test splits
+            tdir = prepared_dir_for(
+                get_adapter(t).root(self.settings.dataset_root), benchmark_split(t, manifest.split)
+            )
+            cmd.append(f"{t}={tdir}")
         env = {
             **os.environ,
             "CUDA_VISIBLE_DEVICES": "0" if manifest.use_gpu else "",
@@ -428,7 +435,15 @@ class Broker:
             assert job is not None
             artifacts: dict[str, str] = {}
             run_id = None
-            for name in ("predictions.csv", "model_info.json", "tuning.json", "error.json"):
+            names = [
+                "predictions.csv",
+                "model_info.json",
+                "tuning.json",
+                "error.json",
+                "model.joblib",
+            ]
+            names += sorted(p.name for p in out.glob("transfer_*.csv")) if out.exists() else []
+            for name in names:
                 if (out / name).exists():
                     rec = self.store.put(s, manifest.project_id, out / name, name=name)
                     artifacts[name] = rec.sha256

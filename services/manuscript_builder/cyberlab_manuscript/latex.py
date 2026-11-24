@@ -38,7 +38,9 @@ _UNICODE = {
 }
 # sections that are not part of a journal article body
 _SKIP_SECTIONS = {"References", "Evidence"}
-_WIDE_FIGURE = re.compile(r"per model and dataset|per class|confusion matrix", re.I)
+_WIDE_FIGURE = re.compile(
+    r"per model and dataset|per class|confusion matrix|trained on the row dataset", re.I
+)
 
 
 def _escape(text: str) -> str:

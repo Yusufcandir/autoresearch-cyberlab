@@ -630,6 +630,42 @@ def redraft_post(
     return RedirectResponse(f"/projects/{pid}#manuscript", status_code=303)
 
 
+@router.get("/projects/{pid}/package")
+def package_get(
+    pid: str, me: Principal | None = Depends(web_user), lab: Lab = Depends(lab_dep)
+) -> Response:
+    """Reproducibility package (zip): protocol, analysis, manuscript, every run's files."""
+    if me is None:
+        return _login_redirect()
+    from cyberlab_api.package import build_package
+
+    with lab.db.session() as s:
+        require_project_role(s, me, pid)
+        name, data = build_package(s, pid)
+    return Response(
+        data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+@router.post("/projects/{pid}/writing")
+def writing_post(
+    pid: str,
+    request: Request,
+    cloud: str = Form("no"),
+    usd: float = Form(),
+    csrf: str = Form(),
+    me: Principal | None = Depends(web_user),
+    lab: Lab = Depends(lab_dep),
+) -> Response:
+    if me is None:
+        return _login_redirect()
+    check_csrf(request, csrf, lab)
+    lab.set_writing(me, pid, cloud == "yes", usd)
+    return RedirectResponse(f"/projects/{pid}#manuscript", status_code=303)
+
+
 @router.post("/projects/{pid}/budget")
 def budget_post(
     pid: str,

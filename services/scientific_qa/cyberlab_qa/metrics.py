@@ -54,7 +54,17 @@ def compute_metrics(preds: pd.DataFrame) -> dict[str, Any]:
             probs = probs / np.clip(probs.sum(axis=1, keepdims=True), 1e-12, None)
             if len(labels) == 2:
                 out["roc_auc"] = float(skm.roc_auc_score(y == labels[1], probs[:, 1]))
+                out["pr_auc"] = float(skm.average_precision_score(y == labels[1], probs[:, 1]))
             else:
+                # PR-AUC per class (one vs rest), averaged over the classes present in the test
+                aps = [
+                    float(skm.average_precision_score(y == c, probs[:, i]))
+                    for i, c in enumerate(labels)
+                    if (y == c).any()
+                ]
+                aps = [a for a in aps if np.isfinite(a)]
+                if aps:
+                    out["pr_auc_macro"] = float(np.mean(aps))
                 out["roc_auc_ovr_macro"] = float(
                     skm.roc_auc_score(y, probs, multi_class="ovr", average="macro", labels=labels)
                 )
@@ -66,6 +76,7 @@ def compute_metrics(preds: pd.DataFrame) -> dict[str, Any]:
         benign = ~attack_true
         out["false_positive_rate"] = float((attack_pred & benign).sum() / max(benign.sum(), 1))
         out["detection_rate"] = float((attack_pred & attack_true).sum() / max(attack_true.sum(), 1))
+        out["false_negative_rate"] = 1.0 - out["detection_rate"]
     return out
 
 

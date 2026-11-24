@@ -468,6 +468,28 @@ class Lab:
             )
             return int(spec["llm_token_budget"])
 
+    def set_writing(
+        self, principal: Principal, project_id: str, allow_cloud: bool, usd_budget: float
+    ) -> None:
+        """PI sets, for an existing study, whether the paid cloud model may write (public data
+        only; otherwise every call stays on the local model) and the study's dollar limit."""
+        if not 0 <= usd_budget <= 10_000:
+            raise GateError("the dollar limit must be between 0 and 10,000")
+        with self.db.session() as s:
+            p = require_project_role(s, principal, project_id, "pi")
+            spec = dict(p.spec)
+            old = {k: spec.get(k) for k in ("data_may_leave_host", "llm_usd_budget")}
+            spec["data_may_leave_host"] = allow_cloud
+            spec["llm_usd_budget"] = round(float(usd_budget), 2)
+            p.spec = spec
+            audit(
+                s,
+                principal.username,
+                "project.writing_settings",
+                project_id,
+                {"from": old, "to": {k: spec[k] for k in old}},
+            )
+
     def pause(self, principal: Principal, project_id: str, paused: bool) -> None:
         with self.db.session() as s:
             p = require_project_role(s, principal, project_id, "researcher")

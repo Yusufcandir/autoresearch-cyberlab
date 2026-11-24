@@ -701,8 +701,9 @@ def _best_of(values: dict[str, float | None], lower: bool = False) -> set[str]:
 
 def results_table(analysis: dict[str, Any]) -> str:
     rows = [
-        "| Model | Role | Macro-F1 (mean ± sd) | 95% CI ({seed}) | Accuracy | MCC | FPR | Detection rate |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Model | Role | Macro-F1 (mean ± sd) | 95% CI ({seed}) | Accuracy | MCC | PR-AUC | FPR | "
+        "Detection rate |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     seed = "?"
     models = analysis["models"]
@@ -714,7 +715,15 @@ def results_table(analysis: dict[str, Any]) -> str:
     order = sorted(models, key=lambda n: -(mean(n, "macro_f1") or 0.0))
     best = {
         k: _best_of({n: mean(n, k) for n in models}, lower=k == "false_positive_rate")
-        for k in ("macro_f1", "accuracy", "mcc", "false_positive_rate", "detection_rate")
+        for k in (
+            "macro_f1",
+            "accuracy",
+            "mcc",
+            "false_positive_rate",
+            "detection_rate",
+            "pr_auc_macro",
+            "pr_auc",
+        )
     }
     for name in order:
         m = models[name]
@@ -730,10 +739,82 @@ def results_table(analysis: dict[str, Any]) -> str:
             f"| {model_label(name)} | {str(m['role']).capitalize()} | "
             f"{_bold_if(f1, name in best['macro_f1'])} | "
             f"[{_fmt(ci['low'])}, {_fmt(ci['high'])}] | {g('accuracy')} | {g('mcc')} | "
+            f"{g('pr_auc_macro') if 'pr_auc_macro' in a else g('pr_auc')} | "
             f"{g('false_positive_rate')} | {g('detection_rate')} |"
         )
     rows[0] = rows[0].replace("{seed}", seed)
     return "\n".join(rows)
+
+
+def efficiency_table(analysis: dict[str, Any]) -> str:
+    models = analysis.get("models", {})
+    rows = [(n, m["efficiency"]) for n, m in models.items() if m.get("efficiency")]
+    if not rows:
+        return ""
+    fastest = min(e["train_seconds"] for _, e in rows)
+    lines = [
+        "| Model | Training time (s, mean ± sd) | Inference (ms per 1,000 rows) | Device |",
+        "|---|---|---|---|",
+    ]
+    for n, e in sorted(rows, key=lambda r: r[1]["train_seconds"]):
+        t = f"{e['train_seconds']:.1f} ± {e['train_seconds_sd']:.1f}"
+        inf = e.get("inference_ms_per_1000")
+        lines.append(
+            f"| {model_label(n)} | {_bold_if(t, e['train_seconds'] == fastest)} | "
+            f"{f'{inf:.2f}' if inf is not None else 'n/a'} | {'GPU' if e.get('used_gpu') else 'CPU'} |"
+        )
+    return "\n".join(lines)
+
+
+def transfer_table(analysis: dict[str, Any]) -> str:
+    t = analysis.get("transfer") or {}
+    models = {n: v for n, v in (t.get("models") or {}).items() if v.get("cross_domain") is not None}
+    if not models:
+        return ""
+    from cyberlab_data import get_adapter
+
+    best_cross = max(v["cross_domain"] for v in models.values())
+    lines = [
+        "| Model | In-domain macro-F1 | Cross-dataset macro-F1 | Drop | Hardest transfer |",
+        "|---|---|---|---|---|",
+    ]
+    for n, v in sorted(models.items(), key=lambda kv: -kv[1]["cross_domain"]):
+        w = v.get("worst") or {}
+        hard = (
+            f"{get_adapter(w['train']).display} → {get_adapter(w['test']).display} "
+            f"({w['macro_f1']:.4f})"
+            if w
+            else "-"
+        )
+        lines.append(
+            f"| {model_label(n)} | {_fmt(v['in_domain'])} | "
+            f"{_bold_if(_fmt(v['cross_domain']), v['cross_domain'] == best_cross)} | "
+            f"{v['in_domain'] - v['cross_domain']:+.4f} | {hard} |"
+        )
+    return "\n".join(lines)
+
+
+def ablation_table(analysis: dict[str, Any]) -> str:
+    abl = analysis.get("ablations") or []
+    if not abl:
+        return ""
+    lines = [
+        "| Model | Features removed | Full model | Ablated | Difference (95% CI) | Holm-adjusted p |",
+        "|---|---|---|---|---|---|",
+    ]
+    for x in abl:
+        eff = x.get("effect") or {}
+        diff = (
+            f"{eff['point']:+.4f} [{eff['low']:+.4f}, {eff['high']:+.4f}]"
+            if {"point", "low", "high"} <= set(eff)
+            else "-"
+        )
+        lines.append(
+            f"| {model_label(x['base'])} | {', '.join(x['dropped']) or '-'} | "
+            f"{_fmt(x['base_mean'])} | {_fmt(x['ablated_mean'])} | {diff} | "
+            f"{_bold_if(_fmt_p(x['p_holm']), bool(x.get('significant')))} |"
+        )
+    return "\n".join(lines)
 
 
 def per_class_table(analysis: dict[str, Any], model: str) -> str:
@@ -1082,6 +1163,31 @@ def build_manuscript(
                 ),
                 "",
             ]
+            if et := efficiency_table(analysis):
+                out += [
+                    "### Efficiency",
+                    "",
+                    numbered(
+                        "table_efficiency",
+                        "Training time and inference latency per model (final training run, "
+                        "excluding the settings search; means over seeds).",
+                        et,
+                    ),
+                    "",
+                ]
+            if at := ablation_table(analysis):
+                out += [
+                    "### Ablation",
+                    "",
+                    numbered(
+                        "table_ablation",
+                        "Ablation results: each full model against the same model trained "
+                        "without the listed features (one-sided paired permutation test, "
+                        "Holm-adjusted).",
+                        at,
+                    ),
+                    "",
+                ]
             if bt := benchmark_table(analysis):
                 out += [
                     "### Results across datasets",
@@ -1104,6 +1210,19 @@ def build_manuscript(
                         ),
                         "",
                     ]
+            if tt_ := transfer_table(analysis):
+                out += [
+                    "### Generalization across datasets",
+                    "",
+                    numbered(
+                        "table_transfer",
+                        "Generalization: macro-F1 (attack versus BENIGN) when tested on the "
+                        "training dataset (in-domain) and on the other datasets (cross-dataset), "
+                        "means over seeds.",
+                        tt_,
+                    ),
+                    "",
+                ]
             from cyberlab_manuscript.figures import _primary_metric, figures_markdown
 
             metric = _primary_metric(analysis)
@@ -1162,6 +1281,9 @@ _FIGURE_KEYS = (
     ("figure_confusion", "confusion matrix"),
     ("figure_rank", "critical difference diagram"),
     ("figure_benchmark", "per model and dataset"),
+    ("figure_importance", "permutation feature importance"),
+    ("figure_shap", "shap explanation"),
+    ("figure_transfer", "trained on the row dataset"),
 )
 _TABLE_KEYS = (
     ("table_classes", "rows per class"),
@@ -1172,6 +1294,9 @@ _TABLE_KEYS = (
     ("table_benchmark_tests", "repeated on the other datasets"),
     ("table_benchmark", "per model and dataset"),
     ("table_per_class", "per-class results"),
+    ("table_efficiency", "training time and inference latency"),
+    ("table_ablation", "ablation results"),
+    ("table_transfer", "generalization:"),
 )
 
 

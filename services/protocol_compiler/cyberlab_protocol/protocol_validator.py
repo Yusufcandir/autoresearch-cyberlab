@@ -164,6 +164,8 @@ def validate_protocol(
     train = int(((dataset or {}).get("split_counts") or {}).get("train", 0))
     n_datasets = 1 + len(protocol.get("benchmark_datasets") or [])
     minutes = estimate_minutes(protocol, train) * n_datasets
+    if protocol.get("transfer") and n_datasets > 1:
+        minutes *= 1.5  # one untuned binary run per model, seed and dataset
     out.append(
         _r(
             "feasibility",

@@ -506,15 +506,115 @@ def _search(
     return {**result, "reused": False}
 
 
+def permutation_importance(
+    model: Any, x: pd.DataFrame, y: np.ndarray, seed: int, per_class: int = 300, repeats: int = 3
+) -> dict[str, float]:
+    """Model-agnostic explanation (works for trees and deep models alike): how much the
+    macro-F1 drops when one feature's values are shuffled. Computed on a class-balanced
+    sample of the test rows (up to `per_class` rows per class, so small classes count)."""
+    from sklearn.metrics import f1_score
+
+    rng = np.random.default_rng(seed + 101)
+    idx = np.concatenate(
+        [
+            rng.choice(np.flatnonzero(y == c), min(per_class, int((y == c).sum())), replace=False)
+            for c in np.unique(y)
+        ]
+    )
+    xs, ys = x.to_numpy()[idx], y[idx]
+
+    def f1(arr: np.ndarray) -> float:
+        return float(f1_score(ys, model.predict_proba(arr).argmax(axis=1), average="macro"))
+
+    base = f1(xs)
+    out: dict[str, float] = {}
+    for j, col in enumerate(x.columns):
+        drops = []
+        for _ in range(repeats):
+            xp = xs.copy()
+            xp[:, j] = rng.permutation(xp[:, j])
+            drops.append(base - f1(xp))
+        out[str(col)] = round(float(np.mean(drops)), 6)
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
+def _balanced_rows(y: np.ndarray, seed: int, per_class: int = 300) -> np.ndarray:
+    rng = np.random.default_rng(seed + 101)
+    return np.concatenate(
+        [
+            rng.choice(np.flatnonzero(y == c), min(per_class, int((y == c).sum())), replace=False)
+            for c in np.unique(y)
+        ]
+    )
+
+
+def shap_importance(
+    model: Any, x: pd.DataFrame, y: np.ndarray, classes: list[str], seed: int
+) -> dict[str, Any] | None:
+    """Exact TreeSHAP values from the boosting libraries themselves (XGBoost pred_contribs,
+    LightGBM pred_contrib; no extra package): mean |SHAP| per feature over a class-balanced
+    sample of test rows, overall (summed over classes) and for each class."""
+    idx = _balanced_rows(y, seed)
+    xs = x.to_numpy()[idx]
+    nf = xs.shape[1]
+    try:
+        if type(model).__name__ == "XGBClassifier":
+            from xgboost import DMatrix
+
+            contrib = np.asarray(model.get_booster().predict(DMatrix(xs), pred_contribs=True))
+        elif type(model).__name__ == "LGBMClassifier":
+            contrib = np.asarray(model.predict(xs, pred_contrib=True))
+        else:
+            return None
+    except Exception:  # noqa: BLE001 - explanations are optional evidence
+        return None
+    if contrib.ndim == 2 and contrib.shape[1] == nf + 1:  # binary: one set of values
+        per = contrib[:, None, :nf]
+    elif contrib.ndim == 3:  # XGBoost multiclass: rows x classes x (features + bias)
+        per = contrib[:, :, :nf]
+    else:  # LightGBM multiclass: rows x classes * (features + bias)
+        per = contrib.reshape(len(xs), -1, nf + 1)[:, :, :nf]
+    mean_abs = np.abs(per).mean(axis=0)  # classes x features
+    cols = [str(c) for c in x.columns]
+    overall = dict(zip(cols, mean_abs.sum(axis=0).round(6).tolist(), strict=True))
+    out: dict[str, Any] = {
+        "overall": dict(sorted(overall.items(), key=lambda kv: -kv[1])[:15]),
+    }
+    if per.shape[1] == len(classes):
+        out["per_class"] = {
+            classes[k]: dict(
+                sorted(
+                    zip(cols, mean_abs[k].round(6).tolist(), strict=True), key=lambda kv: -kv[1]
+                )[:5]
+            )
+            for k in range(len(classes))
+        }
+    return out
+
+
 def run_experiment(
-    manifest: ExperimentManifest, prepared_dir: Path, out_dir: Path
+    manifest: ExperimentManifest,
+    prepared_dir: Path,
+    out_dir: Path,
+    targets: dict[str, Path] | None = None,
 ) -> dict[str, Any]:
-    """Train one model and write predictions.csv, model_info.json. Returns run metadata."""
+    """Train one model and write predictions.csv, model_info.json. Returns run metadata.
+    With `targets` (generalization runs) the model is trained on the features every dataset
+    shares and also predicts each target dataset's test split (transfer_<dataset>.csv)."""
     tmpl = manifest.model.template
     _check_params(tmpl, manifest.model.params)
     out_dir.mkdir(parents=True, exist_ok=True)
     x_train, y_train = load_split(prepared_dir, "train", manifest.label_scheme)
     x_test, y_test = load_split(prepared_dir, "test", manifest.label_scheme)
+    shared: list[str] | None = None
+    if targets:
+        cols = set(x_train.columns)
+        for tdir in targets.values():
+            cols &= set(json.loads((tdir / "manifest.json").read_text())["features"])
+        shared = [c for c in x_train.columns if c in cols]
+        if not shared:
+            raise ValueError("the datasets share no features: generalization is not possible")
+        x_train, x_test = x_train[shared], x_test[shared]
     enc = LabelEncoder().fit(pd.concat([y_train, y_test]))
     np.random.seed(manifest.seed)
     params = dict(manifest.model.params)
@@ -541,6 +641,8 @@ def run_experiment(
             raise ValueError("tuning needs a validation split (val_fraction > 0)")
         if dropped:
             x_val = x_val.drop(columns=dropped)
+        if shared is not None:
+            x_val = x_val[shared]
         tuning = tune(manifest, x_train, enc.transform(y_train), x_val, enc.transform(y_val))
         params = tuning["best_params"]
         (out_dir / "tuning.json").write_text(json.dumps(tuning, indent=2, default=str))
@@ -593,10 +695,49 @@ def run_experiment(
         env: dict[str, Any] = info["environment"]  # type: ignore[assignment]
         env["torch"] = str(torch.__version__)
         env["cuda"] = torch.version.cuda
+    for tname, tdir in (targets or {}).items():
+        x_t, y_t = load_split(tdir, "test", manifest.label_scheme)
+        p_t = model.predict_proba(x_t[shared].to_numpy())
+        full_t = np.zeros((len(x_t), len(classes)))
+        full_t[:, : p_t.shape[1]] = p_t
+        df_t = pd.DataFrame(
+            {
+                "row": np.arange(len(y_t)),
+                "y_true": y_t,
+                "y_pred": enc.inverse_transform(full_t.argmax(axis=1)),
+            }
+        )
+        for i, c in enumerate(classes):
+            df_t[f"p_{c}"] = full_t[:, i].round(6)
+        df_t.to_csv(out_dir / f"transfer_{tname}.csv", index=False)
+    if targets:
+        info["transfer_targets"] = sorted(targets)
+        info["shared_features"] = len(shared or [])
+    if (
+        not targets
+        and len(x_test.columns) <= 300
+        and not any(str(c).startswith("text:") for c in x_test.columns)
+    ):
+        t2 = time.monotonic()
+        info["permutation_importance"] = permutation_importance(
+            model, x_test, enc.transform(y_test), manifest.seed
+        )
+        shap = shap_importance(model, x_test, enc.transform(y_test), classes, manifest.seed)
+        if shap:
+            info["shap_importance"] = shap
+        info["explain_seconds"] = round(time.monotonic() - t2, 3)
     if hasattr(model, "feature_importances_"):
         imp = dict(
             zip(x_train.columns, np.asarray(model.feature_importances_).tolist(), strict=True)
         )
         info["feature_importance"] = dict(sorted(imp.items(), key=lambda kv: -kv[1])[:20])
+    if "@" not in manifest.experiment_id:  # the main dataset's trained models are kept
+        try:
+            import joblib  # type: ignore[import-untyped]
+
+            joblib.dump(model, out_dir / "model.joblib", compress=3)
+            info["model_artifact"] = "model.joblib"
+        except Exception:  # noqa: BLE001 - a model that cannot be pickled is still a result
+            info["model_artifact"] = None
     (out_dir / "model_info.json").write_text(json.dumps(info, indent=2))
     return info

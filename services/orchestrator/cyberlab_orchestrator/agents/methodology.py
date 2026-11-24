@@ -113,6 +113,20 @@ def methodology_agent(ctx: LabContext, state: dict[str, Any]) -> dict[str, Any]:
                 "benchmark across datasets: the same models, seeds and tuning budget also run on "
                 + ", ".join(extra)
             )
+            goal_text = " ".join([spec.goal, *spec.constraints]) if spec is not None else ""
+            if re.search(
+                r"generali[sz]|transfer|cross[- ]dataset|unseen (?:network|dataset|traffic)|"
+                r"train(?:ed|ing)? on one|other datasets?",
+                goal_text,
+                re.I,
+            ):
+                protocol = Protocol.model_validate(
+                    json.loads(protocol.model_copy(update={"transfer": True}).model_dump_json())
+                )
+                problems.append(
+                    "generalization: every model is also trained on each dataset (attack versus "
+                    "BENIGN) and tested on every other dataset"
+                )
     if spec is not None:  # the study's own compute budget, not the schema default
         protocol = protocol.model_copy(update={"gpu_budget_minutes": spec.gpu_budget_minutes})
     with ctx.db.session() as s:

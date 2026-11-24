@@ -77,7 +77,9 @@ ROMAN = [
     "", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII",
     "XIV", "XV", "XVI", "XVII", "XVIII", "XIX", "XX",
 ]  # fmt: skip
-WIDE_FIGURE = re.compile(r"per model and dataset|per class|confusion matrix", re.I)
+WIDE_FIGURE = re.compile(
+    r"per model and dataset|per class|confusion matrix|trained on the row dataset", re.I
+)
 _REF_LINE = re.compile(r"^- \[([^\]]+)\] (.*?) \((\d{4})\)\. (.*?)\. (.*?)\. doi:(\S+)\s*$")
 
 
@@ -142,3 +144,18 @@ def ieee_reference(ref: tuple[str, ...]) -> tuple[str, str, str]:
     """(before the venue, venue, after the venue) so the venue can be set in italics."""
     authors, year, title, venue, doi = ref
     return f"{ieee_authors(authors)}, “{title},” ", venue, f", {year}, doi: {doi}."
+
+
+def png_width_inches(data_uri: str, dpi: int = 300) -> float | None:
+    """Printed width of an embedded figure (the figures are drawn at 300 dpi), so a page shows
+    it at its real size instead of one screen pixel per image pixel."""
+    import base64
+    import struct
+
+    b64 = data_uri.split("base64,", 1)[-1]
+    try:
+        head = base64.b64decode(b64[:64] + "=" * (-len(b64[:64]) % 4))
+        width = struct.unpack(">I", head[16:20])[0]
+    except Exception:  # noqa: BLE001 - not a PNG: leave the size to the page
+        return None
+    return round(width / dpi, 2) if head[:8] == b"\x89PNG\r\n\x1a\n" else None

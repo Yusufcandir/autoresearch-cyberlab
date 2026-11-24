@@ -13,6 +13,7 @@ from cyberlab_common.db import (
     CitationRecord,
     JobRecord,
     ManuscriptRecord,
+    Project,
     ProtocolVersion,
     RunRecord,
 )
@@ -521,3 +522,74 @@ def test_multi_dataset_benchmark_study(lab: Lab) -> None:
     with lab.db.session() as s:
         dups = s.scalars(select(CitationRecord.key).where(CitationRecord.project_id == pid))
         assert len(list(dups)) == len(set(keys))
+
+
+def test_writing_settings_can_be_changed_on_an_existing_study(lab: Lab) -> None:
+    pi, researcher = _users(lab)
+    pid = lab.create_project(pi, SPEC)
+    lab.set_writing(pi, pid, True, 3.0)
+    with lab.db.session() as s:
+        p = s.get(Project, pid)
+        assert p is not None
+        assert p.spec["data_may_leave_host"] is True and p.spec["llm_usd_budget"] == 3.0
+        p.llm_usd_used = 3.0
+    assert lab._budget(pid) == (1, 1)  # the dollar limit stops paid calls
+    with pytest.raises(Exception):  # noqa: B017 - only the PI may change it
+        lab.set_writing(researcher, pid, False, 50.0)
+
+
+def test_generalization_explainability_and_efficiency(lab: Lab) -> None:
+    """Brief: 'evaluate generalization', 'explainable AI analysis', training time/latency."""
+    pi, _ = _users(lab)
+    spec = ResearchSpec(
+        title="Generalization of IDS models across NetFlow datasets",
+        goal="Compare random forest and gradient boosting on NF-UNSW-NB15-v2 and NF-ToN-IoT-v2, "
+        "reporting macro-F1, and evaluate how well each model generalizes to the other dataset.",
+        dataset_hint="NF-UNSW-NB15-v2",
+    )
+    pid = lab.create_project(pi, spec)
+    status = lab.start(pid)
+    assert status["pending"]["gate"] == "A", status
+    with lab.db.session() as s:
+        pv = s.scalar(select(ProtocolVersion).where(ProtocolVersion.project_id == pid))
+        assert pv is not None
+        assert pv.body["transfer"] is True and pv.body["benchmark_datasets"]
+        version, sha = pv.version, pv.sha256
+    lab.approve_protocol(pi, pid, version, sha, "approved")
+    with lab.db.session() as s:
+        jobs = list(s.scalars(select(JobRecord).where(JobRecord.project_id == pid)))
+    assert any("@xfer-" in j.experiment_id for j in jobs)
+    for _ in range(len(jobs) + 4):
+        lab.worker_tick(wait=True)
+    status = lab.status(pid)
+    assert status["pending"] and status["pending"]["gate"] == "D", status
+    with lab.db.session() as s:
+        ms = s.scalar(
+            select(ManuscriptRecord)
+            .where(ManuscriptRecord.project_id == pid)
+            .order_by(ManuscriptRecord.version.desc())
+        )
+        assert ms is not None
+        md = ms.markdown
+    assert "### Generalization across datasets" in md and "Cross-dataset macro-F1" in md
+    assert "trained on the row dataset" in md  # transfer figure
+    assert "Permutation feature importance" in md  # explainability figure
+    assert "Training time and inference latency" in md and "PR-AUC" in md
+    assert "To evaluate generalization" in md  # Methodology
+    assert "SHAP explanation of the best boosted-tree model" in md
+    import io
+    import zipfile
+
+    from cyberlab_api.package import build_package
+
+    with lab.db.session() as s:
+        name, data = build_package(s, pid)
+    files = zipfile.ZipFile(io.BytesIO(data)).namelist()
+    assert name.endswith("-reproducibility.zip")
+    assert {"README.md", "research_protocol.json", "analysis.json", "runs.csv"} <= set(files)
+    assert any(f.endswith("/predictions.csv") for f in files)
+    assert (
+        "leakage_validation_report.json" in files and "rare_class_reliability_report.json" in files
+    )
+    models = json.loads(zipfile.ZipFile(io.BytesIO(data)).read("trained_models.json"))
+    assert models and all(len(m["sha256"]) == 64 for m in models)

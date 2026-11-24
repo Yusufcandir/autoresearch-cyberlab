@@ -176,6 +176,32 @@ def evidence_brief(analysis: dict[str, Any], facts: dict[str, Any]) -> dict[str,
                 "models' as a whole when it did not hold on every dataset.",
             }
         )
+    from cyberlab_manuscript.evidence_text import (
+        ablation_text,
+        efficiency_text,
+        importance_text,
+        transfer_text,
+    )
+
+    for fid, kind, text in (
+        (
+            "F-xai",
+            "which features the models rely on (permutation importance)",
+            importance_text(analysis),
+        ),
+        ("F-eff", "training time and inference latency", efficiency_text(analysis)),
+        ("F-abl", "ablation: models trained without selected features", ablation_text(analysis)),
+        (
+            "F-transfer",
+            "generalization: trained on one dataset, tested on the others (attack vs BENIGN)",
+            transfer_text(analysis),
+        ),
+    ):
+        text = re.sub(r"\{\{ref:[a-z_]+\}\}\s*", "", text)
+        if text:
+            findings.append(
+                {"id": fid, "kind": kind + "; the numbers are in Results", "text": text}
+            )
     tuned = [n for n, m in models.items() if m.get("tuned")]
     return {
         "primary_metric": metric,
