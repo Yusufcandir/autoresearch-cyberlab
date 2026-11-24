@@ -200,8 +200,8 @@ def test_findings_are_added_when_abstract_and_conclusion_lack_them() -> None:
     assert added == ["Abstract", "Conclusion"]
     assert "XGBoost had the highest mean macro-F1 (0.9900" in out
     assert (
-        "H1 (XGBoost scores higher than logistic regression on macro-F1; 0.9900 vs 0.6800) "
-        "was supported (exact McNemar test, p < 0.001)." in out
+        "H1 (XGBoost scores higher than logistic regression on macro-F1) "
+        "was supported (p < 0.001)." in out
     )
     assert "However" not in out and "More work is needed." in out
 

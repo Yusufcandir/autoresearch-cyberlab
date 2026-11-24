@@ -385,6 +385,9 @@ def render_manuscript(markdown: str, keys_in_order: list[str]) -> tuple[str, dic
         return f"<sup>[{links}]</sup>"
 
     html = re.sub(r"\[@[A-Za-z0-9_]+(?:;\s*@[A-Za-z0-9_]+)*\]", cite_group, html)
+    from cyberlab_api.journal import journalize_html
+
+    html = journalize_html(html)
     for token, cls in (
         ("[number removed]", "flag"),
         ("[citation needed]", "flag"),

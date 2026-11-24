@@ -448,3 +448,77 @@ def test_journal_layout_pieces() -> None:
     )
     assert r"\begin{abstract}" in tex and r"Table~\ref{tab:1}" in tex and r"\label{tab:1}" in tex
     assert r"\subsection{Main results}" not in tex and r"\textbf{0.9}" in tex
+
+
+def test_v10_ollama_draft_problems() -> None:
+    from cyberlab_manuscript.builder import link_author_year, strip_internal_ids
+
+    cites = {"Abbas2024x": {"status": "Verified", "authors": ["S Abbas"], "year": 2024}}
+    md = (
+        "## Related Work\n\nSmith et al. (2021) evaluated tree ensembles. Abbas et al. (2024) "
+        "used deep models. The related work section provides a detailed comparison of prior "
+        "research. It also situates the current study within existing research.\n\n"
+        "## Methodology\n\nCite Sarhan, Layeghy and Portmann (2022) and the dataset.\n"
+    )
+    out = strip_internal_ids(link_author_year(md, cites))
+    assert "Smith et al." not in out and "Abbas et al. [@Abbas2024x]" in out
+    assert "section provides" not in out and "situates" not in out
+    assert "Layeghy and Portmann (2022)" in out  # licence text is not prose
+    intro = (
+        "## Introduction\n\nThis study addresses these gaps by evaluating five models. The "
+        "primary metric is macro-F1. Flow-based intrusion detection is critical for IoT "
+        "networks.\n\n## Related Work\n\nX.\n"
+    )
+    fixed = strip_internal_ids(intro)
+    assert (
+        "## Introduction\n\nFlow-based intrusion detection is critical for IoT networks. " in fixed
+    )
+    assert "This study evaluates five models." in fixed
+
+
+def test_findings_are_compact() -> None:
+    from cyberlab_manuscript.evidence_text import findings_text
+
+    a = {
+        "models": {"a": {"aggregate": {"macro_f1": {"mean": 0.8, "sd": 0.01}}}},
+        "hypotheses": [
+            {
+                "id": "H1",
+                "a": "a",
+                "b": "b",
+                "metric": "macro_f1",
+                "result": "supported",
+                "a_mean": 0.8,
+                "b_mean": 0.7,
+                "test": {"p_value": 0.002},
+                "p_holm": 0.006,
+            }
+        ],
+    }
+    text = findings_text(a)
+    assert (
+        "H1 (a scores higher than b on macro-F1) was supported (Holm-adjusted p = 0.006)." in text
+    )
+    assert "permutation" not in text and "0.8000 vs" not in text
+
+
+def test_floats_follow_their_paragraph_and_journal_page() -> None:
+    from cyberlab_api.journal import journal_page
+    from cyberlab_manuscript.layout import place_floats
+
+    md = (
+        "# A study\n\n## Abstract\n\nWe test things [@K1].\n\n## Results\n\n"
+        "Table 1 lists scores [@K2].\n\nFigure 1 shows them.\n\n### Main results\n\n"
+        "*Table 1. Main results per model.*\n\n| Model | F1 |\n|---|---|\n| A | 0.9 |\n\n"
+        "### Figures\n\n![Figure 1](data:image/png;base64,iVBORw0KGgo=)\n\n"
+        "*Figure 1. Recall per class and model.*\n\n## Discussion\n\nText.\n\n"
+        "## References\n\n- [K1] Ann Lee, Bo Kim (2020). First paper. Venue A. doi:10.1/a\n"
+        "- [K2] Cy Dee (2021). Second paper. Venue B. doi:10.1/b\n"
+    )
+    out = place_floats(md)
+    assert out.index("Table 1 lists") < out.index("*Table 1.") < out.index("Figure 1 shows")
+    assert out.index("Figure 1 shows") < out.index("![Figure 1]")
+    assert "### Main results" not in out and "### Figures" not in out
+    page = journal_page(md, 3)
+    assert "TABLE I</span>" in page and "<b>Fig. 1.</b>" in page and "Table I lists" in page
+    assert '<li id="ref-K2"><span class="n">[1]</span> C. Dee' in page  # body citation order

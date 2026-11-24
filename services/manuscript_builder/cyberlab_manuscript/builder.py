@@ -87,6 +87,78 @@ def drop_repeated_sentences(text: str) -> str:
     return "".join(parts)
 
 
+# 'The related work section provides a detailed comparison ...' describes the paper instead
+# of saying something; 'It also situates ...' after it goes with it.
+_META = re.compile(
+    r"^(?:The|This) (?:related work |present |following |next )?section (?:provides|presents|"
+    r"discusses|reviews|highlights|summari[sz]es|describes|outlines|gives)\b",
+    re.I,
+)
+_META_FOLLOW = re.compile(r"^It (?:also )?(?:situates|places|positions|emphasi[sz]es)\b")
+
+
+def drop_meta_sentences(text: str) -> str:
+    from cyberlab_manuscript.consistency import split_sentences
+
+    out = []
+    for line in text.split("\n"):
+        if not line.strip() or line.lstrip().startswith(("|", "#", ">", "!", "*")):
+            out.append(line)
+            continue
+        kept: list[str] = []
+        dropped_prev = False
+        for s in split_sentences(line):
+            if _META.match(s) or (dropped_prev and _META_FOLLOW.match(s)):
+                dropped_prev = True
+                continue
+            dropped_prev = False
+            kept.append(s)
+        if kept or not line.strip():
+            out.append(" ".join(kept))
+    return "\n".join(out)
+
+
+# 'This study addresses these gaps by evaluating ...' as the FIRST sentence of a section points
+# back to gaps that were never named (the sentences before it were removed or never written)
+_DANGLING = re.compile(
+    r"^(This (?:study|paper|work)) addresses (?:these|this|the above|such) "
+    r"(?:gaps?|limitations?|issues?|challenges?|problems?|shortcomings?) by (\w+)ing\b"
+)
+_ES_STEMS = ("at", "ar", "in", "us", "iz", "yz", "ur", "as", "ag", "ov", "ir", "ut", "ib", "lv")
+_STUDY_WORDS = re.compile(r"\b(?:this study|this paper|we|our|the primary metric)\b", re.I)
+
+
+def _third_person(stem: str) -> str:
+    return stem + ("es" if stem.endswith(_ES_STEMS) else "s")
+
+
+def fix_dangling_openings(text: str) -> str:
+    """A section that opens with 'This study addresses these gaps by evaluating X' says
+    'This study evaluates X' instead, and a general context sentence further down the first
+    paragraph ('Flow-based intrusion detection is critical ...') is moved in front of it."""
+    from cyberlab_manuscript.consistency import split_sentences
+
+    parts = re.split(r"(?m)^(## .+)$", text)
+    for i in range(1, len(parts) - 1, 2):
+        body = parts[i + 1]
+        lead = body.lstrip("\n")
+        para, sep, rest = lead.partition("\n\n")
+        if not para or para.startswith(("|", "#", ">", "!", "*", "-")):
+            continue
+        sents = split_sentences(para)
+        m = _DANGLING.match(sents[0]) if sents else None
+        if not m:
+            continue
+        sents[0] = _DANGLING.sub(
+            lambda mm: f"{mm.group(1)} {_third_person(mm.group(2))}", sents[0], count=1
+        )
+        context = [s for s in sents[1:] if not _STUDY_WORDS.search(s) and "[@" not in s]
+        if context:
+            sents = context + [s for s in sents if s not in context]
+        parts[i + 1] = body[: len(body) - len(lead)] + " ".join(sents) + sep + rest
+    return "".join(parts)
+
+
 MAX_KEYS_PER_CITATION = 4
 
 
@@ -119,6 +191,8 @@ def strip_internal_ids(text: str) -> str:
     text = re.sub(r"(?m)^\*\*[^*\n]{2,80}:?\*\*:?[ \t]*\n", "", text)
     text = drop_repeated_sentences(text)
     text = trim_citation_dumps(text)
+    text = drop_meta_sentences(text)
+    text = fix_dangling_openings(text)
     text = re.sub(
         r"(?m)^((?:The|This|Our) (?:study|analysis|paper|work|evaluation)) also\b ", r"\1 ", text
     )
@@ -163,7 +237,40 @@ def link_author_year(markdown: str, citations: dict[str, dict[str, Any]]) -> str
         repl,
         body,
     )
-    return body + sep + refs
+    return drop_unverified_author_year(body) + sep + refs
+
+
+# 'Smith et al. (2021) evaluated ...' that matches no verified reference is a citation the
+# writer made up: the sentence goes (prose sections only; data licences name authors too)
+_UNLINKED = re.compile(
+    r"\b[A-Z][A-Za-z'\-]+(?: et al\.| and [A-Z][A-Za-z'\-]+) \(\d{4}\)(?! ?\[@)|"
+    r"\[[A-Z][A-Za-z'\-]+(?: et al\.| and [A-Z][A-Za-z'\-]+),? \d{4}\]"
+)
+_PROSE_SECTIONS = (
+    "Abstract",
+    "Introduction",
+    "Related Work",
+    "Discussion",
+    "Limitations",
+    "Conclusion",
+)
+
+
+def drop_unverified_author_year(body: str) -> str:
+    from cyberlab_manuscript.consistency import split_sentences
+
+    parts = re.split(r"(?m)^(## .+)$", body)
+    for i in range(1, len(parts) - 1, 2):
+        if parts[i][3:].strip() not in _PROSE_SECTIONS:
+            continue
+        lines = []
+        for line in parts[i + 1].split("\n"):
+            if not _UNLINKED.search(line) or line.lstrip().startswith(("|", "#", ">", "!")):
+                lines.append(line)
+                continue
+            lines.append(" ".join(s for s in split_sentences(line) if not _UNLINKED.search(s)))
+        parts[i + 1] = "\n".join(lines)
+    return "".join(parts)
 
 
 def evidence_integers(analysis: dict[str, Any]) -> set[str]:

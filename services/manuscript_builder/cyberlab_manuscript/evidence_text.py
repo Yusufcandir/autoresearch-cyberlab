@@ -96,7 +96,9 @@ def _tested_hyps(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     return [h for h in analysis.get("hypotheses", []) if h.get("a") and h.get("b")]
 
 
-def hypothesis_sentences(analysis: dict[str, Any]) -> list[str]:
+def hypothesis_sentences(analysis: dict[str, Any], compact: bool = False) -> list[str]:
+    """One sentence per tested hypothesis. compact=True (Abstract, Conclusion) keeps the
+    verdict and the Holm-adjusted p; the means and the raw test are in Results."""
     out = []
     models = analysis.get("models", {})
     for h in _tested_hyps(analysis):
@@ -123,6 +125,17 @@ def hypothesis_sentences(analysis: dict[str, Any]) -> list[str]:
             )
         else:
             test = f" (exact McNemar test, {ptxt})" if ptxt else ""
+        if compact:
+            tail = (
+                f" (Holm-adjusted {_p(h['p_holm'])})"
+                if "p_holm" in h
+                else (f" ({ptxt})" if ptxt else "")
+            )
+            out.append(
+                f"{h['id']} ({pretty(h['a'])} scores higher than {pretty(h['b'])} on "
+                f"{_metric(metric)}) was {h['result']}{tail}."
+            )
+            continue
         out.append(
             f"{h['id']} ({pretty(h['a'])} scores higher than {pretty(h['b'])} on "
             f"{_metric(metric)}{means}) was {h['result']}{test}."
@@ -157,7 +170,7 @@ def findings_text(analysis: dict[str, Any]) -> str:
             f"On the de-duplicated test split, {pretty(best)} had the highest mean "
             f"{_metric(metric)} ({v['mean']:.4f} ± {v.get('sd', 0):.4f} over the model seeds)."
         )
-    out += hypothesis_sentences(analysis)
+    out += hypothesis_sentences(analysis, compact=True)
     return " ".join(out)
 
 
@@ -300,9 +313,11 @@ def results_text(analysis: dict[str, Any]) -> str:
         )
     bench = benchmark_text(analysis)
     if bench:
+        # the tables and figures are cited in their numbered order, so each one can be
+        # placed right after this paragraph in reading order
         paras.append(
-            bench + " The scores on each dataset are given in {{ref:table_benchmark}} and "
-            "{{ref:figure_benchmark}}, and the average ranks in {{ref:figure_rank}}."
+            "{{ref:table_benchmark}} and {{ref:figure_benchmark}} give the scores on each "
+            "dataset, and {{ref:figure_rank}} the average ranks. " + bench
         )
     best = _best(analysis)
     if best:

@@ -51,6 +51,7 @@ from cyberlab_common.db import (
 )
 from cyberlab_data import ADAPTERS, dataset_record_id, get_adapter
 from cyberlab_llm.gateway import CLAUDE_MODELS, CLAUDE_PRICES
+from cyberlab_manuscript.layout import place_floats
 from cyberlab_orchestrator.lab import GateError, Lab
 from cyberlab_schemas import ResearchSpec, SplitSpec
 
@@ -379,7 +380,9 @@ def project_page(
     latest_ms = mss[0] if mss else None
     verified = [c for c in cites if c.status == "Verified"]
     rendered, cited_in = (
-        render_manuscript(latest_ms.markdown, [c.key for c in verified]) if latest_ms else ("", {})
+        render_manuscript(place_floats(latest_ms.markdown), [c.key for c in verified])
+        if latest_ms
+        else ("", {})
     )
     steps, now = build_progress(events, status["stage"], status["pending"], jobs)
     trust = trust_summary(cites, notes.get("evidence_matrix"), analysis, latest_ms, artifact_check)
@@ -702,12 +705,13 @@ def download(
 
             from cyberlab_manuscript.figures import extract_figures
             from cyberlab_manuscript.latex import markdown_to_latex
+            from cyberlab_manuscript.layout import place_floats
 
             stem = f"manuscript-v{m.version}"
             md_files, figs = extract_figures(m.markdown)
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-                z.writestr(f"{stem}.tex", markdown_to_latex(md_files, stem))
+                z.writestr(f"{stem}.tex", markdown_to_latex(place_floats(md_files), stem))
                 z.writestr(f"{stem}.bib", m.bibtex or "")
                 for fname, data in figs.items():
                     z.writestr(fname, data)
@@ -718,9 +722,10 @@ def download(
             )
         if kind == "docx":
             from cyberlab_manuscript.docx_export import markdown_to_docx
+            from cyberlab_manuscript.layout import place_floats
 
             return Response(
-                markdown_to_docx(m.markdown),
+                markdown_to_docx(place_floats(m.markdown)),
                 media_type=(
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 ),
@@ -731,7 +736,7 @@ def download(
         if kind == "bib":
             body, ext = m.bibtex, "bib"
         else:
-            body, ext = m.markdown, "md"
+            body, ext = place_floats(m.markdown), "md"
         name = f"manuscript-v{m.version}.{ext}"
     return Response(
         body,
@@ -752,33 +757,9 @@ def print_view(
         if m is None:
             raise NotFoundOrForbidden(mid)
         require_project_role(s, me, m.project_id)
-        keys = [
-            c.key
-            for c in s.scalars(
-                select(CitationRecord).where(
-                    CitationRecord.project_id == m.project_id, CitationRecord.status == "Verified"
-                )
-            )
-        ]
-        html, _ = render_manuscript(m.markdown, keys)
-        version = m.version
-    page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Manuscript v{version}</title>
-<style>
-body{{font-family:Georgia,'Times New Roman',serif;max-width:46rem;margin:2rem auto;padding:0 1rem;
-line-height:1.5;color:#111;background:#fff}}
-h1{{font-size:1.6rem}} h2{{font-size:1.25rem;margin-top:1.6rem}} h3{{font-size:1.05rem}}
-table{{border-collapse:collapse;width:100%;font-size:.85rem;margin:.8rem 0}}
-th,td{{border-bottom:1px solid #bbb;padding:.25rem .4rem;text-align:left}}
-blockquote{{color:#555;border-left:3px solid #ccc;margin:0;padding-left:.8rem}}
-.bar{{font-family:system-ui,sans-serif;margin-bottom:1rem}}
-@media print{{.bar{{display:none}} body{{margin:0;max-width:none}} h2{{break-after:avoid}}
-table,tr{{break-inside:avoid}}}}
-</style></head><body>
-<div class="bar"><button onclick="window.print()">Save as PDF</button>
-<a href="javascript:history.back()">Back</a></div>
-{html}
-</body></html>"""
+        from cyberlab_api.journal import journal_page
+
+        page = journal_page(m.markdown, m.version)
     return HTMLResponse(page)
 
 
